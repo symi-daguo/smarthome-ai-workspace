@@ -1,0 +1,15 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { AuthModule } from '../auth/auth.module.js';
+import { BillingModule } from '../billing/billing.module.js';
+import { RbacModule } from '../rbac/rbac.module.js';
+import { MediaController, MediaFileController } from './media.controller.js';
+import { MediaService } from './media.service.js';
+
+@Module({
+  imports: [ConfigModule, AuthModule, BillingModule, RbacModule],
+  controllers: [MediaController, MediaFileController],
+  providers: [MediaService],
+  exports: [MediaService],
+})
+export class MediaModule {}

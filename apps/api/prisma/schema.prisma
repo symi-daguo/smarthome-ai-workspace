@@ -1,0 +1,324 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Prisma 7 起 schema 不再承载连接串，迁移配置见 prisma.config.ts，
+  // 运行时连接由 PrismaClient 的 driver adapter（@prisma/adapter-pg）提供
+}
+
+enum Plan {
+  BASIC
+  STANDARD
+  ENTERPRISE
+}
+
+enum Status {
+  ACTIVE
+  DISABLED
+}
+
+enum RoleScope {
+  PLATFORM
+  TENANT
+}
+
+enum TokenReason {
+  GRANT
+  CONSUME
+  RECHARGE
+  REFUND
+}
+
+enum ExtractionSource {
+  UPLOAD
+  URL
+  TRANSCRIPT
+}
+
+enum ExtractionStatus {
+  PENDING
+  EXTRACTING
+  REVIEWING
+  CONFIRMED
+  REJECTED
+  FAILED
+}
+
+model Tenant {
+  id           String   @id @default(uuid())
+  name         String
+  slug         String   @unique
+  plan         Plan     @default(BASIC)
+  status       Status   @default(ACTIVE)
+  tokenBalance Int      @default(80000)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+  ledgers     TokenLedger[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  phone        String   @unique
+  passwordHash String
+  displayName  String
+  status       Status   @default(ACTIVE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+  ledgers     TokenLedger[]
+}
+
+model Role {
+  id       String    @id @default(uuid())
+  key      String    @unique
+  name     String
+  scope    RoleScope
+  isSystem Boolean   @default(true)
+  createdAt DateTime @default(now())
+
+  rolePermissions RolePermission[]
+  memberships     Membership[]
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  action      String  @unique
+  description String?
+
+  rolePermissions RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Membership {
+  id        String   @id @default(uuid())
+  userId    String
+  tenantId  String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, tenantId])
+}
+
+model TokenLedger {
+  id        String      @id @default(uuid())
+  tenantId  String
+  userId    String?
+  delta     Int
+  reason    TokenReason
+  meta      Json?
+  createdAt DateTime    @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String?
+  actorId   String?
+  action    String
+  target    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+// ---------- S2 内容提取管道 ----------
+
+model ExtractionJob {
+  id          String           @id @default(uuid())
+  tenantId    String
+  createdById String?
+  source      ExtractionSource
+  // UPLOAD=文件名；URL=链接；TRANSCRIPT=用户填写的纪要标题
+  sourceRef   String
+  status      ExtractionStatus @default(PENDING)
+  // 0-100 质量评分（字段完整率 70% + 置信度 30%）
+  score       Int?
+  error       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  document     ExtractedDocument?
+  deficiencies ExtractionDeficiency[]
+  review       ReviewConfirmation?
+
+  @@index([tenantId, createdAt])
+}
+
+model ExtractedDocument {
+  id         String   @id @default(uuid())
+  jobId      String   @unique
+  tenantId   String
+  docType    String   @default("generic")
+  title      String
+  // 标准化后的正文（保留全文用于检索与审计，超长由管道截断）
+  content    String
+  confirmed  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  job    ExtractionJob      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  fields ExtractedField[]
+
+  @@index([tenantId, confirmed])
+}
+
+model ExtractedField {
+  id         String   @id @default(uuid())
+  documentId String
+  key        String
+  label      String
+  value      String
+  required   Boolean  @default(false)
+  // 0-100 抽取置信度
+  confidence Int      @default(100)
+  createdAt  DateTime @default(now())
+
+  document ExtractedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, key])
+}
+
+model ExtractionDeficiency {
+  id        String   @id @default(uuid())
+  jobId     String
+  fieldKey  String
+  label     String
+  reason    String
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  job ExtractionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+model ReviewConfirmation {
+  id         String   @id @default(uuid())
+  jobId      String   @unique
+  userId     String?
+  // 用户补全后的字段快照
+  payload    Json
+  createdAt  DateTime @default(now())
+
+  job ExtractionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+// ---------- S3 生成产物库（图片/视频本地落盘） ----------
+
+model MediaAsset {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String?
+  // image | video
+  kind      String
+  title     String
+  prompt    String   @default("")
+  // 相对 UPLOAD_DIR 的文件路径，如 images/2026-10-06/xxx.jpg
+  filePath  String   @default("")
+  mimeType  String   @default("")
+  sizeBytes Int      @default(0)
+  // generating | ready | failed
+  status    String   @default("ready")
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+}
+
+// ---------- S3 智能方案（LLM 生成多页方案+分享链接） ----------
+
+model PlanProject {
+  id         String   @id @default(uuid())
+  tenantId   String
+  userId     String?
+  title      String
+  customer   String   @default("")
+  area       String   @default("")
+  budget     String   @default("")
+  ecosystem  String   @default("")
+  store      String   @default("")
+  highlights String   @default("")
+  // 重点空间（如"客餐厅灯光、主卧睡眠、全屋WiFi"）
+  keySpaces  String   @default("")
+  // 客户需求自由文本（家庭成员/装修阶段/最想实现的场景）
+  needs      String   @default("")
+  // A-K 风格键
+  style      String   @default("A")
+  // standard | presale | private
+  edition    String   @default("standard")
+  // 方案页数（10/12 等，最少 9）
+  pageCount  Int      @default(9)
+  // 方案页数组（cover/space/scene/budget），逐页审稿编辑后整体覆盖
+  pages      Json
+  // 文案版本号（每次保存 +1）
+  versionNo  Int      @default(0)
+  // 客户分享令牌（公开只读链接）
+  shareToken String   @unique @default(uuid())
+  // 关联的户型平面图 MediaAsset id（空间动线页配图）
+  floorplanAssetId String?
+  // 点位数组 [{productId,x,y}]（x/y 归一化 0-1，叠加渲染在户型图上）
+  layoutPoints Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+}
+
+// ---------- S3 产品库与点位布局（百宝箱"智能设备点位布局"） ----------
+
+// 全局共享产品目录（种子数据；租户自建产品留待后续）
+model Product {
+  id       String  @id @default(uuid())
+  name     String  @unique
+  // gateway | switch | sensor | light | curtain | security | appliance | audio | hvac
+  category String
+  // 参考价区间（元，仅演示口径；实际以门店为准）
+  priceMin Int     @default(0)
+  priceMax Int     @default(0)
+  // 每空间典型数量提示（编辑器预置用）
+  perRoom  String  @default("")
+  active   Boolean @default(true)
+  sortOrder Int    @default(0)
+
+  @@index([category, sortOrder])
+}
+
+// 保存的点位布局图纸
+model FloorplanLayout {
+  id             String   @id @default(uuid())
+  tenantId       String
+  userId         String?
+  title          String
+  // 户型底图 MediaAsset id
+  mediaAssetId   String
+  // 点位数组 [{productId,name,category,x,y}]（x/y 归一化 0-1）
+  points         Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+}

@@ -1,0 +1,33 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* 客户分享方案页打印：隐藏操作按钮，方案页整页输出 */
+@media print {
+  .plan-print-bar {
+    display: none !important;
+  }
+  .plan-share-page {
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .plan-share-page section {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+}

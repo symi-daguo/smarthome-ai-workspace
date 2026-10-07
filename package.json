@@ -1,0 +1,21 @@
+{
+  "name": "smart-home-ai-saas",
+  "version": "0.1.15",
+  "private": true,
+  "description": "增强型智能家居 AI SaaS 平台：多租户、RBAC、agent 工具调用、内容提取与品牌知识库",
+  "packageManager": "pnpm@11.5.3",
+  "engines": {
+    "node": ">=24.19.0",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @app/api dev",
+    "dev:web": "pnpm --filter @app/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "smoke": "pnpm --filter @app/api smoke",
+    "db:migrate": "pnpm --filter @app/api prisma:migrate",
+    "db:seed": "pnpm --filter @app/api prisma:seed"
+  }
+}

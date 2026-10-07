@@ -1,0 +1,31 @@
+# LiteLLM 本地网关示例配置
+# 模型 key 一律使用环境变量注入，禁止写入本文件
+# 启动：docker compose --profile gateway up -d litellm
+model_list:
+  # OpenAI 兼容模型（key 由 OPENAI_API_KEY 注入）
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # DeepSeek
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # MiniMax（M2/M3 系列，OpenAI 兼容协议）
+  # key 与 base url 由 MiniMax_API_KEY / MiniMax_BASE_URL 注入
+  - model_name: MiniMax-M3
+    litellm_params:
+      model: openai/MiniMax-M3
+      api_base: os.environ/MiniMax_BASE_URL
+      api_key: os.environ/MiniMax_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # pass-through 端点默认开启鉴权，避免误暴露
+  telemetry: false
+
+litellm_settings:
+  telemetry: false

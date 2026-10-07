@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/dist-ssr
+.git
+.gitignore
+*.log
+**/*.log
+uploads
+.trae
+# 本地环境文件不进入镜像，运行时变量由 compose 注入
+.env
+.DS_Store

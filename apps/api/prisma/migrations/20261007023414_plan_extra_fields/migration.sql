@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "PlanProject" ADD COLUMN     "keySpaces" TEXT NOT NULL DEFAULT '',
+ADD COLUMN     "needs" TEXT NOT NULL DEFAULT '',
+ADD COLUMN     "pageCount" INTEGER NOT NULL DEFAULT 9;

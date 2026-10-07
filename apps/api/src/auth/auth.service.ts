@@ -1,0 +1,123 @@
+import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import argon2 from 'argon2';
+import { PrismaService } from '../prisma/prisma.module.js';
+import type { LoginDto, RegisterDto } from './auth.schemas.js';
+
+// 新注册租户默认额度：入门版点数 80,000 按 1:1 折算为 token
+const DEFAULT_TENANT_TOKENS = 80_000;
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+  ) {}
+
+  async register(dto: RegisterDto): Promise<{ token: string; user: AuthProfile }> {
+    const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
+    if (existing) throw new ConflictException('PHONE_EXISTS');
+
+    const role = await this.prisma.role.findUnique({ where: { key: 'tenant_admin' } });
+    if (!role) throw new ConflictException('RBAC_NOT_SEEDED');
+
+    const passwordHash = await argon2.hash(dto.password);
+    const slug = `t-${Date.now().toString(36)}`;
+    const user = await this.prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          name: dto.tenantName ?? `${dto.displayName}的团队`,
+          slug,
+          tokenBalance: DEFAULT_TENANT_TOKENS,
+        },
+      });
+      const created = await tx.user.create({
+        data: { phone: dto.phone, passwordHash, displayName: dto.displayName },
+      });
+      await tx.membership.create({
+        data: { userId: created.id, tenantId: tenant.id, roleId: role.id },
+      });
+      await tx.tokenLedger.create({
+        data: {
+          tenantId: tenant.id,
+          userId: created.id,
+          delta: DEFAULT_TENANT_TOKENS,
+          reason: 'GRANT',
+          meta: { source: 'register' },
+        },
+      });
+      return created;
+    });
+
+    return { token: await this.sign(user.id, user.phone), user: await this.profile(user.id) };
+  }
+
+  async login(dto: LoginDto): Promise<{ token: string; user: AuthProfile }> {
+    const user = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
+    if (!user) throw new UnauthorizedException('INVALID_CREDENTIALS');
+    const ok = await argon2.verify(user.passwordHash, dto.password).catch(() => false);
+    if (!ok) throw new UnauthorizedException('INVALID_CREDENTIALS');
+    return { token: await this.sign(user.id, user.phone), user: await this.profile(user.id) };
+  }
+
+  async profile(userId: string): Promise<AuthProfile> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        memberships: {
+          include: {
+            tenant: { select: { id: true, name: true, plan: true } },
+            role: {
+              include: { rolePermissions: { include: { permission: { select: { action: true } } } } },
+            },
+          },
+        },
+      },
+    });
+    if (!user) throw new UnauthorizedException('USER_NOT_FOUND');
+    return {
+      id: user.id,
+      phone: user.phone,
+      displayName: user.displayName,
+      memberships: user.memberships.map((m) => ({
+        tenantId: m.tenant.id,
+        tenantName: m.tenant.name,
+        plan: m.tenant.plan,
+        roleKey: m.role.key,
+        permissions: m.role.rolePermissions.map((rp) => rp.permission.action),
+      })),
+    };
+  }
+
+  async changePassword(userId: string, dto: { oldPassword: string; newPassword: string }): Promise<{ ok: true }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('USER_NOT_FOUND');
+    const ok = await argon2.verify(user.passwordHash, dto.oldPassword).catch(() => false);
+    if (!ok) throw new UnauthorizedException('INVALID_CREDENTIALS');
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: await argon2.hash(dto.newPassword) },
+    });
+    return { ok: true };
+  }
+
+  // JwtModule.registerAsync 已注入 secret/expiresIn, signAsync 无需重复传参
+  private sign(userId: string, phone: string): Promise<string> {
+    return this.jwt.signAsync({ sub: userId, phone });
+  }
+}
+
+export interface AuthProfile {
+  id: string;
+  phone: string;
+  displayName: string;
+  /** 由 TenantGuard 写入：当前生效租户 */
+  activeTenantId?: string;
+  memberships: {
+    tenantId: string;
+    tenantName: string;
+    plan: string;
+    roleKey: string;
+    permissions: string[];
+  }[];
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+coverage/
+uploads/
+.DS_Store
+# 目标站参考截图与采集素材（含第三方品牌 UI，仅本地留存，不入库）
+.ref-site/
+replica/screens/
