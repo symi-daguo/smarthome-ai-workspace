@@ -324,6 +324,52 @@ model ModelSetting {
   updatedAt DateTime @updatedAt
 }
 
+// ---------- 接单工作台（销售接待：线索状态机 + 跟进记录） ----------
+
+model OrderRequest {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String?
+  // 客户信息
+  customer  String
+  phone     String   @default("")
+  // 房屋信息
+  community String   @default("")
+  area      String   @default("")
+  layout    String   @default("") // 户型（如"四室两厅"）
+  // 需求（AI 解析后的结构化要点 + 原始描述）
+  needs     String   @default("")
+  rawInput  String   @default("")
+  budget    String   @default("")
+  // 生态偏好（米家/HomeKit 等）
+  ecosystem String   @default("")
+  // 状态机：new 了解客户 -> qualified 需求确认 -> proposed 方案匹配 -> quoted 报价 -> won 成单 / lost 失单
+  status    String   @default("new")
+  // 关联方案（生成方案后挂接）
+  planId    String?
+  // 失单原因
+  lostReason String  @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  notes OrderNote[]
+
+  @@index([tenantId, status, createdAt])
+}
+
+model OrderNote {
+  id        String   @id @default(uuid())
+  orderId   String
+  userId    String?
+  // 跟进内容（电话/到店/微信沟通纪要）
+  content   String
+  createdAt DateTime @default(now())
+
+  order OrderRequest @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+}
+
 // 保存的点位布局图纸
 model FloorplanLayout {
   id             String   @id @default(uuid())

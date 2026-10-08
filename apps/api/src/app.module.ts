@@ -13,6 +13,7 @@ import { ContentModule } from './content/content.module.js';
 import { LlmModule } from './llm/llm.module.js';
 import { MediaModule } from './media/media.module.js';
 import { PlansModule } from './plans/plans.module.js';
+import { OrdersModule } from './orders/orders.module.js';
 import { LayoutModule } from './layout/layout.module.js';
 
 @Module({
@@ -36,6 +37,7 @@ import { LayoutModule } from './layout/layout.module.js';
     LlmModule,
     MediaModule,
     PlansModule,
+    OrdersModule,
     LayoutModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

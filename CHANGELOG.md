@@ -2,6 +2,24 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.21] - 2026-10-08
+
+### Added（开始接单板块完整开发：AI 接待工作台）
+
+联网调研 GitHub 开源 CRM（Twenty CRM、NextCRM、Headless CRM）的销售线索 pipeline 设计模式（均为 NestJS/Prisma/TypeScript 技术栈），**复用自有 NestJS + Prisma + LlmService 栈在项目内自建，不引入外部框架**（YAGNI + 许可证合规）。
+
+- **数据层**：Prisma 新增 `OrderRequest`（客户/电话/小区/面积/户型/需求要点/原始描述/预算/生态偏好/状态/挂接方案 planId/失单原因）与 `OrderNote`（跟进纪要，级联删除），migration `add_order_requests`；新表纳入全库备份清单
+- **状态机**：`new 了解客户 → qualified 需求确认 → proposed 方案匹配 → quoted 报价 → won 成单`，任意非终态可转 `lost`（记录失单原因）、lost 可重新激活回 new；非法跳跃（如 new→won）返回 400 `ILLEGAL_TRANSITION`
+- **AI 接待解析 intake**（`POST /api/orders/intake`）：把客户微信原话/电话纪要等原始描述粘贴进来，`LlmService.chatObject` 抽取为结构化字段 + 需求要点 + 建议品类，再按品类从 `Product` 产品库查真实候选（非 LLM 幻觉）；**解析成功才扣额**（`BILLING_ORDER_INTAKE_TOKENS`，LLM 失败异常上抛不白扣）
+- **AI 跟进建议**（`POST /api/orders/:id/followup`）：基于当前阶段 + 需求 + 最近 5 条跟进，生成下一步动作与话术要点（`BILLING_ORDER_FOLLOWUP_TOKENS`）
+- **REST API**（`/api/orders`，权限 `order:manage`，tenant_admin / operator 具备）：列表 / 详情 / 创建 / 更新 / 状态流转 / 加跟进 / 删除；数据按租户隔离
+- **前端 OrderStudio 从纯 UI 壳重写为真实工作台**：左侧接待列表按状态分组（Badge 计数）点击直达、右侧步骤条向导（五阶段进度可视化）、新接待弹窗（粘贴原始描述 → AI 解析建档 → 核对补全保存，展示推荐品类与候选产品）、跟进记录 Timeline、AI 跟进建议 Alert、方案匹配阶段挂接已生成的智能方案（复用 `GET /api/plans` 下拉）、失单/重新激活操作；移除原"0.3.0 上线"占位警告
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **56/56**（新增 10 用例：创建 status=new、列表可查、非法跳跃 400、合法五步流转、跟进写入、详情 404、缺客户名校验、删除后 404、viewer 访问 403、tenant_admin 访问 200）
+- 浏览器实测：A-J 全部通过——AI 解析建档（真实 MiniMax ~10s 返回，识别网关/照明/窗帘/安防 + 8 个候选产品）、状态机五步流转（new→qualified→proposed→quoted→won）+ 失单/重新激活、跟进记录 + AI 建议（~20s）、持久化刷新不丢、三档视口无溢出、console 0 error
+
 ## [0.1.20] - 2026-10-08
 
 ### Fixed（根治 /model-config 加载报错）

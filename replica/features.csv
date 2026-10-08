@@ -49,8 +49,8 @@ WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.
 数据备份与磁盘治理,system,must,yes,yes,0.1.20 新增：GET /api/admin/backup 全库 JSON 快照；storage 占用统计+30 天未引用产物清理；compose 日志轮转；nginx index.html 禁缓存根治发版报错
 个人中心-退出登录,profile,must,yes,yes,
 模型配置中心(对话/生图/ComfyUI/生视频四卡在线编辑+持久化+脱敏+连通测试),system,must,yes,yes,0.1.19 升级：生视频 provider 可选(MiniMax Director/OpenAI Sora)不再写死，ComfyUI 配置提升为独立常驻卡，四卡均可编辑保存即生效、Key 只进不出、恢复默认回退 env
-开始接单-5 步向导整页替换,order,must,yes,partial,向导 UI 已有，接待逻辑 0.3.0
-开始接单-历史方案,order,should,yes,partial,侧栏已有，数据待后端
+开始接单-5 步向导整页替换,order,must,yes,yes,0.1.21 完整开发：AI 解析建档+状态机(new→qualified→proposed→quoted→won/lost)+跟进记录+AI 跟进建议+产品库匹配+方案挂接
+开始接单-历史方案,order,should,yes,yes,0.1.21 接待列表按状态分组持久化（OrderRequest 表），点击直达向导
 短视频工作台-IP 档案(传记+4×4)新建/导入,biography,should,yes,partial,页面框架已有，档案逻辑 0.3.0+
 短视频工作台-访谈式工作站(逐问补全),biography,could,yes,no,
 离线演示回复(未接模型时明示边界),billing,must,yes,yes,

@@ -389,6 +389,54 @@ async function main(): Promise<void> {
   const cleanupRes = await request<{ deleted: number; freedBytes: number }>(base, '/api/admin/storage/cleanup?beforeDays=3650', { ...authA, method: 'POST' });
   check('产物清理端点可用（0 天阈值不误删）', [200, 201].includes(cleanupRes.status) && typeof cleanupRes.body?.deleted === 'number');
 
+  // ---------- 接单工作台：CRUD + 状态机（不触发真实 LLM intake） ----------
+  const orderCreate = await request<{ id: string; status: string }>(base, '/api/orders', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ customer: '冒烟客户', community: '测试小区', area: '120', layout: '三室两厅', budget: '3万', ecosystem: '米家', needs: '灯光、窗帘' }),
+  });
+  check('创建接待线索（status=new）', orderCreate.status === 201 && orderCreate.body.status === 'new');
+  const orderId = orderCreate.body.id;
+
+  const orderList = await request<unknown[]>(base, '/api/orders', authA);
+  check('接待列表可查', orderList.status === 200 && Array.isArray(orderList.body) && orderList.body.length >= 1);
+
+  const illegalSkip = await request(base, `/api/orders/${orderId}/status`, { ...authA, method: 'PATCH', body: JSON.stringify({ status: 'won' }) });
+  check('非法状态跳跃被拒（new→won 400）', illegalSkip.status === 400);
+
+  const step1 = await request<{ status: string }>(base, `/api/orders/${orderId}/status`, { ...authA, method: 'PATCH', body: JSON.stringify({ status: 'qualified' }) });
+  const step2 = await request<{ status: string }>(base, `/api/orders/${orderId}/status`, { ...authA, method: 'PATCH', body: JSON.stringify({ status: 'proposed' }) });
+  const step3 = await request<{ status: string }>(base, `/api/orders/${orderId}/status`, { ...authA, method: 'PATCH', body: JSON.stringify({ status: 'quoted' }) });
+  const step4 = await request<{ status: string }>(base, `/api/orders/${orderId}/status`, { ...authA, method: 'PATCH', body: JSON.stringify({ status: 'won' }) });
+  check(
+    '合法状态流转 new→qualified→proposed→quoted→won',
+    step1.body.status === 'qualified' && step2.body.status === 'proposed' && step3.body.status === 'quoted' && step4.body.status === 'won',
+  );
+
+  const noteAdd = await request<{ id: string }>(base, `/api/orders/${orderId}/notes`, { ...authA, method: 'POST', body: JSON.stringify({ content: '电话沟通，客户周末到店' }) });
+  const orderDetail = await request<{ notes: unknown[] }>(base, `/api/orders/${orderId}`, authA);
+  check('跟进记录写入并可查', noteAdd.status === 201 && Array.isArray(orderDetail.body.notes) && orderDetail.body.notes.length === 1);
+
+  const order404 = await request(base, '/api/orders/00000000-0000-0000-0000-000000000000', authA);
+  check('接待线索不存在返回 404', order404.status === 404);
+
+  const orderNoCustomer = await request(base, '/api/orders', { ...authA, method: 'POST', body: JSON.stringify({ community: '无客户名' }) });
+  check('缺客户名创建被校验拒绝', orderNoCustomer.status === 400);
+
+  await request(base, `/api/orders/${orderId}`, { ...authA, method: 'DELETE' });
+  const orderAfterDel = await request(base, `/api/orders/${orderId}`, authA);
+  check('删除接待线索后 404', orderAfterDel.status === 404);
+
+  // viewer 角色不可访问接单（RBAC 隔离）
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: viewerRole.id } });
+  const viewerOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+  check('viewer 访问接单被拒（403）', viewerOrders.status === 403);
+
+  // tenant_admin 默认可访问接单（order:manage）
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: (await prisma.role.findUniqueOrThrow({ where: { key: 'tenant_admin' } })).id } });
+  const taOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+  check('tenant_admin 可访问接单（200）', taOrders.status === 200);
+
   // viewer 角色不可访问备份/存储（RBAC 隔离）
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: viewerRole.id } });
   const backupForbidden = await request(base, '/api/admin/backup', { headers: { Authorization: `Bearer ${regA.body.token}` } });
