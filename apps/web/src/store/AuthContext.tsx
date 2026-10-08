@@ -13,6 +13,7 @@ export interface UserProfile {
   id: string;
   phone: string;
   displayName: string;
+  avatarColor?: string | null;
   memberships: Membership[];
 }
 
@@ -22,6 +23,8 @@ interface AuthContextValue {
   login: (phone: string, password: string) => Promise<void>;
   register: (input: { phone: string; password: string; displayName: string; tenantName?: string }) => Promise<void>;
   logout: () => void;
+  /** 重新拉取 /api/auth/me（个人设置保存后刷新头像色/昵称） */
+  refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -77,7 +80,11 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
     setUser(null);
   }, []);
 
-  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>;
+  const refresh = useCallback(async () => {
+    setUser(await fetchMe());
+  }, []);
+
+  return <AuthContext.Provider value={{ user, loading, login, register, logout, refresh }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {

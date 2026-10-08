@@ -45,6 +45,8 @@ WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.
 个人中心-额度卡(大字余额+总额度+已使用+进度条+额度说明 chip),profile,must,yes,yes,额度中心含统计卡+进度条+邀请卡+额度口径说明(不预设商业单价)
 个人中心-邀请码+首充返 10%,profile,should,yes,partial,码与文案已有，返点结算待 0.2.0
 个人中心-修改密码,profile,must,yes,yes,后端接口+UI 表单均已就绪
+个人设置弹窗(昵称/头像色/主题/改密/备份/存储治理),profile,must,yes,yes,0.1.20 新增：侧栏设置图标弹完整个人设置，PATCH /api/auth/profile 持久化头像色，管理员含全库备份导出+产物占用清理
+数据备份与磁盘治理,system,must,yes,yes,0.1.20 新增：GET /api/admin/backup 全库 JSON 快照；storage 占用统计+30 天未引用产物清理；compose 日志轮转；nginx index.html 禁缓存根治发版报错
 个人中心-退出登录,profile,must,yes,yes,
 模型配置中心(对话/生图/ComfyUI/生视频四卡在线编辑+持久化+脱敏+连通测试),system,must,yes,yes,0.1.19 升级：生视频 provider 可选(MiniMax Director/OpenAI Sora)不再写死，ComfyUI 配置提升为独立常驻卡，四卡均可编辑保存即生效、Key 只进不出、恢复默认回退 env
 开始接单-5 步向导整页替换,order,must,yes,partial,向导 UI 已有，接待逻辑 0.3.0

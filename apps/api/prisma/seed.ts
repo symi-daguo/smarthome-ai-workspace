@@ -25,6 +25,9 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
       'tenant:role:assign',
       'tenant:billing:view',
       'tenant:token:grant',
+      // 开源自部署：每个部署者都要配置自己的 API Key/本地模型，
+      // 模型配置中心默认对租户管理员开放（会员机制保留，权限不锁死）
+      'platform:billing:manage',
       'content:generate',
       'content:extract',
       'knowledge:manage',

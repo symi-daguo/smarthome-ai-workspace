@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { AdminModule } from './admin/admin.module.js';
 import { HealthModule } from './health/health.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { RbacModule } from './rbac/rbac.module.js';
@@ -17,8 +18,15 @@ import { LayoutModule } from './layout/layout.module.js';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    // 限流 env 可配（自部署单机默认放宽；云服务器按需收紧）
+    ThrottlerModule.forRoot([
+      {
+        limit: Number(process.env.RATE_LIMIT_GLOBAL ?? 300),
+        ttl: 60_000,
+      },
+    ]),
     PrismaModule,
+    AdminModule,
     HealthModule,
     AuthModule,
     RbacModule,

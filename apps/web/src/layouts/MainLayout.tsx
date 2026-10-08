@@ -44,6 +44,7 @@ import { tokenToYuan } from '../lib/money';
 import { BRAND_GRADIENT } from '../theme/tokens';
 import { BrandMark } from '../components/BrandMark';
 import { TaskBall } from '../components/TaskBall';
+import { ProfileSettings } from '../components/ProfileSettings';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore, type WorkbenchConversation } from '../store/ChatStore';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
@@ -143,6 +144,7 @@ export function MainLayout(): ReactNode {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [plans, setPlans] = useState<PlanSidebarItem[]>([]);
 
   // 侧栏历史列表需要方案记录；在路由切换时刷新，保证生成/编辑后及时更新
@@ -448,7 +450,11 @@ export function MainLayout(): ReactNode {
 
       {/* 底部个人中心卡 */}
       <div style={{ padding: '8px 12px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Avatar size={36} style={{ background: token.colorPrimary, flex: 'none' }}>
+        <Avatar
+          size={36}
+          style={{ background: user?.avatarColor ?? token.colorPrimary, flex: 'none', cursor: 'pointer' }}
+          onClick={() => navigate('/tokens')}
+        >
           {(user?.displayName ?? 'U').slice(0, 1)}
         </Avatar>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -464,7 +470,7 @@ export function MainLayout(): ReactNode {
             </span>
             <span
               style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
-              onClick={() => setMode(mode === 'dark' ? 'light' : mode === 'light' ? 'dark' : 'auto')}
+              onClick={() => setProfileOpen(true)}
             >
               <SettingOutlined />
               设置
@@ -507,6 +513,8 @@ export function MainLayout(): ReactNode {
         ),
         onClick: () => setMode(item.key),
       })),
+      { type: 'divider' },
+      { key: 'profile', icon: <SettingOutlined />, label: '个人设置', onClick: () => setProfileOpen(true) },
       { type: 'divider' },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: logout },
     ],
@@ -650,7 +658,7 @@ export function MainLayout(): ReactNode {
               aria-label="用户菜单"
               style={{ height: 40, padding: '0 6px', display: 'inline-flex', alignItems: 'center', gap: 8 }}
             >
-              <Avatar size={32} style={{ background: token.colorPrimary, flex: 'none' }}>
+              <Avatar size={32} style={{ background: user?.avatarColor ?? token.colorPrimary, flex: 'none' }}>
                 {(user?.displayName ?? 'U').slice(0, 1)}
               </Avatar>
               {isDesktop ? <Text>{user?.displayName ?? ''}</Text> : null}
@@ -671,6 +679,7 @@ export function MainLayout(): ReactNode {
       </Layout>
 
       <TaskBall />
+      <ProfileSettings open={profileOpen} onClose={() => setProfileOpen(false)} />
     </Layout>
   );
 }

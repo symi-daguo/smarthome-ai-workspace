@@ -146,8 +146,8 @@ export function ModelConfig(): ReactNode {
   const screens = Grid.useBreakpoint();
   const isWide = screens.md ?? false;
   const { user } = useAuth();
-  const isSuperAdmin = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage'));
-
+  // 开源自部署：tenant_admin 默认含此权限（seed），即每个部署者都能配置自己的模型
+  const canManageModels = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage'));
   const [status, setStatus] = useState<ConfigStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -186,16 +186,16 @@ export function ModelConfig(): ReactNode {
   }, [chatForm, imageForm, comfyForm, videoForm]);
 
   useEffect(() => {
-    if (!isSuperAdmin) return;
+    if (!canManageModels) return;
     load()
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false));
-  }, [isSuperAdmin, load, message]);
+  }, [canManageModels, load, message]);
 
-  if (!isSuperAdmin) {
+  if (!canManageModels) {
     return (
       <Card>
-        <Alert type="warning" showIcon message="无权访问" description="仅 super_admin 角色可配置与测试模型服务。" />
+        <Alert type="warning" showIcon message="无权访问" description="仅管理员角色（tenant_admin / super_admin）可配置与测试模型服务。" />
       </Card>
     );
   }

@@ -65,6 +65,8 @@ model User {
   phone        String   @unique
   passwordHash String
   displayName  String
+  // 侧栏头像底色（个人设置可改）
+  avatarColor  String?
   status       Status   @default(ACTIVE)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

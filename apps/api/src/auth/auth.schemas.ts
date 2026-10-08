@@ -19,6 +19,12 @@ export const changePasswordSchema = z.object({
   newPassword: z.string().min(8).max(64),
 });
 
+export const updateProfileSchema = z.object({
+  displayName: z.string().min(1).max(32).optional(),
+  avatarColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, '颜色需为 #RRGGBB').optional(),
+});
+
 export type RegisterDto = z.infer<typeof registerSchema>;
 export type LoginDto = z.infer<typeof loginSchema>;
 export type ChangePasswordDto = z.infer<typeof changePasswordSchema>;
+export type UpdateProfileDto = z.infer<typeof updateProfileSchema>;

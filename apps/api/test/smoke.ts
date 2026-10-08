@@ -273,17 +273,18 @@ async function main(): Promise<void> {
   });
   check('视频非法比例被校验拒绝', videoBadRatio.status === 400);
 
-  // 模型配置中心：路由已注册且 RBAC 生效（普通用户无 platform:billing:manage → 403）
-  const modelConfigForbidden = await request(base, '/api/admin/model-config', {
-    headers: { Authorization: `Bearer ${regA.body.token}` },
-  });
-  check('模型配置端点存在且普通用户被拒（403）', modelConfigForbidden.status === 403);
-
+  // 模型配置中心：RBAC 生效（viewer 无 platform:billing:manage → 403；tenant_admin 自部署默认可配置）
   // ---------- 模型配置在线编辑 + 持久化（临时把 A 提为 super_admin） ----------
   const prisma = app.get(PrismaService);
   const superRole = await prisma.role.findUniqueOrThrow({ where: { key: 'super_admin' } });
+  const viewerRole = await prisma.role.findUniqueOrThrow({ where: { key: 'viewer' } });
   const memberA = await prisma.membership.findFirstOrThrow({ where: { userId: me.body.id, tenantId: tenantA } });
   const originalRoleId = memberA.roleId;
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: viewerRole.id } });
+  const modelConfigForbidden = await request(base, '/api/admin/model-config', {
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+  });
+  check('模型配置端点存在且 viewer 被拒（403）', modelConfigForbidden.status === 403);
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: superRole.id } });
   // jwt.strategy 每请求实时加载 profile，提权立即生效
   const authA = { headers: { Authorization: `Bearer ${regA.body.token}` } };
@@ -363,6 +364,35 @@ async function main(): Promise<void> {
   );
   await request(base, '/api/admin/model-config/image', { ...authA, method: 'DELETE' });
 
+  // 个人设置：昵称/头像色持久化
+  const patchProfile = await request<{ id: string; displayName: string; avatarColor: string | null }>(base, '/api/auth/profile', {
+    ...authA,
+    method: 'PATCH',
+    body: JSON.stringify({ displayName: '改名后的我', avatarColor: '#123456' }),
+  });
+  check('个人设置保存（昵称+头像色）', patchProfile.status === 200 && patchProfile.body.displayName === '改名后的我' && patchProfile.body.avatarColor === '#123456');
+
+  const badColor = await request(base, '/api/auth/profile', { ...authA, method: 'PATCH', body: JSON.stringify({ avatarColor: 'red' }) });
+  check('非法头像色被校验拒绝', badColor.status === 400);
+
+  // 数据备份与存储治理（管理员）
+  const backupRes = await fetch(`${base}/api/admin/backup`, { headers: authA.headers });
+  const backupJson = (await backupRes.json().catch(() => null)) as { exportedAt?: string; tables?: Record<string, unknown[]> } | null;
+  check(
+    '全库备份导出（tables 完整）',
+    backupRes.status === 200 && Boolean(backupJson?.exportedAt) && Array.isArray(backupJson?.tables?.user) && (backupJson?.tables?.user?.length ?? 0) >= 2,
+  );
+
+  const storageRes = await request<{ usedBytes: number; quotaBytes: number; assets: number }>(base, '/api/admin/storage', authA);
+  check('存储占用统计可查', storageRes.status === 200 && storageRes.body.quotaBytes > 0);
+
+  const cleanupRes = await request<{ deleted: number; freedBytes: number }>(base, '/api/admin/storage/cleanup?beforeDays=3650', { ...authA, method: 'POST' });
+  check('产物清理端点可用（0 天阈值不误删）', [200, 201].includes(cleanupRes.status) && typeof cleanupRes.body?.deleted === 'number');
+
+  // viewer 角色不可访问备份/存储（RBAC 隔离）
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: viewerRole.id } });
+  const backupForbidden = await request(base, '/api/admin/backup', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+  check('viewer 访问备份被拒（403）', backupForbidden.status === 403);
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: originalRoleId } });
 
   await app.close();

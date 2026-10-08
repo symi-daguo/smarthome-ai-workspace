@@ -2,6 +2,25 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.20] - 2026-10-08
+
+### Fixed（根治 /model-config 加载报错）
+
+- **SyntaxError: missing ) after argument list + ERR_ABORTED**：根因是发版重建后浏览器命中旧 `index.html` 缓存，引用已失效的 hash chunk，SPA fallback 把 HTML 当 JS 返回导致解析报错。`nginx.conf` 给 `/index.html` 与 SPA 回退加 `Cache-Control: no-cache, no-store, must-revalidate`（带 hash 的 `/assets/` 仍 30d immutable），实测硬刷新 console 0 error/warning
+
+### Added（开源自部署默认最高权限 + 个人设置 + 数据备份 + 磁盘治理）
+
+- **模型配置默认对租户管理员开放**：`tenant_admin` 角色补 `platform:billing:manage` 权限（seed 幂等更新）。开源自部署每个用户都要配自己的 API Key/本地模型，注册即建租户并默认获得完整配置能力；会员/角色机制保留（viewer 等仍按 RBAC 隔离，冒烟用 viewer 验证 403）。前端权限判断由"仅 super_admin"改为按 `platform:billing:manage` 动态匹配，侧栏「系统管理」菜单随之对 tenant_admin 可见
+- **侧栏个人卡三操作真实化**：头像可点（跳个人中心）+ 显示自定义底色；「设置」图标从原来的"循环切主题"升级为完整「个人设置」弹窗（`ProfileSettings`）——昵称/头像颜色（ColorPicker）/界面主题三选/修改密码，`PATCH /api/auth/profile` 持久化 `User.avatarColor`（Prisma 迁移 `add_user_avatar_color`）；「退出」保留 Popconfirm 确认。顶栏用户菜单同步加「个人设置」入口
+- **数据备份**：`GET /api/admin/backup`（管理员）导出全库 18 表 JSON 快照并浏览器下载，同时在 `uploads/backups/` 留底，供升级迁移前保存；个人设置弹窗内置「导出全库数据备份」按钮
+- **磁盘治理**：`GET /api/admin/storage` 产物占用/配额统计（`UPLOAD_QUOTA_MB` 默认 4096）；`POST /api/admin/storage/cleanup?beforeDays=N` 删除 N 天前且未被方案户型图/点位布局引用的产物（DB 行 + 本地文件），弹窗一键清理带二次确认，防长期运行挤爆磁盘
+- **限流可配**：全局 `RATE_LIMIT_GLOBAL`（默认放宽到 300/min，自部署单机友好）、认证 `RATE_LIMIT_AUTH`（默认 10/min），compose 透传；docker-compose 给 api/web 加 `json-file` 日志轮转（10m×3）防日志无限增长
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **46/46**（新增 个人设置保存/非法头像色拒绝/全库备份导出/存储统计/清理端点/viewer 访问备份 403 用例；原"普通用户 403"用例因 tenant_admin 已获权限，改用 viewer 角色验证 RBAC）
+- 浏览器实测（1440/1920/768）：硬刷新 console 0 error；设置弹窗改昵称+头像色即时生效、主题切换、导出备份下载、清理确认、退出跳转全流程通过；新注册用户默认可见并可用「模型配置」四卡 + 备份按钮（默认最高权限成立）；三档无横向溢出
+
 ## [0.1.19] - 2026-10-08
 
 ### Added（生视频 provider 可选 + ComfyUI 配置常驻可见）

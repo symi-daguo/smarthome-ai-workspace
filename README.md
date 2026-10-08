@@ -17,8 +17,9 @@
 
 ### 账户与多租户
 - 手机号注册 / 登录（用户协议与隐私政策勾选拦截）、注册即建租户并赠送演示额度
-- 多租户隔离、RBAC 角色权限（超管 / 租户管理员 / 设计师 / 运营 / 只读）
+- 多租户隔离、RBAC 角色权限（超管 / 租户管理员 / 设计师 / 运营 / 只读）；**开源自部署默认最高权限**——注册用户即租户管理员，默认可完整配置模型（各人填自己的 API Key / 本地模型），会员与角色分级机制保留
 - 统一 token 额度账本（发放 / 消耗 / 充值 / 退还 / 邀请流水）、个人中心（额度总览、邀请码与返点说明、修改密码、退出）
+- 个人设置：昵称 / 头像底色 / 主题（亮 / 暗 / 跟随系统）/ 修改密码 / 全库数据备份导出 / 产物存储占用与过期清理
 - 亮色 / 暗色 / 跟随系统三态主题，全站持久化
 
 ### 工作台（首页）
@@ -107,13 +108,16 @@ SEED_ADMIN_PASSWORD=（自定义强密码）
 
 改完 `.env` 重启后端生效（`docker compose up -d api`）；页面上的在线配置则保存即生效。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需本机启动 ComfyUI 并在 `Workflow → Export (API)` 导出工作流 JSON（或直接使用项目内置模板）。
 
-## 安全与限流
+## 安全、限流与数据治理
 
-- 全局限流 120 请求/分钟/IP；注册 / 登录加严至 10 次/分钟（防暴力破解）
+- 限流 env 可配：全局 `RATE_LIMIT_GLOBAL`（默认 300/分钟/IP）、注册 / 登录 `RATE_LIMIT_AUTH`（默认 10/分钟，防暴力破解）
 - `trust proxy` 已开启，nginx 反代后限流按真实客户端 IP 计数
 - 生产环境（`NODE_ENV=production`）：默认 JWT 密钥 / 默认管理员密码启动直接拒绝；Swagger 文档关闭
 - 额度扣减在数据库事务内原子完成（`updateMany` 余额条件 + 账本写入），并发无超扣竞态
 - 文件流路径穿越防护、上传 MIME + 大小校验、多租户资源隔离、密钥仅经环境变量注入不入库
+- **数据备份**：个人设置「导出全库数据备份」→ `GET /api/admin/backup` 导出全部 18 表 JSON（同时在 `uploads/backups/` 留底）；产物文件在 `api-uploads` 卷、数据库在 `pgdata` 卷，迁移时连同两个 docker volume 一起备份即可完整恢复
+- **磁盘治理**：`docker-compose` 已配 json-file 日志轮转（10MB×3）防日志挤爆磁盘；产物配额 `UPLOAD_QUOTA_MB`（默认 4096），个人设置可查看占用并一键清理 30 天前且未被方案/布局引用的过期产物
+- **升级不丢数据**：数据全在 `pgdata` / `api-uploads` 两个命名卷，`docker compose up -d --build` 重建镜像不影响卷；nginx 对 `index.html` 禁缓存（hash 资源 immutable），发版后浏览器不会加载到失效 chunk
 
 ## 端口规约
 
@@ -128,7 +132,7 @@ SEED_ADMIN_PASSWORD=（自定义强密码）
 
 ```
 apps/
-  api/    NestJS 12：auth / tenants / rbac / billing / content / llm / media / plans / layout / health
+  api/    NestJS 12：auth / tenants / rbac / billing / content / llm / media / plans / layout / admin(备份与存储治理) / health
   web/    React 19 SPA：theme / layouts / pages / lib（api、合成、PPTX 生成）
 docker-compose.yml
 replica/  功能对标基线（recon.md、features.csv、自有实现截图 clone-screens/、布局比对 diffs/）
@@ -150,3 +154,4 @@ replica/  功能对标基线（recon.md、features.csv、自有实现截图 clon
 - 智能体后端表（自建智能体当前为本地持久化，0.2.0 接入服务端）、邀请返点自动结算
 - 接单接待业务逻辑、IoT 联动、客服工单
 - 运营后台、英文 i18n
+- 多端打包本地安装（Electron / Tauri 桌面壳复用现有 Web 产物，升级不影响 pgdata / api-uploads 卷数据）

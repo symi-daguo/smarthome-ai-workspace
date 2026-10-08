@@ -79,12 +79,22 @@ services:
       VIDEO_API_KEY: ${VIDEO_API_KEY:-}
       # 生成产物本地落盘目录（容器内路径，宿主机卷持久化）
       UPLOAD_DIR: /repo/uploads
+      # 磁盘治理：产物配额（MB，个人中心可查看占用并一键清理过期未引用产物）+ 限流可配
+      UPLOAD_QUOTA_MB: ${UPLOAD_QUOTA_MB:-4096}
+      RATE_LIMIT_GLOBAL: ${RATE_LIMIT_GLOBAL:-300}
+      RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-10}
     volumes:
       - api-uploads:/repo/uploads
       # ComfyUI 工作流文件（宿主机导出后挂载进容器；文件不存在也不报错，用到时再校验）
       - ${COMFYUI_WORKFLOW_HOST_FILE:-./comfyui-workflow.json}:/repo/comfyui-workflow.json:ro
     ports:
       - '3080:3080'
+    # 日志轮转：单容器最多 3 个 10MB 文件，长期运行不挤爆宿主磁盘
+    logging: &log-rotate
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     depends_on:
       db:
         condition: service_healthy
@@ -99,6 +109,7 @@ services:
       dockerfile: apps/web/Dockerfile
     ports:
       - '5173:80'
+    logging: *log-rotate
     depends_on:
       - api
     restart: unless-stopped

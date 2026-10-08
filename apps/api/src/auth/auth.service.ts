@@ -79,6 +79,7 @@ export class AuthService {
       id: user.id,
       phone: user.phone,
       displayName: user.displayName,
+      avatarColor: user.avatarColor,
       memberships: user.memberships.map((m) => ({
         tenantId: m.tenant.id,
         tenantName: m.tenant.name,
@@ -101,6 +102,18 @@ export class AuthService {
     return { ok: true };
   }
 
+  /** 个人设置：更新显示名 / 头像底色 */
+  async updateProfile(userId: string, dto: { displayName?: string; avatarColor?: string }): Promise<AuthProfile> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.displayName !== undefined ? { displayName: dto.displayName } : {}),
+        ...(dto.avatarColor !== undefined ? { avatarColor: dto.avatarColor } : {}),
+      },
+    });
+    return this.profile(userId);
+  }
+
   // JwtModule.registerAsync 已注入 secret/expiresIn, signAsync 无需重复传参
   private sign(userId: string, phone: string): Promise<string> {
     return this.jwt.signAsync({ sub: userId, phone });
@@ -111,6 +124,7 @@ export interface AuthProfile {
   id: string;
   phone: string;
   displayName: string;
+  avatarColor?: string | null;
   /** 由 TenantGuard 写入：当前生效租户 */
   activeTenantId?: string;
   memberships: {
