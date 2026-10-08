@@ -223,7 +223,7 @@ export function MainLayout(): ReactNode {
       type: 'group',
       key: 'g-system',
       label: '系统管理',
-      children: [{ key: '/model-test', icon: <ThunderboltOutlined />, label: '模型测试' }],
+      children: [{ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' }],
     };
     const items: NonNullable<MenuProps['items']> = [creation, toolbox, resource];
     if (isSuperAdmin) items.push(system);
@@ -233,7 +233,7 @@ export function MainLayout(): ReactNode {
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
-    for (const k of ['/agents', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/knowledge', '/works', '/content', '/tokens', '/model-test']) {
+    for (const k of ['/agents', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/knowledge', '/works', '/content', '/tokens', '/model-config']) {
       if (p.startsWith(k)) return k;
     }
     return '/';

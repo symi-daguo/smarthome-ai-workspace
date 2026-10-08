@@ -2,6 +2,29 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.17] - 2026-10-08
+
+### Added（模型配置中心：客户自部署本地+云端大模型）
+
+- **对话模型多 provider 抽象**：`LlmService` 从"MiniMax 直连"改为 OpenAI 兼容协议，env 驱动 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`（未设置回退 `MiniMax_*`，向后兼容）；`resolveModel` 支持 `LLM_MODEL` 全局锁定或跟随请求。一套抽象覆盖国内外云端（DeepSeek/通义千问/智谱 GLM/Kimi/OpenAI/MiniMax）与本地（Ollama/LM Studio/vLLM，均 OpenAI 兼容）
+- **生图三 provider 路由**：`IMAGE_PROVIDER=minimax | openai | comfyui`。`image-provider.ts` 独立适配层：`generateViaMinimax`（image-01）、`generateViaOpenai`（gpt-image-1/兼容网关，b64_json 或 url）、`generateViaComfyui`（本地 ComfyUI，按官方 Server API `POST /prompt → 轮询 /history → /view` 下载，工作流节点 id 由 `COMFYUI_*_NODE` 配置）；产物统一 Buffer 经 `saveBuffer` 落盘
+- **ComfyUI 开箱模板**：项目内置 `comfyui-workflow.json`（SD1.5 工作流，节点 id 对齐默认值），compose 只读挂载进容器，`IMAGE_PROVIDER=comfyui` 即可用
+- **模型配置中心 API**：`GET /api/admin/model-config`（仅 super_admin）返回对话/生图/生视频三能力的 provider 状态（Base URL/模型/Key 是否配置，Key **固定短掩码 `••••末四位`**，绝不回传明文与长度）；`POST /api/admin/model-config/test-chat` 发一条极短请求做连通性探测返回 model+延迟
+- **前端 ModelConfig 页**（替换旧"模型测试"）：三张概览卡（绿/灰 Key 标签）+ 对话连通性测试（loading→成功/失败 Alert）+ 三 Tab 配置引导（云端 provider 表格含 Base URL/推荐模型/获取 Key 外链、本地 Ollama/LM Studio/vLLM 安装启动、ComfyUI 四步接入），每段附 `.env` 示例一键复制；路由 `/model-config`、侧栏"系统管理 - 模型配置"
+- `.env.example` 扩为多 provider 模板（LLM_*/IMAGE_*/COMFYUI_* + 各主流 provider base_url/模型/Key 获取地址注释）；`docker-compose.yml` api 服务透传全部新 env
+
+### Fixed
+
+- **空串破坏请求**：compose 传 `LLM_MODEL=`/`IMAGE_MODEL=`/`COMFYUI_*_NODE=` 空值时，`ConfigService.get(key, default)` 对"存在但为空"返回空串（default 仅对 undefined 生效），会把 `model:""`、空节点 id 发给上游导致 chat/生图失败 → service 层加 `env()` 规范化（空串/空白回退默认）；curl 验证概览 model 字段不再为空
+- **配置页横向溢出**：实测发现脱敏 Key 用 121 个圆点撑爆 Tag，1440/768 视口页面级横向滚动 → 改固定短掩码 `••••` + 末四位（顺带不泄漏密钥长度）+ 概览网格 `repeat(3, minmax(0,1fr))`；三档视口复测 scrollWidth 均无溢出、console 0 error
+- 删除随 ModelTest 一起失效的孤儿 `LlmController`（`/api/admin/llm/test`）与 `ModelTest.tsx`，`ChatStore` 降级提示改"系统管理 - 模型配置"
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 31/31（新增"模型配置端点存在且普通用户 403"用例）
+- 后端 curl：`GET model-config` 三能力状态正确、Key 短掩码；`test-chat` 连通（model=MiniMax-M3 延迟 ~1.3s）；生图 minimax 路径回归正常出图
+- 浏览器实测（super_admin，1440/768/1920）：概览三卡/连通测试成功提示/三 Tab 引导表格与外链/复制按钮全部正常；Key 无明文泄漏、无空模型名、无死链；溢出修复复测通过；旧 /model-test 入口移除
+
 ## [0.1.16] - 2026-10-08
 
 ### Added（完整性审计后补齐 5 项待接功能）

@@ -47,7 +47,7 @@ function loadList<T>(key: string): T[] {
 
 /** 后端 LLM 不可用时的兜底回复（key 未配置或上游异常） */
 function offlineReply(prompt: string): string {
-  return '模型服务暂时不可用（API Key 未配置或上游异常），已记录你的需求：「' + prompt.slice(0, 30) + '」。请检查 .env 中的 MiniMax_API_KEY 或在「系统管理 - 模型测试」验证连通性后重试。';
+  return '模型服务暂时不可用（API Key 未配置或上游异常），已记录你的需求：「' + prompt.slice(0, 30) + '」。请在「系统管理 - 模型配置」检查 provider 与 Key 后重试。';
 }
 
 /** 智能体人设：按市场卡片名称注入 system prompt */

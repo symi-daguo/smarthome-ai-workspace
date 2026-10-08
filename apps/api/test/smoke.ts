@@ -272,6 +272,12 @@ async function main(): Promise<void> {
   });
   check('视频非法比例被校验拒绝', videoBadRatio.status === 400);
 
+  // 模型配置中心：路由已注册且 RBAC 生效（普通用户无 platform:billing:manage → 403）
+  const modelConfigForbidden = await request(base, '/api/admin/model-config', {
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+  });
+  check('模型配置端点存在且普通用户被拒（403）', modelConfigForbidden.status === 403);
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);

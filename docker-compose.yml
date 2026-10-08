@@ -58,10 +58,26 @@ services:
       MiniMax_API_KEY: ${MiniMax_API_KEY:-replace-me}
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://litellm:4000}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-local-dev}
+      # 多模型 provider（对话 OpenAI 兼容 / 生图 minimax|openai|comfyui）；留空则回退 MiniMax
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      IMAGE_PROVIDER: ${IMAGE_PROVIDER:-minimax}
+      IMAGE_MODEL: ${IMAGE_MODEL:-}
+      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-}
+      IMAGE_API_KEY: ${IMAGE_API_KEY:-}
+      COMFYUI_BASE_URL: ${COMFYUI_BASE_URL:-http://127.0.0.1:8188}
+      COMFYUI_WORKFLOW_PATH: ${COMFYUI_WORKFLOW_PATH:-/repo/comfyui-workflow.json}
+      COMFYUI_PROMPT_NODE: ${COMFYUI_PROMPT_NODE:-6}
+      COMFYUI_NEGATIVE_NODE: ${COMFYUI_NEGATIVE_NODE:-7}
+      COMFYUI_LATENT_NODE: ${COMFYUI_LATENT_NODE:-5}
+      COMFYUI_SEED_NODE: ${COMFYUI_SEED_NODE:-3}
       # 生成产物本地落盘目录（容器内路径，宿主机卷持久化）
       UPLOAD_DIR: /repo/uploads
     volumes:
       - api-uploads:/repo/uploads
+      # ComfyUI 工作流文件（宿主机导出后挂载进容器；文件不存在也不报错，用到时再校验）
+      - ${COMFYUI_WORKFLOW_HOST_FILE:-./comfyui-workflow.json}:/repo/comfyui-workflow.json:ro
     ports:
       - '3080:3080'
     depends_on:

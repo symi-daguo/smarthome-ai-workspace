@@ -2,10 +2,13 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config';
 
 /**
- * 极简 MiniMax（M-series）客户端
+ * OpenAI 兼容 chat 客户端（多模型适配层）
  *
- * 0.1.1：直接调用 MiniMax OpenAI 兼容端点，便于本地快速验证 API key
- * 0.2.0：替换为 LiteLLM 网关（统一模型路由 / 预算 / Guardrails）
+ * 客户自部署时通过 env 选择任意 OpenAI 兼容端点：
+ *   LLM_BASE_URL / LLM_API_KEY / LLM_MODEL（如 DeepSeek、通义千问、智谱、Kimi、OpenAI、
+ *   本地 Ollama/LM Studio/vLLM 等）。
+ * 未设置 LLM_* 时回退到 MiniMax_*（向后兼容 0.1.x 默认），再回退到 MiniMax 官方端点。
+ * 模型名解析：显式配置 LLM_MODEL 时全局锁定该模型；否则沿用调用方传入的 model。
  */
 @Injectable()
 export class LlmService {
@@ -13,13 +16,31 @@ export class LlmService {
 
   constructor(private readonly config: ConfigService) {}
 
-  private endpoint(): string {
-    const base = this.config.get<string>('MiniMax_BASE_URL', 'https://api.minimaxi.com/v1');
-    return `${base.replace(/\/+$/, '')}/chat/completions`;
+  /** 当前对话服务的基础 URL（去尾部斜杠） */
+  get baseUrl(): string {
+    const base =
+      this.config.get<string>('LLM_BASE_URL') ||
+      this.config.get<string>('MiniMax_BASE_URL', 'https://api.minimaxi.com/v1');
+    return base.replace(/\/+$/, '');
   }
 
-  private apiKey(): string | undefined {
-    return this.config.get<string>('MiniMax_API_KEY');
+  private endpoint(): string {
+    return `${this.baseUrl}/chat/completions`;
+  }
+
+  /** 当前对话服务的 API Key（LLM_ 优先，回退 MiniMax_） */
+  get apiKey(): string | undefined {
+    return this.config.get<string>('LLM_API_KEY') || this.config.get<string>('MiniMax_API_KEY');
+  }
+
+  /** 显式配置的模型名（空串视为未配置，返回 undefined 交由调用方传入值决定） */
+  get configuredModel(): string | undefined {
+    return this.config.get<string>('LLM_MODEL') || undefined;
+  }
+
+  /** 解析实际使用的模型：锁定 env 的 LLM_MODEL，否则用传入值 */
+  private resolveModel(inputModel: string): string {
+    return this.configuredModel ?? inputModel;
   }
 
   async chat(input: {
@@ -28,11 +49,11 @@ export class LlmService {
     systemPrompt?: string;
     maxTokens?: number;
   }): Promise<{ reply: string; model: string; latencyMs: number }> {
-    const key = this.apiKey();
+    const key = this.apiKey;
     if (!key || key === 'replace-me') {
       throw new ServiceUnavailableException({
         code: 'LLM_KEY_MISSING',
-        message: 'MiniMax_API_KEY 未配置，请在 .env 中填入',
+        message: '对话模型 API Key 未配置（LLM_API_KEY 或 MiniMax_API_KEY），请在 .env 中填入',
       });
     }
 
@@ -40,6 +61,7 @@ export class LlmService {
     if (input.systemPrompt) messages.push({ role: 'system', content: input.systemPrompt });
     messages.push({ role: 'user', content: input.prompt });
 
+    const model = this.resolveModel(input.model);
     const start = Date.now();
     const response = await fetch(this.endpoint(), {
       method: 'POST',
@@ -48,7 +70,7 @@ export class LlmService {
         Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
-        model: input.model,
+        model,
         messages,
         temperature: 0.3,
         max_tokens: input.maxTokens ?? 512,
@@ -61,7 +83,7 @@ export class LlmService {
       this.logger.warn(`LLM ${response.status}: ${body.slice(0, 200)}`);
       throw new ServiceUnavailableException({
         code: 'LLM_UPSTREAM_ERROR',
-        message: `MiniMax 返回 ${response.status}`,
+        message: `模型服务返回 ${response.status}`,
         upstream: body.slice(0, 200),
       });
     }
@@ -70,14 +92,14 @@ export class LlmService {
       choices?: { message?: { content?: string } }[];
       model?: string;
     };
-    // MiniMax-M3 等推理模型会把思考过程包在  内一并返回，剥离后再交付
-    const reply = (data.choices?.[0]?.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
-    return { reply, model: data.model ?? input.model, latencyMs };
+    // 推理模型（MiniMax-M3、DeepSeek-R1 等）可能把思考过程包在  内一并返回，剥离后再交付
+    const reply = (data.choices?.[0]?.message?.content ?? '').replace(/[\s\S]*?<\/think>\s*/g, '').trim();
+    return { reply, model: data.model ?? model, latencyMs };
   }
 
   /** 是否可用（用于调用方在 key 缺失时降级到规则通道） */
   isConfigured(): boolean {
-    const key = this.apiKey();
+    const key = this.apiKey;
     return Boolean(key && key !== 'replace-me');
   }
 

@@ -10,26 +10,6 @@ import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { llmTestSchema, type LlmTestDto } from './llm.schemas.js';
 import { LlmService } from './llm.service.js';
 
-/**
- * 平台层 LLM 测试入口，仅 super_admin 可调用
- * 用于本地验证 MiniMax API key 与连通性；后续 agent 工具调用复用 LlmService
- */
-@UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
-@Controller('admin/llm')
-export class LlmController {
-  constructor(private readonly llm: LlmService) {}
-
-  @RequirePermissions('platform:billing:manage')
-  @Post('test')
-  test(@Body(new ZodValidationPipe(llmTestSchema)) dto: LlmTestDto) {
-    return this.llm.chat({
-      model: dto.model,
-      prompt: dto.prompt,
-      systemPrompt: dto.systemPrompt,
-    });
-  }
-}
-
 /** 工作台通用对话：租户成员按 content:generate 调用，扣费额度 env 可配（演示默认 3 token/次） */
 const CHAT_TOKENS = Number(process.env.BILLING_CHAT_TOKENS ?? 3);
 

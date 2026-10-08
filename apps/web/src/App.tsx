@@ -8,7 +8,7 @@ import { MainLayout } from './layouts/MainLayout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { TokenCenter } from './pages/TokenCenter';
-import { ModelTest } from './pages/ModelTest';
+import { ModelConfig } from './pages/ModelConfig';
 import { ContentExtract } from './pages/ContentExtract';
 import { AgentMarket } from './pages/AgentMarket';
 import { ImageStudio } from './pages/ImageStudio';
@@ -47,7 +47,7 @@ function ProtectedRoutes(): React.ReactNode {
           <Route path="works" element={<MyAssets />} />
           <Route path="content" element={<ContentExtract />} />
           <Route path="tokens" element={<TokenCenter />} />
-          <Route path="model-test" element={<ModelTest />} />
+          <Route path="model-config" element={<ModelConfig />} />
         </Route>
       </Routes>
     </ChatStoreProvider>

@@ -11,8 +11,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
+import { generateViaComfyui, generateViaMinimax, generateViaOpenai, type GeneratedImage } from './image-provider.js';
 
-/** MiniMax 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
+/** 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
 
 // 扣费额度 env 可配（自部署用户按自己的模型成本调整；默认值仅为演示口径）
 const IMAGE_TOKENS = Number(process.env.BILLING_IMAGE_TOKENS ?? 300);
@@ -55,8 +56,37 @@ export class MediaService {
     return key;
   }
 
+  /** 文生图 provider：minimax（默认）| openai（OpenAI images/兼容网关）| comfyui（本地） */
+  get imageProvider(): 'minimax' | 'openai' | 'comfyui' {
+    const p = (this.config.get<string>('IMAGE_PROVIDER') ?? 'minimax').toLowerCase();
+    return p === 'openai' || p === 'comfyui' ? p : 'minimax';
+  }
+
+  /** OpenAI 兼容 images 端点（未配置 IMAGE_BASE_URL 时用官方默认） */
+  private get openaiImageBase(): string {
+    return (this.config.get<string>('IMAGE_BASE_URL') || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  }
+
+  private get openaiImageKey(): string {
+    const key = this.config.get<string>('IMAGE_API_KEY');
+    if (!key || key === 'replace-me') {
+      throw new ServiceUnavailableException({ code: 'IMAGE_KEY_MISSING', message: 'IMAGE_API_KEY 未配置（IMAGE_PROVIDER=openai 时必填）' });
+    }
+    return key;
+  }
+
+  private get comfyBaseUrl(): string {
+    return (this.config.get<string>('COMFYUI_BASE_URL') || 'http://127.0.0.1:8188').replace(/\/+$/, '');
+  }
+
   private uploadDir(): string {
     return this.config.get<string>('UPLOAD_DIR', 'uploads');
+  }
+
+  /** 读取 env 字符串，空串/空白视为未配置回退默认（compose 传入 VAR= 空值时避免 model:"" 等破坏请求） */
+  private env(key: string, fallback: string): string {
+    const v = this.config.get<string>(key);
+    return v && v.trim() ? v : fallback;
   }
 
   /** 相对路径 -> 绝对路径，并阻止路径穿越 */
@@ -78,13 +108,22 @@ export class MediaService {
     return { sizeBytes: buf.length, mimeType: res.headers.get('content-type') ?? 'application/octet-stream' };
   }
 
+  /** provider 返回的内存图片写入本地卷 */
+  private async saveBuffer(img: GeneratedImage, rel: string): Promise<{ sizeBytes: number; mimeType: string }> {
+    if (img.buffer.length === 0) throw new ServiceUnavailableException('ASSET_EMPTY');
+    const abs = join(this.uploadDir(), rel);
+    await mkdir(join(abs, '..'), { recursive: true });
+    await writeFile(abs, img.buffer);
+    return { sizeBytes: img.buffer.length, mimeType: img.mimeType };
+  }
+
   private dayDir(): string {
     const d = new Date();
     const p = (n: number): string => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  /** 文生图：扣额度 -> MiniMax 生成 -> 下载本地 -> 写 MediaAsset */
+  /** 文生图：扣额度 -> 按 IMAGE_PROVIDER 生成 -> 本地落盘 -> 写 MediaAsset */
   async generateImage(opts: {
     tenantId: string;
     userId: string;
@@ -94,31 +133,40 @@ export class MediaService {
   }): Promise<{ id: string; url: string; status: string }> {
     await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
-    const aspect = IMAGE_ASPECT[opts.size] ?? '16:9';
-    const res = await fetch(`${this.baseUrl}/image_generation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({
-        model: 'image-01',
+    const provider = this.imageProvider;
+    let img: GeneratedImage;
+    if (provider === 'comfyui') {
+      img = await generateViaComfyui({
+        baseUrl: this.comfyBaseUrl,
+        workflow: await this.loadComfyWorkflow(),
         prompt: opts.prompt,
-        aspect_ratio: aspect,
-        response_format: 'url',
-        n: 1,
-      }),
-    });
-    const data = (await res.json().catch(() => null)) as {
-      data?: { image_urls?: string[] };
-      base_resp?: { status_code?: number; status_msg?: string };
-    } | null;
-    const remoteUrl = data?.data?.image_urls?.[0];
-    if (!res.ok || !remoteUrl) {
-      const msg = data?.base_resp?.status_msg ?? `HTTP ${res.status}`;
-      this.logger.warn(`image_generation 失败: ${msg}`);
-      throw new ServiceUnavailableException({ code: 'IMAGE_GEN_FAILED', message: `图片生成失败：${msg}` });
+        width: Number(opts.size.split('x')[0]) || 1024,
+        height: Number(opts.size.split('x')[1]) || 1024,
+        promptNode: this.env('COMFYUI_PROMPT_NODE', '6'),
+        negativeNode: this.env('COMFYUI_NEGATIVE_NODE', '7'),
+        latentNode: this.env('COMFYUI_LATENT_NODE', '5'),
+        seedNode: this.env('COMFYUI_SEED_NODE', '3'),
+      });
+    } else if (provider === 'openai') {
+      img = await generateViaOpenai({
+        baseUrl: this.openaiImageBase,
+        apiKey: this.openaiImageKey,
+        model: this.env('IMAGE_MODEL', 'gpt-image-1'),
+        prompt: opts.prompt,
+        size: opts.size,
+      });
+    } else {
+      img = await generateViaMinimax({
+        baseUrl: this.baseUrl,
+        apiKey: this.apiKey,
+        model: this.env('IMAGE_MODEL', 'image-01'),
+        prompt: opts.prompt,
+        aspect: IMAGE_ASPECT[opts.size] ?? '16:9',
+      });
     }
 
-    const rel = `images/${this.dayDir()}/${randomUUID()}.jpg`;
-    const { sizeBytes, mimeType } = await this.saveRemote(remoteUrl, rel);
+    const rel = `images/${this.dayDir()}/${randomUUID()}.${img.ext}`;
+    const { sizeBytes, mimeType } = await this.saveBuffer(img, rel);
 
     const asset = await this.prisma.mediaAsset.create({
       data: {
@@ -134,6 +182,20 @@ export class MediaService {
       },
     });
     return { id: asset.id, url: `/api/media/assets/${asset.id}/file`, status: 'ready' };
+  }
+
+  /** 读取用户导出的 ComfyUI API 格式工作流 JSON */
+  private async loadComfyWorkflow(): Promise<Record<string, unknown>> {
+    const path = this.env('COMFYUI_WORKFLOW_PATH', 'comfyui-workflow.json');
+    try {
+      const raw = await readFile(path, 'utf8');
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'COMFYUI_WORKFLOW_MISSING',
+        message: `未找到 ComfyUI 工作流文件（COMFYUI_WORKFLOW_PATH=${path}）。请在 ComfyUI 中「Workflow → Export(API)」导出后放到该路径`,
+      });
+    }
   }
 
   /** 文生视频：扣额度 -> 提交任务 -> 轮询 -> 下载本地 -> 写 MediaAsset */

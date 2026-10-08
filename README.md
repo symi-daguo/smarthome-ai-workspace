@@ -10,7 +10,7 @@
 
 - 后端：NestJS 12（ESM）+ Prisma 7 + PostgreSQL 18（pgvector）+ Redis
 - 前端：React 19 + Ant Design 6 + Vite 8
-- 模型接入：默认直连 MiniMax（OpenAI 兼容协议），可切换 LiteLLM 网关（compose profile 按需启动）接任意上游
+- 模型接入：对话走 OpenAI 兼容协议（`LLM_BASE_URL`/`LLM_API_KEY` 接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图 `IMAGE_PROVIDER` 支持 MiniMax / OpenAI / 本地 ComfyUI；生视频 MiniMax Director；前端「模型配置」页有引导与连通测试
 - PPT 生成：pptxgenjs（MIT，浏览器端生成原生可编辑 16:9 幻灯片）
 
 ## 功能地图
@@ -73,13 +73,23 @@ docker compose up -d --build  # web 5173、api 3080
 
 ## 模型与计费配置
 
-`.env` 关键项：
+登录后侧栏「系统管理 → 模型配置」页有**完整引导**：当前 provider 概览（Key 脱敏显示）、对话连通性一键测试、云端/本地/ComfyUI 三类接入表格与 `.env` 示例一键复制。`.env` 关键项：
 
 ```bash
-# 模型上游：默认 MiniMax；换成任意 OpenAI 兼容端点（含本地网关）改 BASE_URL 即可
-MiniMax_BASE_URL=https://api.minimaxi.com/v1
+# —— 对话：OpenAI 兼容协议，接任意国内外云端或本地模型 ——
+# 不设置 LLM_* 时回退 MiniMax_*（向后兼容）
+LLM_BASE_URL=https://api.deepseek.com          # 或 https://dashscope.aliyuncs.com/compatible-mode/v1、智谱、Kimi、OpenAI、http://localhost:11434/v1(Ollama) …
+LLM_API_KEY=你的key                              # 本地 Ollama/LM Studio 填任意占位串
+LLM_MODEL=deepseek-chat                          # 可选：锁定模型；留空跟随请求
+MiniMax_BASE_URL=https://api.minimaxi.com/v1     # 默认 provider（LLM_* 未设时生效）
 MiniMax_API_KEY=你的key
-# 或启用 LiteLLM 网关统一路由：docker compose --profile gateway up -d
+
+# —— 生图：minimax(默认) | openai | comfyui(本地) ——
+IMAGE_PROVIDER=comfyui
+COMFYUI_BASE_URL=http://127.0.0.1:8188
+COMFYUI_WORKFLOW_PATH=./comfyui-workflow.json    # 项目内置 SD1.5 模板，可换成自己导出的工作流
+
+# —— 生视频：MiniMax Director（T2V/I2V-01-Director）——
 
 # 扣费额度（token 记账单位，100 token = ¥1 仅为展示层口径）——按你的模型成本自行设定，平台不预设商业价格
 BILLING_CHAT_TOKENS=3
@@ -93,7 +103,7 @@ JWT_SECRET=（openssl rand -hex 32 生成）
 SEED_ADMIN_PASSWORD=（自定义强密码）
 ```
 
-未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。
+改完 `.env` 重启后端生效（`docker compose up -d api`）。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需本机启动 ComfyUI 并在 `Workflow → Export (API)` 导出工作流 JSON（或直接使用项目内置模板）。
 
 ## 安全与限流
 
