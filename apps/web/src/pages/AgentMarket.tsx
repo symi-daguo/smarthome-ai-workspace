@@ -1,8 +1,9 @@
-import { FireFilled } from '@ant-design/icons';
-import { App as AntApp, Button, Dropdown, Empty, Grid, Switch, Typography, theme } from 'antd';
+import { DeleteOutlined, FireFilled, PlusOutlined } from '@ant-design/icons';
+import { App as AntApp, Button, Dropdown, Empty, Form, Grid, Input, Modal, Popconfirm, Switch, Typography, theme } from 'antd';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AGENT_CATEGORIES, SEED_AGENTS, type AgentDef } from '../data/agents';
+import { loadCustomAgents, saveCustomAgents, type CustomAgent } from '../data/customAgents';
 
 const { Text, Title } = Typography;
 
@@ -14,6 +15,13 @@ const SORT_LABELS: Record<SortKey, string> = {
   name: '按名称',
 };
 
+interface CreateForm {
+  name: string;
+  /** 选填：未填写时 validateFields 返回 undefined */
+  description?: string;
+  systemPrompt: string;
+}
+
 export function AgentMarket(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
@@ -22,6 +30,9 @@ export function AgentMarket(): ReactNode {
   const [category, setCategory] = useState('全部');
   const [sort, setSort] = useState('default' as SortKey);
   const [agents, setAgents] = useState<AgentDef[]>(SEED_AGENTS);
+  const [custom, setCustom] = useState<CustomAgent[]>(() => loadCustomAgents());
+  const [createOpen, setCreateOpen] = useState(false);
+  const [form] = Form.useForm<CreateForm>();
 
   const openAgent = (a: AgentDef): void => {
     if (!a.enabled) {
@@ -31,10 +42,13 @@ export function AgentMarket(): ReactNode {
     navigate('/', { state: { agent: a.name } });
   };
 
+  const openCustom = (a: CustomAgent): void => {
+    navigate('/', { state: { agent: a.name, systemPrompt: a.systemPrompt } });
+  };
+
   const visible = useMemo(() => {
     let list = agents;
-    if (category === '我的智能体') list = [];
-    else if (category !== '全部') list = list.filter((a) => a.category === category);
+    if (category !== '全部' && category !== '我的智能体') list = list.filter((a) => a.category === category);
     if (sort === 'usage') list = [...list].sort((a, b) => b.usage - a.usage);
     if (sort === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     return list;
@@ -42,6 +56,34 @@ export function AgentMarket(): ReactNode {
 
   const toggle = (key: string, enabled: boolean): void => {
     setAgents((prev) => prev.map((a) => (a.key === key ? { ...a, enabled } : a)));
+  };
+
+  const submitCreate = async (): Promise<void> => {
+    let v: CreateForm;
+    try {
+      v = await form.validateFields();
+    } catch {
+      return; // 校验失败由 antd 字段红字提示，无需额外处理
+    }
+    const agent: CustomAgent = {
+      id: `ca${Date.now().toString(36)}`,
+      name: v.name.trim(),
+      description: v.description?.trim() ?? '',
+      systemPrompt: v.systemPrompt.trim(),
+      createdAt: Date.now(),
+    };
+    const next = [agent, ...custom];
+    setCustom(next);
+    saveCustomAgents(next);
+    setCreateOpen(false);
+    form.resetFields();
+    message.success('智能体已创建，点击卡片即可对话');
+  };
+
+  const removeCustom = (id: string): void => {
+    const next = custom.filter((c) => c.id !== id);
+    setCustom(next);
+    saveCustomAgents(next);
   };
 
   return (
@@ -55,7 +97,7 @@ export function AgentMarket(): ReactNode {
           marginBottom: 20,
         }}
       >
-        <Title level={3} style={{ margin: 0, marginRight: 16 }}>全部智能体</Title>
+        <Title level={3} style={{ margin: 0, marginRight: 16 }}>{category === '我的智能体' ? '我的智能体' : '全部智能体'}</Title>
         {AGENT_CATEGORIES.map((c) => {
           const active = category === c;
           return (
@@ -81,21 +123,109 @@ export function AgentMarket(): ReactNode {
           );
         })}
         <div style={{ flex: 1 }} />
-        <Dropdown
-          menu={{
-            items: (Object.keys(SORT_LABELS) as SortKey[]).map((k) => ({ key: k, label: SORT_LABELS[k] })),
-            onClick: ({ key }) => setSort(key as SortKey),
-          }}
-        >
-          <Button type="text">{SORT_LABELS[sort]} ▾</Button>
-        </Dropdown>
+        {category === '我的智能体' ? (
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setCreateOpen(true)}
+            style={{ background: token.colorPrimary }}
+          >
+            新建智能体
+          </Button>
+        ) : (
+          <Dropdown
+            menu={{
+              items: (Object.keys(SORT_LABELS) as SortKey[]).map((k) => ({ key: k, label: SORT_LABELS[k] })),
+              onClick: ({ key }) => setSort(key as SortKey),
+            }}
+          >
+            <Button type="text">{SORT_LABELS[sort]} ▾</Button>
+          </Dropdown>
+        )}
       </div>
 
-      {visible.length === 0 ? (
-        <Empty
-          description={category === '我的智能体' ? '还没有自建智能体，可在「智能百宝箱 - 定制智能体」创建' : '该分类下暂无智能体'}
-          style={{ marginTop: 64 }}
-        />
+      {category === '我的智能体' ? (
+        custom.length === 0 ? (
+          <Empty
+            description={<Text type="secondary">还没有自建智能体，点右上角「新建智能体」，为它写一段人设提示词即可对话</Text>}
+            style={{ marginTop: 64 }}
+          />
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(auto-fill, minmax(${screens.md ? 260 : 220}px, 1fr))`,
+              gap: 16,
+            }}
+          >
+            {custom.map((a) => (
+              <div key={a.id} style={{ position: 'relative' }}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openCustom(a)}
+                  onKeyDown={(e) => e.key === 'Enter' && openCustom(a)}
+                  style={{
+                    background: token.colorBgContainer,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 16,
+                    padding: '16px 16px 14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    height: '100%',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 10,
+                        background: token.colorPrimaryBg,
+                        color: token.colorPrimary,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 700,
+                        fontSize: 15,
+                        flex: 'none',
+                      }}
+                    >
+                      {a.name.slice(0, 1)}
+                    </div>
+                    <Text strong style={{ fontSize: 15, flex: 1 }} ellipsis>{a.name}</Text>
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12.5, lineHeight: '19px', flex: 1 }} ellipsis={{ tooltip: a.description }}>
+                    {a.description || '（无简介）'}
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    人设：{a.systemPrompt.slice(0, 24)}{a.systemPrompt.length > 24 ? '…' : ''}
+                  </Text>
+                </div>
+                {/* 删除控件置于可点击卡片之外：Popconfirm 弹层经 portal 渲染，React 事件沿组件树冒泡，放卡片内会触发跳转 */}
+                <Popconfirm
+                  title="删除该自建智能体？"
+                  okText="删除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() => removeCustom(a.id)}
+                >
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    style={{ position: 'absolute', top: 12, right: 12, zIndex: 1 }}
+                  />
+                </Popconfirm>
+              </div>
+            ))}
+          </div>
+        )
+      ) : visible.length === 0 ? (
+        <Empty description="该分类下暂无智能体" style={{ marginTop: 64 }} />
       ) : (
         <div
           style={{
@@ -164,6 +294,41 @@ export function AgentMarket(): ReactNode {
           ))}
         </div>
       )}
+
+      <Modal
+        title="新建智能体"
+        open={createOpen}
+        onOk={() => void submitCreate()}
+        onCancel={() => setCreateOpen(false)}
+        okText="创建"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" requiredMark={false} style={{ marginTop: 12 }}>
+          <Form.Item
+            name="name"
+            label="名称"
+            rules={[{ required: true, message: '请输入智能体名称' }, { max: 30 }]}
+          >
+            <Input placeholder="例如：门店报价话术助手" maxLength={30} />
+          </Form.Item>
+          <Form.Item name="description" label="一句话简介（选填）" rules={[{ max: 60 }]}>
+            <Input placeholder="卡片上展示给同事看" maxLength={60} />
+          </Form.Item>
+          <Form.Item
+            name="systemPrompt"
+            label="人设提示词（对话时作为系统指令注入模型）"
+            rules={[{ required: true, message: '请描述这个智能体是谁、要做什么' }, { min: 10, message: '至少 10 个字，写清楚角色与输出要求' }]}
+          >
+            <Input.TextArea
+              rows={4}
+              maxLength={2000}
+              showCount
+              placeholder="例如：你是智能家居门店的报价话术助手。面对客户砍价，给出三档应对话术：守住价格、赠送服务、限时权益。口语化，中文，每条不超过 60 字。"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

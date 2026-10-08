@@ -171,7 +171,7 @@ export function Login(): ReactNode {
           </div>
 
           <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }}>
-            已服务 1000+ 智能家居服务商 · © 2026 增强型智能家居 AI SaaS 平台
+            开源自部署 · 模型自选 · © 2026 智能家居 AI 工作台
           </Text>
         </section>
       ) : null}

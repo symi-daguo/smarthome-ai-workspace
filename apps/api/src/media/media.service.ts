@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
@@ -144,16 +144,31 @@ export class MediaService {
     duration: string;
     resolution: string;
     ratio: string;
+    firstFrameAssetId?: string;
     title?: string;
   }): Promise<{ id: string; url: string; status: string }> {
+    // 首帧图：读取本地资产转 data URL，切换 I2V-01-Director（图生视频导演版，同支持运镜指令）
+    // 先校验再扣额：资产无效时不应白扣额度
+    let firstFrameImage = '';
+    if (opts.firstFrameAssetId) {
+      const asset = await this.prisma.mediaAsset.findFirst({
+        where: { id: opts.firstFrameAssetId, tenantId: opts.tenantId },
+      });
+      if (!asset) throw new NotFoundException('FIRST_FRAME_NOT_FOUND');
+      if (asset.kind !== 'image') throw new BadRequestException('FIRST_FRAME_MUST_BE_IMAGE');
+      const buf = await readFile(this.resolveSafe(asset.filePath));
+      firstFrameImage = `data:${asset.mimeType ?? 'image/jpeg'};base64,${buf.toString('base64')}`;
+    }
+
     await this.tokens.consume(opts.tenantId, VIDEO_TOKENS, 'CONSUME', { kind: 'video', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
     const submit = await fetch(`${this.baseUrl}/video_generation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({
-        model: 'T2V-01-Director',
+        model: firstFrameImage ? 'I2V-01-Director' : 'T2V-01-Director',
         prompt: opts.prompt,
+        ...(firstFrameImage ? { first_frame_image: firstFrameImage } : {}),
         duration: Number(opts.duration),
         resolution: VIDEO_RESOLUTION[opts.resolution] ?? '720P',
         fps: 24,

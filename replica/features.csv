@@ -3,7 +3,7 @@ feature,area,priority,original,clone,notes
 用户协议与隐私政策勾选拦截,onboarding,must,yes,yes,
 免费注册开通团队,onboarding,must,yes,yes,注册即建租户+赠送额度
 多账号共享额度与个人隔离,onboarding,should,yes,partial,后端多租户已有；成员共享额度策略待补
-首次登录使用说明弹窗,onboarding,should,yes,partial,手动指引已有，自动序列待补
+首次登录使用说明弹窗,onboarding,should,yes,yes,0.1.16 按用户 id 的 localStorage 标记自动弹一次，顶栏手动入口保留
 白色侧栏+分组导航+渐变新对话按钮,shell,must,yes,yes,渐变值需改为实测 #5B5BF0→#8E7BF6
 历史对话内嵌侧栏(标题+智能体·时间),shell,must,yes,yes,
 侧栏底部个人中心卡(额度/设置/退出),shell,must,yes,yes,
@@ -16,17 +16,17 @@ feature,area,priority,original,clone,notes
 智能体市场-分类 pill+标签+排序筛选,agents,must,yes,yes,
 智能体市场-卡片网格(封面+名称+描述+热度+启用开关),agents,must,yes,yes,
 智能体市场-点击进入对话,agents,must,yes,yes,启用后跳工作台带智能体名；未启用给提示
-智能体市场-我的智能体(自建),agents,should,yes,no,
+智能体市场-我的智能体(自建),agents,should,yes,partial,0.1.16 真实化：自建+人设注入对话+本地持久化；后端 agents 表 0.2.0
 AI 生图-参考图上传,AIimage,must,yes,yes,
 AI 生图-提示词+17 场景 chip,AIimage,must,yes,yes,
 AI 生图-模型/尺寸/质量/格式/背景参数,AIimage,must,yes,yes,
-AI 生图-右侧预览+原位翻页,AIimage,must,yes,partial,预览已接通真实生成(0.1.6)；原位翻页待 0.2.0
+AI 生图-右侧预览+原位翻页,AIimage,must,yes,yes,0.1.16 本次会话生成历史数组化+左右箭头翻页计数
 AI 生图-底部案例库横滚,AIimage,should,yes,yes,自有示例替代
 AI 生图-分步引导弹窗,AIimage,could,yes,no,
-AI 生视频-首帧上传+从我的资料选择,AIvideo,must,yes,partial,上传已有；从资料选首帧弹窗待 0.2.0(资料库已真实化)
-AI 生视频-尾帧(可选),AIvideo,should,yes,yes,
+AI 生视频-首帧上传+从我的资料选择,AIvideo,must,yes,yes,0.1.16 真实化：首帧 uploads 落盘+资料选择弹窗+I2V-01-Director 图生视频（尾帧受 v1 API 限制不做）
+AI 生视频-尾帧(可选),AIvideo,should,yes,no,MiniMax v1 API 仅支持首帧，尾帧需 V2/H3 模型（0.1.16 移除假上传控件，诚实标注）
 AI 生视频-预设场景 chip+描述 textarea,AIvideo,must,yes,yes,
-AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,yes,
+AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,partial,0.1.16 时长/画质/比例真实传递；声音参数上游不支持已移除
 智能方案-4 步向导(客户资料→审稿→生成校对→交付),plan,must,yes,yes,0.1.11 幻灯片视觉重设计：8 类页型独立构图+每页实景配图+阴影卡；对方整页 PNG 拍平不可编辑
 智能方案-客户资料表单 7 字段+合规提示,plan,must,yes,yes,0.1.8 扩为 9 字段(加重点空间/客户需求)+合规提示
 智能方案-11 风格卡横滚选择,plan,must,yes,yes,
@@ -39,7 +39,7 @@ WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.
 智能报价(选品配单+区间算价+报价单导出),treasure,must,yes,yes,0.1.14 真实化：QuoteStudio /quote 产品库选品+数量步进+区间合计+CSV(BOM)含合规说明
 知识库-启用开关+多文件上传入库,knowledge,must,yes,yes,S2 提取管道已有；独立知识库页与 RAG 检索待接(S4)
 我的资料-分类 pill+日期分组+缩略图网格,assets,must,yes,yes,
-我的资料-过期占位态,assets,should,yes,partial,占位样式已有，过期逻辑待后端
+我的资料-过期占位态,assets,should,yes,yes,0.1.16 onError 降级"原文件暂不可用"占位卡
 素材库-Tab(优秀素材/我的投稿/已购买),materials,should,yes,yes,已购买持久化(0.1.6)；投稿链路 0.3.0
 素材库-下载付费 1 元+创作者收益,materials,could,yes,partial,1 元额度购买/下载闭环已通(0.1.6)；收益结算待支付通道
 个人中心-额度卡(大字余额+总额度+已使用+进度条+额度说明 chip),profile,must,yes,yes,额度中心含统计卡+进度条+邀请卡+额度口径说明(不预设商业单价)

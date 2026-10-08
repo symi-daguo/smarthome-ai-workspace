@@ -52,6 +52,14 @@ export function MyAssets(): ReactNode {
   const { conversations } = useChatStore();
   const [tab, setTab] = useState('all');
   const [media, setMedia] = useState<MediaRow[]>([]);
+  // 文件缺失/过期的资产 id（img/video onError 记录），降级为占位态
+  const [unavailable, setUnavailable] = useState<Set<string>>(new Set());
+  const markUnavailable = (id: string): void =>
+    setUnavailable((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
 
   useEffect(() => {
     api<MediaRow[]>('/api/media/assets')
@@ -159,19 +167,26 @@ export function MyAssets(): ReactNode {
                   <div
                     style={{
                       height: 120,
-                      background: token.colorPrimaryBg,
+                      background: unavailable.has(a.id) ? token.colorFillQuaternary : token.colorPrimaryBg,
                       display: 'flex',
+                      flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
+                      gap: 4,
                       fontSize: 26,
-                      color: token.colorPrimary,
+                      color: unavailable.has(a.id) ? token.colorTextQuaternary : token.colorPrimary,
                       overflow: 'hidden',
                     }}
                   >
-                    {a.url && a.kind === 'image' ? (
-                      <img src={a.url} alt={a.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    {unavailable.has(a.id) ? (
+                      <>
+                        <PictureOutlined style={{ fontSize: 22 }} />
+                        <Text type="secondary" style={{ fontSize: 11 }}>原文件暂不可用</Text>
+                      </>
+                    ) : a.url && a.kind === 'image' ? (
+                      <img src={a.url} alt={a.title} onError={() => markUnavailable(a.id)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : a.url && a.kind === 'video' ? (
-                      <video src={a.url} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <video src={a.url} muted playsInline onError={() => markUnavailable(a.id)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (
                       KIND_ICON[a.kind]
                     )}

@@ -152,6 +152,16 @@ export function MainLayout(): ReactNode {
       .catch(() => setPlans([]));
   }, [location.pathname]);
 
+  // 首次登录自动弹出使用说明（按用户 id 记忆，仅弹一次）
+  useEffect(() => {
+    if (!user) return;
+    const seenKey = `guide_seen_${user.id}`;
+    if (!localStorage.getItem(seenKey)) {
+      setGuideOpen(true);
+      localStorage.setItem(seenKey, '1');
+    }
+  }, [user]);
+
   const historyItems = useMemo<HistoryItem[]>(
     () =>
       [
@@ -598,7 +608,7 @@ export function MainLayout(): ReactNode {
             cancelButtonProps={{ style: { display: 'none' } }}
           >
             <Text style={{ display: 'block', marginBottom: 12 }}>
-              平台按额度计费，开通会员即送额度，用完可充值。当前主要能力单价：
+              平台按额度计费，注册即送演示额度，用完可充值。计费口径：
             </Text>
             {GUIDE_PRICE_ROWS.map((row) => (
               <div

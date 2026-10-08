@@ -15,6 +15,8 @@ export interface WorkbenchConversation {
   updatedAt: number;
   /** 由智能体市场进入时记录的智能体名 */
   agent?: string;
+  /** 自建智能体的自定义人设（有值时优先于内置 systemPromptFor） */
+  systemPrompt?: string;
 }
 
 /** 任务球使用的轻量生成任务队列（"生成任务"面板） */
@@ -84,7 +86,7 @@ interface ChatStoreValue {
   setActiveKey: (key: string | null) => void;
   createNew: () => void;
   remove: (key: string) => void;
-  send: (text: string, agent?: string) => void;
+  send: (text: string, agent?: string, systemPrompt?: string) => void;
   sending: boolean;
   tasks: GenTask[];
   clearFinished: () => void;
@@ -126,22 +128,25 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
   );
 
   const send = useCallback(
-    (text: string, agent?: string) => {
+    (text: string, agent?: string, systemPrompt?: string) => {
       const content = text.trim();
       if (!content || sending) return;
 
       const userMessage: ChatMessage = { id: uid(), role: 'user', content, createdAt: Date.now() };
       // 新会话的 key 在状态更新前确定，避免在 updater 内产生副作用
-      const existing = activeKey && conversations.some((c) => c.key === activeKey);
-      const convKey = existing ? activeKey : uid();
+      const existingConv = activeKey ? conversations.find((c) => c.key === activeKey) : undefined;
+      const convKey = existingConv ? existingConv.key : uid();
       const taskId = uid();
+      // 续聊沿用会话原有人设；新会话用本次传入的
+      const effAgent = existingConv?.agent ?? agent;
+      const effPrompt = existingConv?.systemPrompt ?? systemPrompt;
 
       setTasks((prev) => [
         { id: taskId, title: content.length > 20 ? `${content.slice(0, 20)}…` : content, status: 'running', createdAt: Date.now() },
         ...prev,
       ]);
 
-      if (existing) {
+      if (existingConv) {
         setConversations((prev) =>
           prev.map((c) =>
             c.key === convKey
@@ -156,6 +161,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
           messages: [userMessage],
           updatedAt: Date.now(),
           agent,
+          systemPrompt,
         };
         setConversations((prev) => [created, ...prev]);
         setActiveKey(convKey);
@@ -186,7 +192,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
         body: JSON.stringify({
           model: 'MiniMax-M3',
           prompt: content,
-          systemPrompt: systemPromptFor(agent),
+          systemPrompt: effPrompt ?? systemPromptFor(effAgent),
         }),
       })
         .then((r) => finish(r.reply))

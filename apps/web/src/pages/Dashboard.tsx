@@ -80,14 +80,16 @@ export function Dashboard(): ReactNode {
   const location = useLocation();
   const [input, setInput] = useState('');
   const agentRef = useRef<string | undefined>(undefined);
+  const promptRef = useRef<string | undefined>(undefined);
   const [agentName, setAgentName] = useState<string | undefined>();
 
-  // 智能体市场点击卡片进入：携带智能体名，首条消息归属该智能体
+  // 智能体市场点击卡片进入：携带智能体名（自建智能体另带人设提示词），首条消息归属该智能体
   // 百宝箱工具卡进入：携带预填提示词
   useEffect(() => {
-    const st = location.state as { agent?: string; prompt?: string } | null;
+    const st = location.state as { agent?: string; prompt?: string; systemPrompt?: string } | null;
     if (st?.agent) {
       agentRef.current = st.agent;
+      promptRef.current = st.systemPrompt;
       setAgentName(st.agent);
     }
     if (st?.prompt) setInput(st.prompt);
@@ -148,8 +150,9 @@ export function Dashboard(): ReactNode {
   const handleSubmit = (value: string): void => {
     const content = value.trim();
     if (!content) return;
-    send(content, agentRef.current);
+    send(content, agentRef.current, promptRef.current);
     agentRef.current = undefined;
+    promptRef.current = undefined;
     setInput('');
   };
 

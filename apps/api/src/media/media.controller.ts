@@ -52,7 +52,8 @@ export class MediaController {
       prompt: dto.prompt,
       duration: String(dto.duration),
       resolution: dto.resolution.replace('P', ''),
-      ratio: '16:9',
+      ratio: dto.ratio,
+      firstFrameAssetId: dto.firstFrameAssetId,
       title: dto.title,
     });
   }

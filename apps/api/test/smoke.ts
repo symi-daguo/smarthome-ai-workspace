@@ -248,6 +248,30 @@ async function main(): Promise<void> {
   });
   check('方案挂接户型图不存在返回 404', floorplan404.status === 404);
 
+  // 视频首帧：资产无效应在扣额前拒绝（404/400），且余额不变
+  const tokensBeforeVideo = await request<{ tokenBalance: number }>(base, '/api/tenants/current/tokens', {
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+  });
+  const videoBadFrame = await request<{ message?: unknown }>(base, '/api/media/videos', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+    body: JSON.stringify({ prompt: '客厅灯光渐亮的演示视频', duration: 5, resolution: '720P', firstFrameAssetId: '00000000-0000-0000-0000-000000000000' }),
+  });
+  const tokensAfterVideo = await request<{ tokenBalance: number }>(base, '/api/tenants/current/tokens', {
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+  });
+  check(
+    '视频首帧资产不存在返回 404 且不扣额',
+    videoBadFrame.status === 404 && tokensAfterVideo.body.tokenBalance === tokensBeforeVideo.body.tokenBalance,
+  );
+
+  const videoBadRatio = await request<{ message?: unknown }>(base, '/api/media/videos', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+    body: JSON.stringify({ prompt: '客厅灯光渐亮的演示视频', duration: 5, resolution: '720P', ratio: '4:3' }),
+  });
+  check('视频非法比例被校验拒绝', videoBadRatio.status === 400);
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);

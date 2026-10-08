@@ -1,5 +1,7 @@
 import {
+  LeftOutlined,
   PlusOutlined,
+  RightOutlined,
   ThunderboltFilled,
 } from '@ant-design/icons';
 import { App as AntApp, Button, Grid, Select, Typography, Upload, theme } from 'antd';
@@ -74,8 +76,11 @@ export function ImageStudio(): ReactNode {
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('pro');
   const [size, setSize] = useState('1536x1024');
-  const [preview, setPreview] = useState<string | null>(null);
+  // 本次会话生成历史（可左右翻页回看）
+  const [history, setHistory] = useState<string[]>([]);
+  const [histIdx, setHistIdx] = useState(0);
   const [generating, setGenerating] = useState(false);
+  const preview = history[histIdx] ?? null;
 
   const toggleScene = (s: string): void => {
     setScenes((prev) =>
@@ -96,7 +101,9 @@ export function ImageStudio(): ReactNode {
         method: 'POST',
         body: JSON.stringify({ prompt: `${full}，真实室内摄影质感`, size, model }),
       });
-      setPreview(fileUrl(`${r.url}?t=${Date.now()}`));
+      const url = fileUrl(`${r.url}?t=${Date.now()}`);
+      setHistory((prev) => [url, ...prev]);
+      setHistIdx(0);
       message.success('图片已生成并保存到「我的资料」');
     } catch (e) {
       message.error((e as Error).message || '生成失败');
@@ -268,7 +275,30 @@ export function ImageStudio(): ReactNode {
           }}
         >
           {preview ? (
-            <img src={preview} alt="生成结果" style={{ width: '100%', borderRadius: 16 }} />
+            <>
+              <img src={preview} alt="生成结果" style={{ width: '100%', borderRadius: 16 }} />
+              {history.length > 1 ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 10 }}>
+                  <Button
+                    size="small"
+                    shape="circle"
+                    icon={<LeftOutlined />}
+                    disabled={histIdx >= history.length - 1}
+                    onClick={() => setHistIdx((i) => Math.min(history.length - 1, i + 1))}
+                  />
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {history.length - histIdx} / {history.length}（本次会话）
+                  </Text>
+                  <Button
+                    size="small"
+                    shape="circle"
+                    icon={<RightOutlined />}
+                    disabled={histIdx === 0}
+                    onClick={() => setHistIdx((i) => Math.max(0, i - 1))}
+                  />
+                </div>
+              ) : null}
+            </>
           ) : generating ? (
             <Text type="secondary">生成中…</Text>
           ) : (
