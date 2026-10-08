@@ -364,6 +364,31 @@ async function main(): Promise<void> {
   );
   await request(base, '/api/admin/model-config/image', { ...authA, method: 'DELETE' });
 
+  // 外部知识库：配置持久化 + 未连通时检索降级不报错 + 审计留痕
+  const putKnowledge = await request<{ ok: boolean }>(base, '/api/knowledge/external', {
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ provider: 'weknora', baseUrl: 'http://127.0.0.1:9/api/v1', apiKey: 'sk-kbsmoke7777', kbIds: '', enabled: 'true' }),
+  });
+  const kbStatus = await request<{ provider: string; keyMasked: string | null; enabled: boolean }>(base, '/api/knowledge/external', authA);
+  check(
+    '外部知识库配置保存（provider=weknora + key 脱敏）',
+    putKnowledge.status === 200 && kbStatus.body.provider === 'weknora' && kbStatus.body.keyMasked === '••••7777' && kbStatus.body.enabled === true,
+  );
+  check('知识库配置响应不含明文 Key', !JSON.stringify(kbStatus.body).includes('sk-kbsmoke7777'));
+
+  const kbTest = await request<{ ok: boolean; error?: string }>(base, '/api/knowledge/external/test', { ...authA, method: 'POST' });
+  check('外部知识库连通测试诚实报不可达', kbTest.body.ok === false && Boolean(kbTest.body.error));
+
+  const kbSearch = await request<{ chunks: unknown[] }>(base, '/api/knowledge/external/search', { ...authA, method: 'POST', body: JSON.stringify({ query: '窗帘电机' }) });
+  check('外部知识库不可达时检索返回 503 提示', kbSearch.status === 503);
+
+  const badProvider = await request(base, '/api/knowledge/external', { ...authA, method: 'PUT', body: JSON.stringify({ provider: 'notion' }) });
+  check('非法 provider 被校验拒绝', badProvider.status === 400);
+  await request(base, '/api/knowledge/external', { ...authA, method: 'DELETE' });
+  const kbReset = await request<{ provider: string }>(base, '/api/knowledge/external', authA);
+  check('恢复默认后 provider 回退 none', kbReset.body.provider === 'none');
+
   // 个人设置：昵称/头像色持久化
   const patchProfile = await request<{ id: string; displayName: string; avatarColor: string | null }>(base, '/api/auth/profile', {
     ...authA,

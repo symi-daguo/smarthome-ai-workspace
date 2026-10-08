@@ -38,6 +38,7 @@ export class ChatController {
       model: dto.model,
       prompt: dto.prompt,
       systemPrompt: dto.systemPrompt,
+      rag: { tenantId: user.activeTenantId as string, userId: user.id, scene: 'chat' },
     });
   }
 }

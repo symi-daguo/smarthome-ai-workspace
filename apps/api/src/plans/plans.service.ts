@@ -171,6 +171,7 @@ export class PlansService {
         systemPrompt: '你是资深全屋智能方案设计师，为智能家居服务商撰写交付客户的方案文案。',
         prompt,
         maxTokens: 12000,
+        rag: { tenantId: input.tenantId, userId: input.userId, scene: 'plan', query: `${input.title} ${input.customer} ${input.needs} ${input.keySpaces}` },
       });
       pages = this.sanitizePages(raw, skeleton);
     } catch (e) {

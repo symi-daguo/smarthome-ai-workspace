@@ -128,6 +128,7 @@ export class OrdersService {
 "needs"(需求要点，用中文顿号分隔)、"categories"(建议关注的产品品类，从 gateway/switch/sensor/light/curtain/security/appliance/audio/hvac 中选，逗号分隔)。
 只返回 JSON 对象。`,
       prompt: rawInput,
+      rag: { tenantId, userId, scene: 'order-intake' },
     });
 
     // 产品匹配：按建议品类从产品库取候选（真实数据，非 LLM 幻觉）

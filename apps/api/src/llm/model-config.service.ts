@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.module.js';
  *   - API Key 只进不出：保存后任何读取接口一律脱敏，绝不回传明文
  */
 
-export type ConfigScope = 'chat' | 'image' | 'video';
+export type ConfigScope = 'chat' | 'image' | 'video' | 'knowledge';
 
 export interface ChatRuntime {
   baseUrl: string;
@@ -43,6 +43,16 @@ export interface VideoRuntime {
   source: 'db' | 'env';
 }
 
+export interface KnowledgeRuntime {
+  provider: 'none' | 'weknora' | 'obsidian';
+  baseUrl: string;
+  apiKey?: string;
+  /** weknora: 限定知识库 id（逗号分隔，空=全部） */
+  kbIds: string;
+  enabled: boolean;
+  source: 'db' | 'env';
+}
+
 interface DbChatConfig {
   baseUrl?: string;
   apiKey?: string;
@@ -66,8 +76,15 @@ interface DbVideoConfig {
   apiKey?: string;
   model?: string;
 }
+interface DbKnowledgeConfig {
+  provider?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  kbIds?: string;
+  enabled?: string;
+}
 
-const SCOPES: ConfigScope[] = ['chat', 'image', 'video'];
+const SCOPES: ConfigScope[] = ['chat', 'image', 'video', 'knowledge'];
 
 function clean(v: string | undefined): string {
   return (v ?? '').trim();
@@ -142,6 +159,23 @@ export class ModelConfigService {
     const apiKey = clean(db.apiKey) || fallbackKey || undefined;
     const model = clean(db.model) || this.env('VIDEO_MODEL') || (provider === 'openai' ? 'sora-2' : 'T2V-01-Director / I2V-01-Director');
     return { provider, baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, model, source: Object.values(db).some((v) => clean(v)) ? 'db' : 'env' };
+  }
+
+  async knowledgeConfig(): Promise<KnowledgeRuntime> {
+    const db = (await this.read<DbKnowledgeConfig>('knowledge')) ?? {};
+    const providerRaw = clean(db.provider) || this.env('KNOWLEDGE_PROVIDER', 'none').toLowerCase();
+    const provider: KnowledgeRuntime['provider'] = providerRaw === 'weknora' || providerRaw === 'obsidian' ? providerRaw : 'none';
+    const fallbackBase = provider === 'obsidian' ? this.env('OBSIDIAN_BASE_URL', 'http://127.0.0.1:27124') : this.env('WEKNORA_BASE_URL', 'http://127.0.0.1:8080/api/v1');
+    const fallbackKey = provider === 'obsidian' ? this.envKey('OBSIDIAN_API_KEY') : this.envKey('WEKNORA_API_KEY');
+    const enabledRaw = clean(db.enabled) || this.env('KNOWLEDGE_ENABLED', 'true');
+    return {
+      provider,
+      baseUrl: (clean(db.baseUrl) || fallbackBase).replace(/\/+$/, ''),
+      apiKey: clean(db.apiKey) || fallbackKey || undefined,
+      kbIds: clean(db.kbIds) || this.env('WEKNORA_KB_IDS'),
+      enabled: provider !== 'none' && enabledRaw !== 'false',
+      source: Object.values(db).some((v) => clean(v)) ? 'db' : 'env',
+    };
   }
 
   /**

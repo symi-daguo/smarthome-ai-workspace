@@ -14,6 +14,7 @@ import { LlmModule } from './llm/llm.module.js';
 import { MediaModule } from './media/media.module.js';
 import { PlansModule } from './plans/plans.module.js';
 import { OrdersModule } from './orders/orders.module.js';
+import { KnowledgeModule } from './knowledge/knowledge.module.js';
 import { LayoutModule } from './layout/layout.module.js';
 
 @Module({
@@ -38,6 +39,7 @@ import { LayoutModule } from './layout/layout.module.js';
     MediaModule,
     PlansModule,
     OrdersModule,
+    KnowledgeModule,
     LayoutModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

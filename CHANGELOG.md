@@ -2,6 +2,28 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.22] - 2026-10-08
+
+### Added（外部知识库联动：兼容 WeKnora / Obsidian，各板块 agent 检索注入）
+
+用户要求知识库支持客户本机部署的专业引擎（腾讯开源 WeKnora 或 Obsidian），电脑性能足够即可拉取最新仓库自行部署，让知识库真正发挥优势，且每个板块都能通过接口调用 agent 联动、权限合理、操作留痕。联网学习 WeKnora（Tencent/WeKnora，Go，REST `X-API-Key` 认证，`knowledge-search` 端点）与 Obsidian Local REST API（Bearer 认证，`/search/simple` + `/vault/{path}`）的接口协议，采用**纯 HTTP 适配器**接入（不引入任何框架/依赖，YAGNI + 许可证合规，与 ComfyUI 接入模式一致）。
+
+- **双适配器** [knowledge-adapter.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/knowledge/knowledge-adapter.ts)：`searchWeknora`（`POST {base}/knowledge-search`，支持 `knowledge_base_ids` 限定库）、`searchObsidian`（`POST /search/simple?query=` 命中后回退 `GET /vault/{path}` 拉正文），统一返回 `KnowledgeChunk[]`；`pingExternalKnowledge` 连通探测（weknora=`GET /knowledge-bases`、obsidian=`GET /`，401/403 判 Key 无效）；`formatKnowledgeContext` 把片段拼为注入 system prompt 的参考上下文（最多 5 段、每段 1600 字）
+- **配置持久化**：`ModelSetting` 新增 `knowledge` scope（provider/baseUrl/apiKey/kbIds/enabled），沿用 DB>.env、Key 只进不出（短掩码）、保存即生效、恢复 .env 默认；`.env` 提供 `KNOWLEDGE_PROVIDER` / `WEKNORA_*` / `OBSIDIAN_*` 模板，compose 透传并加 `extra_hosts: host.docker.internal:host-gateway` 让容器能访问宿主机上的 WeKnora/Obsidian/ComfyUI
+- **各板块 agent 联动**（RAG 注入）：`LlmService` 新增 `RagContext` 入参，`chat`/`chatObject`/`chatJson` 传入 rag 时自动检索外部库并拼进 system prompt；已接入对话（`/api/llm/chat`）、接单 AI 解析（`order-intake`）、智能方案生成（`plan`）三条链路。**检索失败降级为无知识库模式**（异常上抛→捕获→空串 + warn 日志），主链路绝不因外部库不可用而中断
+- **权限与留痕**：`/api/knowledge/external`（GET/PUT/DELETE/test/search）要求 `knowledge:manage` 权限（tenant_admin 具备、viewer 拒绝），检索按租户隔离；每次检索（含 agent 联动与降级）写 `AuditLog`（action=`knowledge.search`，target 记录场景+命中数/degraded）
+- **前端知识库页**新增「外部知识库联动」卡：provider 单选（不使用/WeKnora/Obsidian，切换自动填默认地址）、服务地址 + API Key（留空保持不变）+ WeKnora 知识库 id 限定、保存/连通测试/恢复默认、检索演示（List 展示命中片段带来源标签）、启用开关；Alert 内嵌两引擎的部署指引（git clone + docker compose / 插件安装 + Key 获取位置）
+
+### Fixed
+
+- 实测反馈修复：provider 选「不使用」时增加「保存（关闭联动）」与「恢复 .env 默认」按钮（原无法经 UI 落库关闭）；检索空结果提示区分「启用开关未开」与「无命中」
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **62/62**（新增 6 用例：外部库配置保存+Key 脱敏、响应不含明文、连通诚实报不可达、不可达检索 503、非法 provider 拒绝、恢复默认回退 none）
+- 协议级验证：本机起 mock（模拟 WeKnora/Obsidian 协议），curl 经 `host.docker.internal:18099` 端到端跑通双适配器——WeKnora 返回"可见知识库 2 个"+命中片段、Obsidian 返回"在线"+笔记片段
+- 浏览器实测（1440/1920/768）：WeKnora/Obsidian 配置→连通→检索命中→刷新持久化→恢复默认全流程通过，三档无横向溢出，console 0 error
+
 ## [0.1.21] - 2026-10-08
 
 ### Added（开始接单板块完整开发：AI 接待工作台）

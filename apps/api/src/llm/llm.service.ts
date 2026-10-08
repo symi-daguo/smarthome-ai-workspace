@@ -1,5 +1,7 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ModelConfigService } from './model-config.service.js';
+import { PrismaService } from '../prisma/prisma.module.js';
+import { formatKnowledgeContext, searchExternalKnowledge } from '../knowledge/knowledge-adapter.js';
 
 /**
  * OpenAI 兼容 chat 客户端（多模型适配层）
@@ -9,18 +11,58 @@ import { ModelConfigService } from './model-config.service.js';
  * 支持任意 OpenAI 兼容端点：DeepSeek、通义千问、智谱、Kimi、OpenAI、MiniMax、
  * 本地 Ollama / LM Studio / vLLM 等。
  * 模型名解析：显式配置模型时全局锁定；否则沿用调用方传入的 model。
+ * RAG 联动：传入 rag 上下文时自动检索外部知识库（WeKnora/Obsidian）注入 system prompt，
+ *   检索失败降级为无知识库模式不阻塞主链路，操作写入审计留痕。
  */
+export interface RagContext {
+  tenantId: string;
+  userId?: string;
+  /** 场景标识（chat / order-intake / plan 等），用于审计 */
+  scene: string;
+  /** 检索 query（缺省用 prompt） */
+  query?: string;
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
 
-  constructor(private readonly modelConfig: ModelConfigService) {}
+  constructor(
+    private readonly modelConfig: ModelConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  /** 外部知识库检索并拼上下文；异常降级空串 + 审计 */
+  private async ragContext(rag: RagContext, fallbackQuery: string): Promise<string> {
+    try {
+      const cfg = await this.modelConfig.knowledgeConfig();
+      if (!cfg.enabled || cfg.provider === 'none') return '';
+      const chunks = await searchExternalKnowledge(cfg, (rag.query ?? fallbackQuery).slice(0, 300));
+      await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${chunks.length} hits`);
+      return formatKnowledgeContext(chunks);
+    } catch (e) {
+      this.logger.warn(`知识库检索降级（${rag.scene}）: ${e instanceof Error ? e.message : String(e)}`);
+      await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> degraded`);
+      return '';
+    }
+  }
+
+  private async audit(rag: RagContext, target: string): Promise<void> {
+    try {
+      await this.prisma.auditLog.create({
+        data: { tenantId: rag.tenantId, actorId: rag.userId ?? null, action: 'knowledge.search', target: `${rag.scene}:${target}` },
+      });
+    } catch {
+      // 留痕失败不阻塞业务
+    }
+  }
 
   async chat(input: {
     model: string;
     prompt: string;
     systemPrompt?: string;
     maxTokens?: number;
+    rag?: RagContext;
   }): Promise<{ reply: string; model: string; latencyMs: number }> {
     const cfg = await this.modelConfig.chatConfig();
     const key = cfg.apiKey;
@@ -32,7 +74,9 @@ export class LlmService {
     }
 
     const messages: { role: 'system' | 'user'; content: string }[] = [];
-    if (input.systemPrompt) messages.push({ role: 'system', content: input.systemPrompt });
+    let system = input.systemPrompt ?? '';
+    if (input.rag) system += await this.ragContext(input.rag, input.prompt);
+    if (system.trim()) messages.push({ role: 'system', content: system.trim() });
     messages.push({ role: 'user', content: input.prompt });
 
     const model = cfg.model ?? input.model;
@@ -85,10 +129,12 @@ export class LlmService {
     model?: string;
     systemPrompt: string;
     prompt: string;
+    rag?: RagContext;
   }): Promise<T> {
     const { reply } = await this.chat({
       model: input.model ?? 'MiniMax-M3',
       maxTokens: 2048,
+      rag: input.rag,
       systemPrompt: `${input.systemPrompt}\n只返回一个 JSON 对象，不要输出 markdown 代码块、解释或多余文字。值为字符串，无法识别的字段给空字符串。`,
       prompt: input.prompt,
     });
@@ -117,10 +163,12 @@ export class LlmService {
     systemPrompt: string;
     prompt: string;
     maxTokens?: number;
+    rag?: RagContext;
   }): Promise<T> {
     const { reply } = await this.chat({
       model: 'MiniMax-M3',
       maxTokens: input.maxTokens ?? 8192,
+      rag: input.rag,
       systemPrompt: `${input.systemPrompt}\n只返回一个 JSON 值（对象或数组），不要输出 markdown 代码块、解释或多余文字。`,
       prompt: input.prompt,
     });

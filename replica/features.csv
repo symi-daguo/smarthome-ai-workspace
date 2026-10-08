@@ -37,7 +37,7 @@ AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,partial,0.1.16 �
 WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.1.14 真实化：additive 径向光斑红强绿弱+图例，复用点位编辑器 ?mode=wifi
 灯光点位效果图(灯具布点+暖光光晕),treasure,should,yes,yes,0.1.14 真实化：暖光晕+徽章标签，复用点位编辑器 ?mode=light
 智能报价(选品配单+区间算价+报价单导出),treasure,must,yes,yes,0.1.14 真实化：QuoteStudio /quote 产品库选品+数量步进+区间合计+CSV(BOM)含合规说明
-知识库-启用开关+多文件上传入库,knowledge,must,yes,yes,S2 提取管道已有；独立知识库页与 RAG 检索待接(S4)
+知识库-启用开关+多文件上传入库,knowledge,must,yes,yes,0.1.22 新增外部知识库联动：兼容 WeKnora(腾讯开源)/Obsidian Local REST API 纯 HTTP 适配器，对话/接单/方案三链路 RAG 注入+审计留痕
 我的资料-分类 pill+日期分组+缩略图网格,assets,must,yes,yes,
 我的资料-过期占位态,assets,should,yes,yes,0.1.16 onError 降级"原文件暂不可用"占位卡
 素材库-Tab(优秀素材/我的投稿/已购买),materials,should,yes,yes,已购买持久化(0.1.6)；投稿链路 0.3.0
