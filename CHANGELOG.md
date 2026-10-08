@@ -2,6 +2,26 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.23] - 2026-10-08
+
+### Added（产品图标库 + 户型图美化：补齐 PPT 空间动线页的图标布点表达）
+
+用户指出产品图标库未开发，导致 PPT 方案的空间动线页只有圆点没有产品图标，且缺少"客户平面图上传→美化→按产品布图标"的完整链路。
+
+- **产品图标库** [product-icons.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/product-icons.ts)：9 品类（网关/开关/传感器/灯光/窗帘/安防/家电/影音/暖通）内联 SVG 图标（24x24 viewBox，零外部依赖、可缩放），`categoryIconSvg()` 供 React 渲染、`categoryIconDataUrl()` 供 canvas 绘制
+- **点位合成升级** [pointOverlay.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/pointOverlay.ts)：`compositePoints` 的彩色圆底从"首字"改为**白色品类图标**（按点位品类去重预加载）；`compositeLightPlan`（灯光徽章）与 `compositeHeatmap`（WiFi 信号源）同步换图标。由于预览（PlanSlide）、PNG 导出（DeviceLayout）、**PPTX 导出（planPptx）**、免登录分享页四端共用同一合成函数，图标自动全端一致
+- **点位编辑器 UI**：DeviceLayout 画布 DOM 点位与右侧产品库列表按钮均渲染品类图标（彩色圆底+白色图标 / 品类色图标+名称）
+- **户型图美化**：`enhanceFloorplan()` canvas 确定性增强（白底化 + 2% 截断对比度拉伸 + 中间调 S 曲线），DeviceLayout 新增「美化图纸」按钮——增强后重新入库替换底图，归一化点位不受影响。**刻意不用 AI 重绘**：AI 生图会篡改墙体位置与房间尺寸，对销售交付是危险的；需要 AI 彩平示意稿时走「AI 生图」板块自行生成（诚实边界，代码注释说明）
+
+### Docs
+
+- README 新增「知识库联动优势与场景」小节：对接 WeKnora/Obsidian 后，对话回答引用客户私有资料更准、接单 intake 能识别客户资料中的品牌型号、方案生成文案贴合客户话术库、检索失败自动降级不阻塞
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **62/62**（图标为纯前端渲染层，无后端变更）
+- 浏览器实测（/device-layout，1440/1920/768）：产品库 20 个按钮带 9 类彩色图标、布点画布为圆底+白色品类图标（DOM 验证 path fill=#ffffff 且无首字文本）、美化图纸成功替换底图且点位保留、导出 PNG 正常、三档无溢出、console 0 error
+
 ## [0.1.22] - 2026-10-08
 
 ### Added（外部知识库联动：兼容 WeKnora / Obsidian，各板块 agent 检索注入）

@@ -3,7 +3,8 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { App as AntApp, Button, Card, Empty, Input, Segmented, Space, Spin, Tag, Tooltip, Typography, Upload } from 'antd';
 import { api, fileUrl } from '../lib/api';
-import { catMeta, compositePoints, compositeHeatmap, compositeLightPlan } from '../lib/pointOverlay';
+import { catMeta, compositePoints, compositeHeatmap, compositeLightPlan, enhanceFloorplan } from '../lib/pointOverlay';
+import { categoryIconSvg } from '../lib/product-icons';
 
 const { Title, Text } = Typography;
 
@@ -101,6 +102,7 @@ export function DeviceLayout(): ReactNode {
   const [selected, setSelected] = useState('');
   const [title, setTitle] = useState(planId ? '方案户型点位图' : '未命名点位图');
   const [uploading, setUploading] = useState(false);
+  const [beautifying, setBeautifying] = useState(false);
   const [saving, setSaving] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string } | null>(null);
@@ -143,6 +145,27 @@ export function DeviceLayout(): ReactNode {
     }
     return false;
   }, [message]);
+
+  /** 美化当前底图：确定性增强（白底/对比度，户型不变）后重新入库替换，归一化点位不受影响 */
+  const beautify = useCallback(async () => {
+    if (!imgSrc) return;
+    setBeautifying(true);
+    try {
+      const dataUrl = await enhanceFloorplan(imgSrc);
+      const blob = await (await fetch(dataUrl)).blob();
+      const fd = new FormData();
+      fd.append('file', new File([blob], 'beautified-floorplan.png', { type: 'image/png' }));
+      fd.append('title', `${title.slice(0, 50)}（美化版）`);
+      const res = await api<{ id: string; url: string }>('/api/media/uploads', { method: 'POST', body: fd });
+      setAssetId(res.id);
+      setImgSrc(fileUrl(res.url));
+      message.success('图纸已美化（白底增强，户型保持不变）');
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setBeautifying(false);
+    }
+  }, [imgSrc, title, message]);
 
   const stagePos = useCallback((clientX: number, clientY: number): { x: number; y: number } | null => {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -256,6 +279,7 @@ export function DeviceLayout(): ReactNode {
               </Upload>
               {imgSrc && (
                 <>
+                  <Button size="small" loading={beautifying} onClick={() => void beautify()}>美化图纸</Button>
                   <Button size="small" onClick={() => void exportAnnotatedPng(imgSrc, points, title, mode)}>导出标注图纸 PNG</Button>
                   {mode === 'device' && <Button size="small" onClick={() => exportBomCsv(points, products, title)}>导出设备清单 CSV</Button>}
                   {mode === 'device' && <Button size="small" type="primary" loading={saving} onClick={() => void saveAndAttach()}>{planId ? '保存并挂接方案' : '保存图纸'}</Button>}
@@ -288,8 +312,8 @@ export function DeviceLayout(): ReactNode {
                     style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%,-50%)', cursor: 'grab', zIndex: isSel ? 3 : 2 }}
                   >
                     <Tooltip title={`${p.name}（拖动调整位置，选中后按 Delete 或点右侧删除）`}>
-                      <div style={{ width: isSel ? 30 : 24, height: isSel ? 30 : 24, borderRadius: '50%', background: m.color, border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700 }}>
-                        {p.name.slice(0, 1)}
+                      <div style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', background: m.color, border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <span style={{ display: 'inline-flex', color: '#fff', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: categoryIconSvg(p.category, isSel ? 20 : 16, '#ffffff') }} />
                       </div>
                     </Tooltip>
                   </div>
@@ -316,8 +340,13 @@ export function DeviceLayout(): ReactNode {
                     style={{ textAlign: 'left', height: 'auto', padding: '4px 10px', whiteSpace: 'normal' }}
                     onClick={() => setPending((cur) => (cur?.id === p.id ? null : p))}
                   >
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
-                    <div style={{ fontSize: 11, opacity: 0.65 }}>{p.perRoom || '按需布置'} · 参考 ¥{p.priceMin}-{p.priceMax}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ display: 'inline-flex', color: catMeta(p.category).color, lineHeight: 0, flex: 'none' }} dangerouslySetInnerHTML={{ __html: categoryIconSvg(p.category, 16, catMeta(p.category).color) }} />
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
+                        <div style={{ fontSize: 11, opacity: 0.65 }}>{p.perRoom || '按需布置'} · 参考 ¥{p.priceMin}-{p.priceMax}</div>
+                      </div>
+                    </div>
                   </Button>
                 ))}
               </Space>

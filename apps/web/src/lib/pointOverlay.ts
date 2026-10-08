@@ -1,3 +1,5 @@
+import { categoryIconDataUrl } from './product-icons';
+
 /** 设备点位叠加共享模块：类别配色 + canvas 合成标注图（点位编辑器导出与方案 PPTX 共用） */
 
 export interface PointLike {
@@ -31,7 +33,7 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 底图 + 半透明徽章点位 + 名称标签 合成为一张标注图纸（dataURL, JPEG） */
+/** 底图 + 品类图标徽章点位 + 名称标签 合成为一张标注图纸（dataURL, PNG） */
 export async function compositePoints(baseSrc: string, points: PointLike[], targetW = 1600): Promise<string> {
   const img = await loadImage(baseSrc);
   const scale = Math.max(1, Math.min(3, targetW / img.naturalWidth));
@@ -41,6 +43,15 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
   const ctx = canvas.getContext('2d');
   if (!ctx) return baseSrc;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  // 预加载各品类图标（去重）
+  const iconCache = new Map<string, HTMLImageElement>();
+  for (const cat of new Set(points.map((p) => p.category))) {
+    try {
+      iconCache.set(cat, await loadImage(categoryIconDataUrl(cat)));
+    } catch {
+      // 图标加载失败回退首字
+    }
+  }
   const r = Math.max(14, canvas.width * 0.016);
   ctx.font = `bold ${Math.round(r * 0.95)}px "Microsoft YaHei", sans-serif`;
   for (const p of points) {
@@ -57,10 +68,16 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
     ctx.lineWidth = Math.max(2, r * 0.12);
     ctx.strokeStyle = '#ffffff';
     ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(p.name.slice(0, 1), x, y + r * 0.05);
+    const icon = iconCache.get(p.category);
+    if (icon) {
+      const s = r * 1.35;
+      ctx.drawImage(icon, x - s / 2, y - s / 2, s, s);
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.name.slice(0, 1), x, y + r * 0.05);
+    }
     const tw = ctx.measureText(p.name).width;
     const lx = x + r + 6;
     const ly = y - r * 0.7;
@@ -127,6 +144,7 @@ export async function compositeHeatmap(baseSrc: string, sources: PointLike[], ta
     [1, 'rgba(80,210,130,0)'],
   ], 0.62);
   const r = Math.max(12, canvas.width * 0.013);
+  const gwIcon = await loadImage(categoryIconDataUrl('gateway')).catch(() => null);
   for (const p of sources) {
     const x = p.x * canvas.width;
     const y = p.y * canvas.height;
@@ -137,11 +155,16 @@ export async function compositeHeatmap(baseSrc: string, sources: PointLike[], ta
     ctx.lineWidth = Math.max(2, r * 0.15);
     ctx.strokeStyle = '#fff';
     ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.font = `bold ${Math.round(r * 1.1)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('W', x, y + r * 0.06);
+    if (gwIcon) {
+      const s = r * 1.35;
+      ctx.drawImage(gwIcon, x - s / 2, y - s / 2, s, s);
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(r * 1.1)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('W', x, y + r * 0.06);
+    }
   }
   // 图例
   const lw = canvas.width * 0.2;
@@ -166,6 +189,47 @@ export async function compositeHeatmap(baseSrc: string, sources: PointLike[], ta
   return canvas.toDataURL('image/png');
 }
 
+/**
+ * 户型图美化（确定性增强，保持客户真实户型不变）：
+ * 白底化 + 亮度/对比度拉伸 + 轻微锐化，输出 dataURL(PNG)。
+ * 说明：刻意不用 AI 重绘——AI 生图会篡改墙体位置与房间尺寸，
+ * 对销售交付是危险的；如需 AI 彩平图，走「AI 生图」板块自行生成示意稿。
+ */
+export async function enhanceFloorplan(baseSrc: string, targetW = 2000): Promise<string> {
+  const img = await loadImage(baseSrc);
+  const scale = Math.max(1, Math.min(3, targetW / img.naturalWidth));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return baseSrc;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = data.data;
+  // 统计亮度分布，做对比度拉伸（截断 2% 离群值防过曝）
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < px.length; i += 4) hist[(px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0] += 1;
+  const total = px.length / 4;
+  let lo = 0; let hi = 255; let acc = 0;
+  for (let v = 0; v < 256; v += 1) { acc += hist[v]; if (acc >= total * 0.02) { lo = v; break; } }
+  acc = 0;
+  for (let v = 255; v >= 0; v -= 1) { acc += hist[v]; if (acc >= total * 0.02) { hi = v; break; } }
+  const span = Math.max(32, hi - lo);
+  const gain = 255 / span;
+  for (let i = 0; i < px.length; i += 4) {
+    for (let c = 0; c < 3; c += 1) {
+      let v = (px[i + c] - lo) * gain;
+      // 轻度 S 曲线：中间调对比增强，高亮区向白收敛（模拟干净图纸）
+      v = v < 128 ? v * (v / 128) * 0.5 + v * 0.5 : v;
+      px[i + c] = Math.max(0, Math.min(255, v));
+    }
+  }
+  ctx.putImageData(data, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
 /** 灯光点位效果图：灯具点位画暖光光晕 + 徽章标注 */
 export async function compositeLightPlan(baseSrc: string, lights: PointLike[], targetW = 1600): Promise<string> {
   const prepared = await prepareCanvas(baseSrc, targetW);
@@ -177,6 +241,7 @@ export async function compositeLightPlan(baseSrc: string, lights: PointLike[], t
     [1, 'rgba(255,180,80,0)'],
   ], 0.75);
   const r = Math.max(12, canvas.width * 0.013);
+  const lightIcon = await loadImage(categoryIconDataUrl('light')).catch(() => null);
   ctx.font = `bold ${Math.round(r * 0.95)}px "Microsoft YaHei", sans-serif`;
   for (const p of lights) {
     const x = p.x * canvas.width;
@@ -191,10 +256,15 @@ export async function compositeLightPlan(baseSrc: string, lights: PointLike[], t
     ctx.lineWidth = Math.max(2, r * 0.14);
     ctx.strokeStyle = '#fff';
     ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(p.name.slice(0, 1), x, y + r * 0.05);
+    if (lightIcon) {
+      const s = r * 1.35;
+      ctx.drawImage(lightIcon, x - s / 2, y - s / 2, s, s);
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.name.slice(0, 1), x, y + r * 0.05);
+    }
     const tw = ctx.measureText(p.name).width;
     const pad = r * 0.4;
     ctx.fillStyle = 'rgba(20,15,10,.72)';

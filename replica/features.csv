@@ -33,7 +33,7 @@ AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,partial,0.1.16 �
 智能方案-方案版本(标准/私宅),plan,should,yes,yes,0.1.8 扩为 3 版本(标准/售前/私宅)+页数 9/10/12
 智能方案-历史方案列表,plan,must,yes,yes,0.1.9 方案记录混排侧栏"历史对话"直达审稿(?id=深链)；抽屉列表保留
 百宝箱-4 组 18 工具卡(堆叠图+角标),treasure,must,yes,yes,页面框架+已有能力挂链先行
-智能设备点位布局(上传户型图+布点+导出图纸/清单),treasure,must,yes,yes,0.1.13 真实化：产品库 20 种+拖拽布点+标注图 PNG/设备清单 CSV+挂接方案空间动线页(web/PPTX)
+智能设备点位布局(上传户型图+布点+导出图纸/清单),treasure,must,yes,yes,0.1.23 补齐：9 品类 SVG 图标徽章(预览/PNG/PPTX/分享四端一致)+一键美化图纸(白底增强保持户型)+挂接方案空间动线页
 WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.1.14 真实化：additive 径向光斑红强绿弱+图例，复用点位编辑器 ?mode=wifi
 灯光点位效果图(灯具布点+暖光光晕),treasure,should,yes,yes,0.1.14 真实化：暖光晕+徽章标签，复用点位编辑器 ?mode=light
 智能报价(选品配单+区间算价+报价单导出),treasure,must,yes,yes,0.1.14 真实化：QuoteStudio /quote 产品库选品+数量步进+区间合计+CSV(BOM)含合规说明
