@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
 import { ModelConfigService } from '../llm/model-config.service.js';
 import { generateViaComfyui, generateViaMinimax, generateViaOpenai, type GeneratedImage } from './image-provider.js';
+import { generateViaMinimaxVideo, generateViaOpenaiVideo } from './video-provider.js';
 
 /** 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
 
@@ -58,18 +59,7 @@ export class MediaService {
     return abs;
   }
 
-  private async saveRemote(url: string, rel: string): Promise<{ sizeBytes: number; mimeType: string }> {
-    const res = await fetch(url);
-    if (!res.ok) throw new ServiceUnavailableException({ code: 'ASSET_DOWNLOAD_FAILED', message: `素材下载失败 ${res.status}` });
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0) throw new ServiceUnavailableException('ASSET_EMPTY');
-    const abs = join(this.uploadDir(), rel);
-    await mkdir(join(abs, '..'), { recursive: true });
-    await writeFile(abs, buf);
-    return { sizeBytes: buf.length, mimeType: res.headers.get('content-type') ?? 'application/octet-stream' };
-  }
-
-  /** provider 返回的内存图片写入本地卷 */
+  /** provider 返回的内存图片/视频写入本地卷 */
   private async saveBuffer(img: GeneratedImage, rel: string): Promise<{ sizeBytes: number; mimeType: string }> {
     if (img.buffer.length === 0) throw new ServiceUnavailableException('ASSET_EMPTY');
     const abs = join(this.uploadDir(), rel);
@@ -192,62 +182,16 @@ export class MediaService {
 
     const vcfg = await this.modelConfig.videoConfig();
     if (!vcfg.apiKey) {
-      throw new ServiceUnavailableException({ code: 'LLM_KEY_MISSING', message: '生视频 API Key 未配置，请在「模型配置」页填写 MiniMax Key' });
+      throw new ServiceUnavailableException({ code: 'LLM_KEY_MISSING', message: '生视频 API Key 未配置，请在「模型配置」页填写对应 provider 的 Key' });
     }
-    const videoKey = vcfg.apiKey;
+    const params = { prompt: opts.prompt, duration: opts.duration, resolution: opts.resolution, ratio: opts.ratio, firstFrameImage: firstFrameImage || undefined };
+    const video =
+      vcfg.provider === 'openai'
+        ? await generateViaOpenaiVideo({ baseUrl: vcfg.baseUrl, apiKey: vcfg.apiKey, model: vcfg.model, params })
+        : await generateViaMinimaxVideo({ baseUrl: vcfg.baseUrl, apiKey: vcfg.apiKey, params, resolutionMap: VIDEO_RESOLUTION, ratioMap: VIDEO_ASPECT });
 
-    const submit = await fetch(`${vcfg.baseUrl}/video_generation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${videoKey}` },
-      body: JSON.stringify({
-        model: firstFrameImage ? 'I2V-01-Director' : 'T2V-01-Director',
-        prompt: opts.prompt,
-        ...(firstFrameImage ? { first_frame_image: firstFrameImage } : {}),
-        duration: Number(opts.duration),
-        resolution: VIDEO_RESOLUTION[opts.resolution] ?? '720P',
-        fps: 24,
-        aspect_ratio: VIDEO_ASPECT[opts.ratio] ?? '16:9',
-      }),
-    });
-    const submitData = (await submit.json().catch(() => null)) as {
-      task_id?: string;
-      base_resp?: { status_code?: number; status_msg?: string };
-    } | null;
-    const taskId = submitData?.task_id;
-    if (!submit.ok || !taskId) {
-      const msg = submitData?.base_resp?.status_msg ?? `HTTP ${submit.status}`;
-      this.logger.warn(`video_generation 提交失败: ${msg}`);
-      throw new ServiceUnavailableException({ code: 'VIDEO_SUBMIT_FAILED', message: `视频任务提交失败：${msg}` });
-    }
-
-    // 轮询：最长约 5 分钟
-    let fileUrl = '';
-    for (let i = 0; i < 100; i += 1) {
-      await new Promise((r) => setTimeout(r, 3000));
-      const q = await fetch(`${vcfg.baseUrl}/query/video_generation?task_id=${taskId}`, {
-        headers: { Authorization: `Bearer ${videoKey}` },
-      });
-      const qd = (await q.json().catch(() => null)) as {
-        status?: string;
-        file_id?: string | number;
-        base_resp?: { status_msg?: string };
-      } | null;
-      if (qd?.status === 'Success' && qd.file_id) {
-        const f = await fetch(`${vcfg.baseUrl}/files/retrieve?file_id=${qd.file_id}`, {
-          headers: { Authorization: `Bearer ${videoKey}` },
-        });
-        const fd = (await f.json().catch(() => null)) as { file?: { download_url?: string } } | null;
-        fileUrl = fd?.file?.download_url ?? '';
-        break;
-      }
-      if (qd?.status === 'Fail') {
-        throw new ServiceUnavailableException({ code: 'VIDEO_GEN_FAILED', message: '视频生成失败，请稍后重试' });
-      }
-    }
-    if (!fileUrl) throw new ServiceUnavailableException({ code: 'VIDEO_TIMEOUT', message: '视频生成超时，任务仍在后台处理' });
-
-    const rel = `videos/${this.dayDir()}/${randomUUID()}.mp4`;
-    const { sizeBytes, mimeType } = await this.saveRemote(fileUrl, rel);
+    const rel = `videos/${this.dayDir()}/${randomUUID()}.${video.ext}`;
+    const { sizeBytes, mimeType } = await this.saveBuffer({ buffer: video.buffer, mimeType: video.mimeType, ext: video.ext }, rel);
 
     const asset = await this.prisma.mediaAsset.create({
       data: {

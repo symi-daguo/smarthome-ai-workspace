@@ -330,6 +330,39 @@ async function main(): Promise<void> {
     delChat.status === 200 && cfgReset.body.chat.source === 'env',
   );
 
+  // 生视频 provider 可切换（不再写死 MiniMax）+ ComfyUI 独立配置持久化
+  const putVideo = await request<{ ok: boolean }>(base, '/api/admin/model-config/video', {
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'sora-2', apiKey: 'sk-videosmoke8888' }),
+  });
+  const cfgVideo = await request<{ video: { providerKey: string; provider: string; model: string; keyMasked: string | null } }>(base, '/api/admin/model-config', authA);
+  check(
+    '生视频 provider 切换为 openai(sora) 并持久化',
+    putVideo.status === 200 &&
+      cfgVideo.body.video.providerKey === 'openai' &&
+      cfgVideo.body.video.provider.includes('Sora') &&
+      cfgVideo.body.video.model === 'sora-2' &&
+      cfgVideo.body.video.keyMasked === '••••8888',
+  );
+  await request(base, '/api/admin/model-config/video', { ...authA, method: 'DELETE' });
+
+  const putComfy = await request<{ ok: boolean }>(base, '/api/admin/model-config/image', {
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ provider: 'comfyui', comfyBaseUrl: 'http://127.0.0.1:8188', workflowPath: './my-flow.json', promptNode: '11' }),
+  });
+  const cfgComfy = await request<{ image: { providerKey: string; comfyBaseUrl: string; workflowPath: string; promptNode: string } }>(base, '/api/admin/model-config', authA);
+  check(
+    'ComfyUI 独立配置持久化（provider=comfyui + 地址/工作流/节点）',
+    putComfy.status === 200 &&
+      cfgComfy.body.image.providerKey === 'comfyui' &&
+      cfgComfy.body.image.comfyBaseUrl === 'http://127.0.0.1:8188' &&
+      cfgComfy.body.image.workflowPath === './my-flow.json' &&
+      cfgComfy.body.image.promptNode === '11',
+  );
+  await request(base, '/api/admin/model-config/image', { ...authA, method: 'DELETE' });
+
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: originalRoleId } });
 
   await app.close();

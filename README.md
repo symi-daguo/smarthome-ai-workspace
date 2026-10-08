@@ -10,7 +10,7 @@
 
 - 后端：NestJS 12（ESM）+ Prisma 7 + PostgreSQL 18（pgvector）+ Redis
 - 前端：React 19 + Ant Design 6 + Vite 8
-- 模型接入：对话走 OpenAI 兼容协议（可接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图支持 MiniMax / OpenAI / 本地 ComfyUI；生视频 MiniMax Director；前端「模型配置」页**在线编辑、保存即生效**（DB 持久化，优先于 .env），含 provider 引导与连通性测试
+- 模型接入：对话走 OpenAI 兼容协议（可接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图支持 MiniMax / OpenAI / 本地 ComfyUI；生视频支持 MiniMax Director / OpenAI Sora；前端「模型配置」页**在线编辑、保存即生效**（DB 持久化，优先于 .env），含 provider 引导与连通性测试
 - PPT 生成：pptxgenjs（MIT，浏览器端生成原生可编辑 16:9 幻灯片）
 
 ## 功能地图
@@ -73,7 +73,7 @@ docker compose up -d --build  # web 5173、api 3080
 
 ## 模型与计费配置
 
-登录后侧栏「系统管理 → 模型配置」页可**在线完成全部模型配置**：对话 / 生图 / 生视频三张可编辑卡片（Base URL、API Key、模型、ComfyUI 地址与工作流节点映射），保存即生效、持久化到数据库（无需重启）；「选用」按钮一键填入 DeepSeek / 通义千问 / 智谱 / Kimi / OpenAI / MiniMax / Ollama / LM Studio / vLLM 的推荐地址与模型；每卡带连通性测试与「恢复 .env 默认」。API Key 保存后只回显末四位，绝不外传明文。
+登录后侧栏「系统管理 → 模型配置」页可**在线完成全部模型配置**：对话 / 生图 / ComfyUI / 生视频四张可编辑卡片（Base URL、API Key、模型、provider 选择、ComfyUI 地址与工作流节点映射），保存即生效、持久化到数据库（无需重启）；「选用」按钮一键填入 DeepSeek / 通义千问 / 智谱 / Kimi / OpenAI / MiniMax / Ollama / LM Studio / vLLM 的推荐地址与模型；每卡带连通性测试与「恢复 .env 默认」。API Key 保存后只回显末四位，绝不外传明文。
 
 `.env` 仅作为**部署默认值**（DB 未配置或点「恢复 .env 默认」时生效）：
 
@@ -91,7 +91,7 @@ IMAGE_PROVIDER=comfyui
 COMFYUI_BASE_URL=http://127.0.0.1:8188
 COMFYUI_WORKFLOW_PATH=./comfyui-workflow.json    # 项目内置 SD1.5 模板，可换成自己导出的工作流
 
-# —— 生视频：MiniMax Director（T2V/I2V-01-Director）——
+# —— 生视频：VIDEO_PROVIDER=minimax(T2V/I2V-01-Director，默认) | openai(Sora 2 videos API) ——
 
 # 扣费额度（token 记账单位，100 token = ¥1 仅为展示层口径）——按你的模型成本自行设定，平台不预设商业价格
 BILLING_CHAT_TOKENS=3

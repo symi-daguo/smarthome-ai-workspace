@@ -35,10 +35,11 @@ import { useAuth } from '../store/AuthContext';
 import { PageHeader } from '../components/PageHeader';
 import { BRAND_GRADIENT } from '../theme/tokens';
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 interface ProviderView {
   provider: string;
+  providerKey: string;
   baseUrl: string;
   model: string;
   keyConfigured: boolean;
@@ -76,6 +77,8 @@ interface ImageForm {
   baseUrl: string;
   apiKey: string;
   model: string;
+}
+interface ComfyForm {
   comfyBaseUrl: string;
   workflowPath: string;
   promptNode: string;
@@ -84,11 +87,13 @@ interface ImageForm {
   seedNode: string;
 }
 interface VideoForm {
+  provider: 'minimax' | 'openai';
   baseUrl: string;
   apiKey: string;
+  model: string;
 }
 
-/** 云端 OpenAI 兼容 provider 目录（点「选用」一键填入表单） */
+/** 云端 OpenAI 兼容对话 provider 目录（点「选用」一键填入对话表单） */
 const CLOUD_PROVIDERS = [
   { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', keyUrl: 'https://platform.deepseek.com/api_keys' },
   { name: '通义千问（阿里云百炼）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', keyUrl: 'https://bailian.console.aliyun.com' },
@@ -147,11 +152,11 @@ export function ModelConfig(): ReactNode {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
-  const [results, setResults] = useState<{ chat: TestResult | null; image: TestResult | null; video: TestResult | null }>({ chat: null, image: null, video: null });
-  const [activeTab, setActiveTab] = useState('cloud');
+  const [results, setResults] = useState<{ chat: TestResult | null; image: TestResult | null; comfy: TestResult | null; video: TestResult | null }>({ chat: null, image: null, comfy: null, video: null });
 
   const [chatForm] = Form.useForm<ChatForm>();
   const [imageForm] = Form.useForm<ImageForm>();
+  const [comfyForm] = Form.useForm<ComfyForm>();
   const [videoForm] = Form.useForm<VideoForm>();
 
   const load = useCallback(async (): Promise<void> => {
@@ -159,10 +164,12 @@ export function ModelConfig(): ReactNode {
     setStatus(s);
     chatForm.setFieldsValue({ baseUrl: s.chat.baseUrl, apiKey: '', model: s.chat.model.startsWith('（') ? '' : s.chat.model });
     imageForm.setFieldsValue({
-      provider: s.image.provider.includes('ComfyUI') ? 'comfyui' : s.image.provider.includes('OpenAI') ? 'openai' : 'minimax',
+      provider: s.image.providerKey === 'comfyui' ? 'minimax' : (s.image.providerKey as 'minimax' | 'openai'),
       baseUrl: s.image.baseUrl,
       apiKey: '',
-      model: s.image.model,
+      model: s.image.providerKey === 'comfyui' ? '' : s.image.model,
+    });
+    comfyForm.setFieldsValue({
       comfyBaseUrl: s.image.comfyBaseUrl ?? '',
       workflowPath: s.image.workflowPath ?? '',
       promptNode: s.image.promptNode ?? '',
@@ -170,8 +177,13 @@ export function ModelConfig(): ReactNode {
       latentNode: s.image.latentNode ?? '',
       seedNode: s.image.seedNode ?? '',
     });
-    videoForm.setFieldsValue({ baseUrl: s.video.baseUrl, apiKey: '' });
-  }, [chatForm, imageForm, videoForm]);
+    videoForm.setFieldsValue({
+      provider: s.video.providerKey === 'openai' ? 'openai' : 'minimax',
+      baseUrl: s.video.baseUrl,
+      apiKey: '',
+      model: s.video.providerKey === 'openai' ? s.video.model : '',
+    });
+  }, [chatForm, imageForm, comfyForm, videoForm]);
 
   useEffect(() => {
     if (!isSuperAdmin) return;
@@ -188,8 +200,9 @@ export function ModelConfig(): ReactNode {
     );
   }
 
-  const save = async (scope: 'chat' | 'image' | 'video'): Promise<void> => {
-    const form = scope === 'chat' ? chatForm : scope === 'image' ? imageForm : videoForm;
+  /** 保存：scope 对应后端端点；comfy 复用 image scope（后端按字段合并） */
+  const save = async (scope: 'chat' | 'image' | 'comfy' | 'video'): Promise<void> => {
+    const form = scope === 'chat' ? chatForm : scope === 'image' ? imageForm : scope === 'comfy' ? comfyForm : videoForm;
     let values: Record<string, string>;
     try {
       values = await form.validateFields() as unknown as Record<string, string>;
@@ -198,7 +211,8 @@ export function ModelConfig(): ReactNode {
     }
     setSaving(scope);
     try {
-      await api(`/api/admin/model-config/${scope}`, { method: 'PUT', body: JSON.stringify(values) });
+      const endpoint = scope === 'comfy' ? 'image' : scope;
+      await api(`/api/admin/model-config/${endpoint}`, { method: 'PUT', body: JSON.stringify(values) });
       message.success('已保存，即时生效（无需重启）');
       await load();
     } catch (e) {
@@ -208,7 +222,7 @@ export function ModelConfig(): ReactNode {
     }
   };
 
-  const runTest = async (scope: 'chat' | 'image' | 'video'): Promise<void> => {
+  const runTest = async (scope: 'chat' | 'image' | 'comfy' | 'video'): Promise<void> => {
     setTesting(scope);
     setResults((r) => ({ ...r, [scope]: null }));
     try {
@@ -236,24 +250,24 @@ export function ModelConfig(): ReactNode {
     });
   };
 
-  /** 预设一键填入对话表单 */
   const applyPreset = (baseUrl: string, model: string): void => {
     chatForm.setFieldsValue({ baseUrl, model });
-    message.success('已填入表单，补上 API Key 后点「保存配置」');
+    message.success('已填入对话配置表单，补上 API Key 后点「保存配置」');
   };
 
   const imageProvider = Form.useWatch('provider', imageForm);
+  const videoProvider = Form.useWatch('provider', videoForm);
 
-  const actionButtons = (scope: 'chat' | 'image' | 'video', label: string): ReactNode => (
+  const actionButtons = (opts: { saveScope: 'chat' | 'image' | 'comfy' | 'video'; testScope: 'chat' | 'image' | 'comfy' | 'video'; resetScope?: 'chat' | 'image' | 'video'; resetLabel: string; showReset: boolean }): ReactNode => (
     <Space wrap style={{ marginTop: 4 }}>
-      <Button type="primary" icon={<SaveOutlined />} loading={saving === scope} onClick={() => void save(scope)} style={{ background: BRAND_GRADIENT, border: 'none' }}>
+      <Button type="primary" icon={<SaveOutlined />} loading={saving === opts.saveScope} onClick={() => void save(opts.saveScope)} style={{ background: BRAND_GRADIENT, border: 'none' }}>
         保存配置
       </Button>
-      <Button icon={<ReloadOutlined />} loading={testing === scope} onClick={() => void runTest(scope)}>
+      <Button icon={<ReloadOutlined />} loading={testing === opts.testScope} onClick={() => void runTest(opts.testScope)}>
         连通性测试
       </Button>
-      {status?.[scope].source === 'db' ? (
-        <Button danger type="text" icon={<DeleteOutlined />} onClick={() => resetScope(scope, label)}>
+      {opts.showReset && opts.resetScope ? (
+        <Button danger type="text" icon={<DeleteOutlined />} onClick={() => resetScope(opts.resetScope as 'chat' | 'image' | 'video', opts.resetLabel)}>
           恢复 .env 默认
         </Button>
       ) : null}
@@ -264,7 +278,7 @@ export function ModelConfig(): ReactNode {
     <div style={{ maxWidth: 1280, margin: '0 auto', paddingBottom: 32 }}>
       <PageHeader
         title="模型配置"
-        description="在线配置对话 / 生图 / 生视频的大模型：支持国内外云端 API 与本地模型（Ollama / LM Studio / vLLM / ComfyUI）。保存即生效，配置持久化到数据库并优先于 .env。"
+        description="在线配置对话 / 生图 / ComfyUI / 生视频的大模型：支持国内外云端 API 与本地模型（Ollama / LM Studio / vLLM / ComfyUI / Sora）。保存即生效，配置持久化到数据库并优先于 .env。"
       />
 
       {loading ? (
@@ -296,7 +310,7 @@ export function ModelConfig(): ReactNode {
                 <Input placeholder="deepseek-chat / qwen-plus / qwen3 …" allowClear />
               </Form.Item>
             </Form>
-            {actionButtons('chat', '对话')}
+            {actionButtons({ saveScope: 'chat', testScope: 'chat', resetScope: 'chat', resetLabel: '对话', showReset: status.chat.source === 'db' })}
             <TestAlert result={results.chat} />
           </Card>
 
@@ -307,7 +321,7 @@ export function ModelConfig(): ReactNode {
             styles={{ body: { padding: 18 } }}
           >
             <Form form={imageForm} layout={isWide ? 'horizontal' : 'vertical'} labelCol={isWide ? { span: 4 } : undefined} wrapperCol={isWide ? { span: 20 } : undefined}>
-              <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
+              <Form.Item name="provider" label="Provider" rules={[{ required: true }]} extra="选 ComfyUI 时请在下方「ComfyUI 本地生图」卡片配置地址与工作流">
                 <Radio.Group optionType="button" buttonStyle="solid">
                   <Radio.Button value="minimax">MiniMax（云端）</Radio.Button>
                   <Radio.Button value="openai">OpenAI 兼容</Radio.Button>
@@ -315,29 +329,13 @@ export function ModelConfig(): ReactNode {
                 </Radio.Group>
               </Form.Item>
               {imageProvider === 'comfyui' ? (
-                <>
-                  <Form.Item name="comfyBaseUrl" label="ComfyUI 地址" rules={[{ required: true, message: '请填写 ComfyUI 服务地址' }, { pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]} extra="本机默认 http://127.0.0.1:8188">
-                    <Input placeholder="http://127.0.0.1:8188" allowClear />
-                  </Form.Item>
-                  <Form.Item name="workflowPath" label="工作流 JSON" extra="ComfyUI「Workflow → Export (API)」导出的文件路径（相对 api 进程工作目录），默认使用项目内置 SD 模板">
-                    <Input placeholder="./comfyui-workflow.json" allowClear />
-                  </Form.Item>
-                  <Row gutter={12}>
-                    {(['promptNode', 'negativeNode', 'latentNode', 'seedNode'] as const).map((node, i) => (
-                      <Col span={isWide ? 6 : 12} key={node}>
-                        <Form.Item name={node} label={['正向节点', '负向节点', '尺寸节点', '种子节点'][i]} extra="节点 id">
-                          <Input placeholder={['6', '7', '5', '3'][i]} allowClear />
-                        </Form.Item>
-                      </Col>
-                    ))}
-                  </Row>
-                </>
+                <Alert type="success" showIcon style={{ marginBottom: 12 }} message="已选择 ComfyUI 本地生图，连接参数见下方独立卡片；保存本卡即切换出图后端为 ComfyUI。" />
               ) : (
                 <>
                   <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: '请填写 Base URL' }, { pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]}>
                     <Input placeholder={imageProvider === 'openai' ? 'https://api.openai.com/v1' : 'https://api.minimaxi.com/v1'} allowClear />
                   </Form.Item>
-                  <Form.Item name="apiKey" label="API Key" extra={status.image.keyConfigured ? `已保存（${status.image.keyMasked}），留空则保持不变` : undefined}>
+                  <Form.Item name="apiKey" label="API Key" extra={status.image.keyConfigured && status.image.providerKey !== 'comfyui' ? `已保存（${status.image.keyMasked}），留空则保持不变` : undefined}>
                     <Input.Password placeholder="sk-…" autoComplete="off" allowClear />
                   </Form.Item>
                   <Form.Item name="model" label="模型">
@@ -346,33 +344,68 @@ export function ModelConfig(): ReactNode {
                 </>
               )}
             </Form>
-            {actionButtons('image', '生图')}
+            {actionButtons({ saveScope: 'image', testScope: 'image', resetScope: 'image', resetLabel: '生图', showReset: status.image.source === 'db' })}
             <TestAlert result={results.image} />
+          </Card>
+
+          {/* —— ComfyUI 本地生图（常驻可见） —— */}
+          <Card
+            title={<Space><DesktopOutlined style={{ color: '#5B5BF0' }} />ComfyUI 本地生图（工作流配置）</Space>}
+            styles={{ body: { padding: 18 } }}
+          >
+            <Text type="secondary">本机启动 ComfyUI 后，在此填写地址与工作流；把上方「生图服务」Provider 选为 ComfyUI 即启用。项目已内置 SD1.5 模板 comfyui-workflow.json，可直接用。</Text>
+            <Divider style={{ margin: '12px 0' }} />
+            <Form form={comfyForm} layout={isWide ? 'horizontal' : 'vertical'} labelCol={isWide ? { span: 4 } : undefined} wrapperCol={isWide ? { span: 20 } : undefined}>
+              <Form.Item name="comfyBaseUrl" label="ComfyUI 地址" rules={[{ pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]} extra="本机默认 http://127.0.0.1:8188">
+                <Input placeholder="http://127.0.0.1:8188" allowClear />
+              </Form.Item>
+              <Form.Item name="workflowPath" label="工作流 JSON" extra="ComfyUI「Workflow → Export (API)」导出的文件路径（相对 api 进程工作目录）">
+                <Input placeholder="./comfyui-workflow.json" allowClear />
+              </Form.Item>
+              <Row gutter={12}>
+                {(['promptNode', 'negativeNode', 'latentNode', 'seedNode'] as const).map((node, i) => (
+                  <Col span={isWide ? 6 : 12} key={node}>
+                    <Form.Item name={node} label={['正向节点', '负向节点', '尺寸节点', '种子节点'][i]}>
+                      <Input placeholder={['6', '7', '5', '3'][i]} allowClear />
+                    </Form.Item>
+                  </Col>
+                ))}
+              </Row>
+            </Form>
+            {actionButtons({ saveScope: 'comfy', testScope: 'comfy', resetScope: 'image', resetLabel: 'ComfyUI', showReset: status.image.source === 'db' })}
+            <TestAlert result={results.comfy} />
           </Card>
 
           {/* —— 生视频 —— */}
           <Card
-            title={<Space><VideoCameraOutlined style={{ color: '#5B5BF0' }} />生视频服务（MiniMax Director）</Space>}
+            title={<Space><VideoCameraOutlined style={{ color: '#5B5BF0' }} />生视频服务（{status.video.provider}）</Space>}
             extra={<StatusTag view={status.video} />}
             styles={{ body: { padding: 18 } }}
           >
             <Form form={videoForm} layout={isWide ? 'horizontal' : 'vertical'} labelCol={isWide ? { span: 4 } : undefined} wrapperCol={isWide ? { span: 20 } : undefined}>
-              <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: '请填写 Base URL' }, { pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]}>
-                <Input placeholder="https://api.minimaxi.com/v1" allowClear />
+              <Form.Item name="provider" label="Provider" rules={[{ required: true }]} extra="MiniMax Director（T2V/I2V，支持首帧图生视频）或 OpenAI Sora 2（videos API）">
+                <Radio.Group optionType="button" buttonStyle="solid">
+                  <Radio.Button value="minimax">MiniMax Director</Radio.Button>
+                  <Radio.Button value="openai">OpenAI Sora</Radio.Button>
+                </Radio.Group>
               </Form.Item>
-              <Form.Item name="apiKey" label="API Key" extra={status.video.keyConfigured ? `已保存（${status.video.keyMasked}），留空则保持不变` : 'T2V/I2V-01-Director 走 MiniMax 平台，与对话可共用同一 Key'}>
+              <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: '请填写 Base URL' }, { pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]}>
+                <Input placeholder={videoProvider === 'openai' ? 'https://api.openai.com/v1' : 'https://api.minimaxi.com/v1'} allowClear />
+              </Form.Item>
+              <Form.Item name="apiKey" label="API Key" extra={status.video.keyConfigured ? `已保存（${status.video.keyMasked}），留空则保持不变` : videoProvider === 'openai' ? 'OpenAI 平台的 API Key' : 'MiniMax 平台 Key，可与对话共用'}>
                 <Input.Password placeholder="sk-…" autoComplete="off" allowClear />
               </Form.Item>
+              <Form.Item name="model" label="模型" extra={videoProvider === 'openai' ? 'Sora 模型名，如 sora-2' : '留空即用 T2V/I2V-01-Director（按有无首帧自动切换）'}>
+                <Input placeholder={videoProvider === 'openai' ? 'sora-2' : ''} allowClear />
+              </Form.Item>
             </Form>
-            {actionButtons('video', '生视频')}
+            {actionButtons({ saveScope: 'video', testScope: 'video', resetScope: 'video', resetLabel: '生视频', showReset: status.video.source === 'db' })}
             <TestAlert result={results.video} />
           </Card>
 
           {/* —— 接入指南 —— */}
           <Card title="接入指南" styles={{ body: { paddingTop: 8 } }}>
             <Tabs
-              activeKey={activeTab}
-              onChange={setActiveTab}
               items={[
                 {
                   key: 'cloud',
@@ -419,7 +452,8 @@ export function ModelConfig(): ReactNode {
                       />
                       <Divider style={{ margin: '4px 0' }} />
                       <Descriptions size="small" column={1} items={[
-                        { key: '1', label: 'ComfyUI（本地生图）', children: '① 本机安装启动 ComfyUI（默认 http://127.0.0.1:8188）→ ② 搭好工作流，菜单 Workflow → Export (API) 导出 JSON → ③ 存为 comfyui-workflow.json → ④ 上方生图卡片选 ComfyUI 填地址保存。项目已内置一份 SD1.5 模板可直接用。' },
+                        { key: '1', label: 'ComfyUI（本地生图）', children: '① 本机安装启动 ComfyUI（默认 http://127.0.0.1:8188）→ ② 搭好工作流，菜单 Workflow → Export (API) 导出 JSON → ③ 存为 comfyui-workflow.json → ④ 在上方「ComfyUI 本地生图」卡填地址与工作流并保存，再把「生图服务」Provider 选 ComfyUI。项目已内置一份 SD1.5 模板可直接用。' },
+                        { key: '2', label: 'OpenAI Sora（本地/云生视频）', children: '生视频 Provider 选 OpenAI Sora，Base URL 填 https://api.openai.com/v1（或兼容网关），Key 填 OpenAI 平台 Key，模型填 sora-2，保存即可。' },
                       ]} />
                     </Space>
                   ),
@@ -432,10 +466,10 @@ export function ModelConfig(): ReactNode {
             <Descriptions
               size="small"
               column={isWide ? 3 : 1}
-              title={<Title level={5} style={{ margin: 0 }}>当前生效配置</Title>}
+              title="当前生效配置"
               items={[
                 { key: 'c', label: '对话', children: `${status.chat.provider} · ${status.chat.baseUrl}` },
-                { key: 'i', label: '生图', children: `${status.image.provider} · ${status.image.provider.includes('ComfyUI') ? (status.image.comfyBaseUrl ?? '') : status.image.baseUrl}` },
+                { key: 'i', label: '生图', children: `${status.image.provider} · ${status.image.providerKey === 'comfyui' ? (status.image.comfyBaseUrl ?? '') : status.image.baseUrl}` },
                 { key: 'v', label: '生视频', children: `${status.video.provider} · ${status.video.baseUrl}` },
               ]}
             />

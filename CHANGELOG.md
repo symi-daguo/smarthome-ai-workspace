@@ -2,6 +2,20 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.19] - 2026-10-08
+
+### Added（生视频 provider 可选 + ComfyUI 配置常驻可见）
+
+- **生视频不再写死 MiniMax**：`VIDEO_PROVIDER=minimax | openai`（WebSearch 核实 OpenAI Sora 2 videos API：`POST /videos → 轮询 GET /videos/{id} → GET /videos/{id}/content` 下载，seconds/size 参数映射自现有 时长/画质/比例）。新建 `video-provider.ts` 双路由适配（`generateViaMinimaxVideo` / `generateViaOpenaiVideo`），`VideoRuntime` 加 provider/model 字段，`generateVideo` 按 provider 分发；前端生视频卡加 Provider 单选（MiniMax Director / OpenAI Sora），标题动态显示当前 provider，模型名可填（sora-2 等），连通测试按 provider 探测（openai 走 `GET /videos`，401/403 判 Key 无效）
+- **ComfyUI 配置提升为独立常驻卡片**：此前藏在生图 provider 切到 ComfyUI 后才显示，可发现性差；现在「ComfyUI 本地生图（工作流配置）」卡始终可见（地址/工作流 JSON/四节点映射 + 保存 + 专属 `POST test-comfy` 探测 `/system_stats`，与当前生效 provider 无关），生图卡选 ComfyUI 时出现指向该卡的引导提示
+- 概览 API 三能力均返回 `providerKey` 机器键，前端表单绑定不再靠显示文案反推；compose 透传 `VIDEO_*` 四个 env；`.env.example` 生视频段改双 provider 模板
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **40/40**（新增"生视频 provider 切换 openai(sora) 持久化""ComfyUI 独立配置持久化"用例）
+- curl 真实 key：`test-video`（MiniMax Key 有效）、`test-image`（minimax 路径通过）、`test-comfy` 诚实报"无法连接 ComfyUI"（本机未运行，符合预期）
+- 浏览器实测（1440/1920/768）：生视频卡 provider 切换→保存（标题动态变 Sora、Key 掩码）→连通测试失败态→恢复默认回退全流程通过；ComfyUI 常驻卡六字段齐全可编辑；三档无横向溢出；console error 0
+
 ## [0.1.18] - 2026-10-08
 
 ### Added（模型配置在线可编辑：从"只读 .env 展示"升级为"DB 持久化 + 即时生效"）

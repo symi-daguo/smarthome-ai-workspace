@@ -35,8 +35,11 @@ export interface ImageRuntime {
 }
 
 export interface VideoRuntime {
+  provider: 'minimax' | 'openai';
   baseUrl: string;
   apiKey?: string;
+  /** openai(sora) provider 的模型名（如 sora-2） */
+  model: string;
   source: 'db' | 'env';
 }
 
@@ -58,8 +61,10 @@ interface DbImageConfig {
   seedNode?: string;
 }
 interface DbVideoConfig {
+  provider?: string;
   baseUrl?: string;
   apiKey?: string;
+  model?: string;
 }
 
 const SCOPES: ConfigScope[] = ['chat', 'image', 'video'];
@@ -128,9 +133,15 @@ export class ModelConfigService {
 
   async videoConfig(): Promise<VideoRuntime> {
     const db = (await this.read<DbVideoConfig>('video')) ?? {};
-    const baseUrl = clean(db.baseUrl) || this.env('MiniMax_BASE_URL', 'https://api.minimaxi.com/v1');
-    const apiKey = clean(db.apiKey) || this.envKey('MiniMax_API_KEY') || undefined;
-    return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, source: db.baseUrl || db.apiKey ? 'db' : 'env' };
+    const providerRaw = clean(db.provider) || this.env('VIDEO_PROVIDER', 'minimax').toLowerCase();
+    const provider: VideoRuntime['provider'] = providerRaw === 'openai' ? 'openai' : 'minimax';
+    const minimaxBase = this.env('MiniMax_BASE_URL', 'https://api.minimaxi.com/v1');
+    const fallbackBase = provider === 'openai' ? this.env('VIDEO_BASE_URL', 'https://api.openai.com/v1') : minimaxBase;
+    const fallbackKey = provider === 'openai' ? this.envKey('VIDEO_API_KEY') : this.envKey('MiniMax_API_KEY');
+    const baseUrl = clean(db.baseUrl) || fallbackBase;
+    const apiKey = clean(db.apiKey) || fallbackKey || undefined;
+    const model = clean(db.model) || this.env('VIDEO_MODEL') || (provider === 'openai' ? 'sora-2' : 'T2V-01-Director / I2V-01-Director');
+    return { provider, baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, model, source: Object.values(db).some((v) => clean(v)) ? 'db' : 'env' };
   }
 
   /**

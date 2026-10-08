@@ -31,7 +31,9 @@ export const imageConfigSchema = z.object({
 export type ImageConfigDto = z.infer<typeof imageConfigSchema>;
 
 export const videoConfigSchema = z.object({
+  provider: z.enum(['minimax', 'openai']).optional(),
   baseUrl: baseUrl.optional(),
   apiKey: apiKey.optional(),
+  model: model.optional(),
 });
 export type VideoConfigDto = z.infer<typeof videoConfigSchema>;

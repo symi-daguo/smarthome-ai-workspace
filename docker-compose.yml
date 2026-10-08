@@ -72,6 +72,11 @@ services:
       COMFYUI_NEGATIVE_NODE: ${COMFYUI_NEGATIVE_NODE:-7}
       COMFYUI_LATENT_NODE: ${COMFYUI_LATENT_NODE:-5}
       COMFYUI_SEED_NODE: ${COMFYUI_SEED_NODE:-3}
+      # 生视频 provider：minimax（默认，Director）| openai（Sora videos API）
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-minimax}
+      VIDEO_MODEL: ${VIDEO_MODEL:-}
+      VIDEO_BASE_URL: ${VIDEO_BASE_URL:-}
+      VIDEO_API_KEY: ${VIDEO_API_KEY:-}
       # 生成产物本地落盘目录（容器内路径，宿主机卷持久化）
       UPLOAD_DIR: /repo/uploads
     volumes:

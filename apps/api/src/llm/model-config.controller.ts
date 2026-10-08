@@ -19,6 +19,8 @@ import { chatConfigSchema, imageConfigSchema, videoConfigSchema, type ChatConfig
  */
 interface ProviderView {
   provider: string;
+  /** provider 机器键（minimax/openai/comfyui/...），供前端表单绑定 */
+  providerKey: string;
   baseUrl: string;
   model: string;
   keyConfigured: boolean;
@@ -52,6 +54,7 @@ export class ModelConfigController {
     return {
       chat: {
         provider: chat.baseUrl.includes('minimax') ? 'MiniMax（OpenAI 兼容）' : 'OpenAI 兼容端点',
+        providerKey: 'openai-compatible',
         baseUrl: chat.baseUrl,
         model: chat.model ?? '（跟随请求，默认 MiniMax-M3）',
         keyConfigured: Boolean(chat.apiKey),
@@ -60,6 +63,7 @@ export class ModelConfigController {
       },
       image: {
         provider: image.provider === 'comfyui' ? 'ComfyUI（本地）' : image.provider === 'openai' ? 'OpenAI 兼容生图' : 'MiniMax image-01',
+        providerKey: image.provider,
         baseUrl: image.baseUrl,
         model: image.model,
         keyConfigured: image.provider === 'comfyui' ? true : Boolean(image.apiKey),
@@ -73,9 +77,10 @@ export class ModelConfigController {
         seedNode: image.seedNode,
       },
       video: {
-        provider: 'MiniMax Director',
+        provider: video.provider === 'openai' ? 'OpenAI Sora（videos API）' : 'MiniMax Director',
+        providerKey: video.provider,
         baseUrl: video.baseUrl,
-        model: 'T2V-01-Director / I2V-01-Director',
+        model: video.model,
         keyConfigured: Boolean(video.apiKey),
         keyMasked: maskKey(video.apiKey),
         source: video.source,
@@ -155,13 +160,33 @@ export class ModelConfigController {
     }
   }
 
-  /** 生视频连通性测试：同 Key 走对话 ping 验证 MiniMax Key 有效性 */
+  /** ComfyUI 连通性测试：无论当前生图 provider 是谁，都直接探测 ComfyUI 地址的 /system_stats */
+  @RequirePermissions('platform:billing:manage')
+  @Post('test-comfy')
+  async testComfy(): Promise<{ ok: boolean; detail?: string; error?: string }> {
+    const cfg = await this.modelConfig.imageConfig();
+    try {
+      const res = await fetch(`${cfg.comfyBaseUrl}/system_stats`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return { ok: false, error: `ComfyUI 返回 ${res.status}，请确认本机 ComfyUI 已启动且地址正确（${cfg.comfyBaseUrl}）` };
+      return { ok: true, detail: `ComfyUI 在线：${cfg.comfyBaseUrl}` };
+    } catch (e) {
+      return { ok: false, error: `无法连接 ComfyUI（${cfg.comfyBaseUrl}）：${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  /** 生视频连通性测试：minimax 走对话 ping 验证 Key；openai 走 GET /videos 探测端点可达 */
   @RequirePermissions('platform:billing:manage')
   @Post('test-video')
   async testVideo(): Promise<{ ok: boolean; detail?: string; error?: string }> {
     const cfg = await this.modelConfig.videoConfig();
-    if (!cfg.apiKey) return { ok: false, error: 'MiniMax API Key 未配置（生视频依赖 MiniMax Director 模型）' };
+    if (!cfg.apiKey) return { ok: false, error: '生视频 API Key 未配置' };
     try {
+      if (cfg.provider === 'openai') {
+        const res = await fetch(`${cfg.baseUrl}/videos`, { headers: { Authorization: `Bearer ${cfg.apiKey}` }, signal: AbortSignal.timeout(8000) });
+        // 4xx 中 401/403 视为 Key 无效；其余（含 200/400 空列表）视为端点可达
+        if (res.status === 401 || res.status === 403) return { ok: false, error: `OpenAI 返回 ${res.status}，Key 无效或权限不足` };
+        return { ok: true, detail: `Sora videos 端点可达：${cfg.baseUrl}` };
+      }
       const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
