@@ -46,7 +46,7 @@ WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.
 个人中心-邀请码+首充返 10%,profile,should,yes,partial,码与文案已有，返点结算待 0.2.0
 个人中心-修改密码,profile,must,yes,yes,后端接口+UI 表单均已就绪
 个人中心-退出登录,profile,must,yes,yes,
-模型配置中心(多provider引导+脱敏概览+连通测试+ComfyUI),system,must,yes,yes,0.1.17 新建：对话 OpenAI 兼容(LLM_*)、生图 minimax/openai/comfyui 路由、云端/本地/ComfyUI 三 Tab 引导+.env 复制
+模型配置中心(多provider在线编辑+持久化+脱敏+连通测试+ComfyUI),system,must,yes,yes,0.1.18 升级：对话/生图/生视频三卡可编辑表单，DB 保存即时生效优先于 .env，provider「选用」一键预填，Key 只进不出，恢复默认回退 env
 开始接单-5 步向导整页替换,order,must,yes,partial,向导 UI 已有，接待逻辑 0.3.0
 开始接单-历史方案,order,should,yes,partial,侧栏已有，数据待后端
 短视频工作台-IP 档案(传记+4×4)新建/导入,biography,should,yes,partial,页面框架已有，档案逻辑 0.3.0+

@@ -29,7 +29,7 @@ export async function runExtraction(input: ExtractInput, llm?: LlmService): Prom
   const fields = ruleExtract(doc, docType);
 
   // P3 纪要优先走 LLM 结构化；key 未配置/失败时静默降级规则结果
-  if (input.source === 'TRANSCRIPT' && llm?.isConfigured()) {
+  if (input.source === 'TRANSCRIPT' && llm && (await llm.isConfigured())) {
     try {
       const specs = FIELD_SPECS[docType];
       const specHint = specs.map((s) => `"${s.key}"(${s.label})`).join('、');

@@ -10,7 +10,7 @@
 
 - 后端：NestJS 12（ESM）+ Prisma 7 + PostgreSQL 18（pgvector）+ Redis
 - 前端：React 19 + Ant Design 6 + Vite 8
-- 模型接入：对话走 OpenAI 兼容协议（`LLM_BASE_URL`/`LLM_API_KEY` 接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图 `IMAGE_PROVIDER` 支持 MiniMax / OpenAI / 本地 ComfyUI；生视频 MiniMax Director；前端「模型配置」页有引导与连通测试
+- 模型接入：对话走 OpenAI 兼容协议（可接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图支持 MiniMax / OpenAI / 本地 ComfyUI；生视频 MiniMax Director；前端「模型配置」页**在线编辑、保存即生效**（DB 持久化，优先于 .env），含 provider 引导与连通性测试
 - PPT 生成：pptxgenjs（MIT，浏览器端生成原生可编辑 16:9 幻灯片）
 
 ## 功能地图
@@ -73,7 +73,9 @@ docker compose up -d --build  # web 5173、api 3080
 
 ## 模型与计费配置
 
-登录后侧栏「系统管理 → 模型配置」页有**完整引导**：当前 provider 概览（Key 脱敏显示）、对话连通性一键测试、云端/本地/ComfyUI 三类接入表格与 `.env` 示例一键复制。`.env` 关键项：
+登录后侧栏「系统管理 → 模型配置」页可**在线完成全部模型配置**：对话 / 生图 / 生视频三张可编辑卡片（Base URL、API Key、模型、ComfyUI 地址与工作流节点映射），保存即生效、持久化到数据库（无需重启）；「选用」按钮一键填入 DeepSeek / 通义千问 / 智谱 / Kimi / OpenAI / MiniMax / Ollama / LM Studio / vLLM 的推荐地址与模型；每卡带连通性测试与「恢复 .env 默认」。API Key 保存后只回显末四位，绝不外传明文。
+
+`.env` 仅作为**部署默认值**（DB 未配置或点「恢复 .env 默认」时生效）：
 
 ```bash
 # —— 对话：OpenAI 兼容协议，接任意国内外云端或本地模型 ——
@@ -103,7 +105,7 @@ JWT_SECRET=（openssl rand -hex 32 生成）
 SEED_ADMIN_PASSWORD=（自定义强密码）
 ```
 
-改完 `.env` 重启后端生效（`docker compose up -d api`）。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需本机启动 ComfyUI 并在 `Workflow → Export (API)` 导出工作流 JSON（或直接使用项目内置模板）。
+改完 `.env` 重启后端生效（`docker compose up -d api`）；页面上的在线配置则保存即生效。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需本机启动 ComfyUI 并在 `Workflow → Export (API)` 导出工作流 JSON（或直接使用项目内置模板）。
 
 ## 安全与限流
 

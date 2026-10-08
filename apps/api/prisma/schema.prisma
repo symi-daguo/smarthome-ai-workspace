@@ -307,6 +307,21 @@ model Product {
   @@index([category, sortOrder])
 }
 
+// ---------- 模型配置中心（DB 持久化，覆盖 env 默认；key 只进不出） ----------
+
+model ModelSetting {
+  id      String @id @default(uuid())
+  // chat | image | video
+  scope   String @unique
+  // 能力配置 JSON（provider/baseUrl/model/apiKey/comfyui 节点映射等）
+  config  Json
+  // 最近保存者（审计用）
+  updated String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // 保存的点位布局图纸
 model FloorplanLayout {
   id             String   @id @default(uuid())

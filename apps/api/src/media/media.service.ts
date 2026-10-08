@@ -11,6 +11,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
+import { ModelConfigService } from '../llm/model-config.service.js';
 import { generateViaComfyui, generateViaMinimax, generateViaOpenai, type GeneratedImage } from './image-provider.js';
 
 /** 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
@@ -42,51 +43,11 @@ export class MediaService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly tokens: TokenService,
+    private readonly modelConfig: ModelConfigService,
   ) {}
-
-  private get baseUrl(): string {
-    return this.config.get<string>('MiniMax_BASE_URL', 'https://api.minimaxi.com/v1').replace(/\/+$/, '');
-  }
-
-  private get apiKey(): string {
-    const key = this.config.get<string>('MiniMax_API_KEY');
-    if (!key || key === 'replace-me') {
-      throw new ServiceUnavailableException({ code: 'LLM_KEY_MISSING', message: 'MiniMax_API_KEY 未配置' });
-    }
-    return key;
-  }
-
-  /** 文生图 provider：minimax（默认）| openai（OpenAI images/兼容网关）| comfyui（本地） */
-  get imageProvider(): 'minimax' | 'openai' | 'comfyui' {
-    const p = (this.config.get<string>('IMAGE_PROVIDER') ?? 'minimax').toLowerCase();
-    return p === 'openai' || p === 'comfyui' ? p : 'minimax';
-  }
-
-  /** OpenAI 兼容 images 端点（未配置 IMAGE_BASE_URL 时用官方默认） */
-  private get openaiImageBase(): string {
-    return (this.config.get<string>('IMAGE_BASE_URL') || 'https://api.openai.com/v1').replace(/\/+$/, '');
-  }
-
-  private get openaiImageKey(): string {
-    const key = this.config.get<string>('IMAGE_API_KEY');
-    if (!key || key === 'replace-me') {
-      throw new ServiceUnavailableException({ code: 'IMAGE_KEY_MISSING', message: 'IMAGE_API_KEY 未配置（IMAGE_PROVIDER=openai 时必填）' });
-    }
-    return key;
-  }
-
-  private get comfyBaseUrl(): string {
-    return (this.config.get<string>('COMFYUI_BASE_URL') || 'http://127.0.0.1:8188').replace(/\/+$/, '');
-  }
 
   private uploadDir(): string {
     return this.config.get<string>('UPLOAD_DIR', 'uploads');
-  }
-
-  /** 读取 env 字符串，空串/空白视为未配置回退默认（compose 传入 VAR= 空值时避免 model:"" 等破坏请求） */
-  private env(key: string, fallback: string): string {
-    const v = this.config.get<string>(key);
-    return v && v.trim() ? v : fallback;
   }
 
   /** 相对路径 -> 绝对路径，并阻止路径穿越 */
@@ -133,33 +94,39 @@ export class MediaService {
   }): Promise<{ id: string; url: string; status: string }> {
     await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
-    const provider = this.imageProvider;
+    const cfg = await this.modelConfig.imageConfig();
     let img: GeneratedImage;
-    if (provider === 'comfyui') {
+    if (cfg.provider === 'comfyui') {
       img = await generateViaComfyui({
-        baseUrl: this.comfyBaseUrl,
-        workflow: await this.loadComfyWorkflow(),
+        baseUrl: cfg.comfyBaseUrl,
+        workflow: await this.loadComfyWorkflow(cfg.workflowPath),
         prompt: opts.prompt,
         width: Number(opts.size.split('x')[0]) || 1024,
         height: Number(opts.size.split('x')[1]) || 1024,
-        promptNode: this.env('COMFYUI_PROMPT_NODE', '6'),
-        negativeNode: this.env('COMFYUI_NEGATIVE_NODE', '7'),
-        latentNode: this.env('COMFYUI_LATENT_NODE', '5'),
-        seedNode: this.env('COMFYUI_SEED_NODE', '3'),
+        promptNode: cfg.promptNode,
+        negativeNode: cfg.negativeNode,
+        latentNode: cfg.latentNode,
+        seedNode: cfg.seedNode,
       });
-    } else if (provider === 'openai') {
+    } else if (cfg.provider === 'openai') {
+      if (!cfg.apiKey) {
+        throw new ServiceUnavailableException({ code: 'IMAGE_KEY_MISSING', message: '生图 API Key 未配置（provider=openai），请在「模型配置」页填写' });
+      }
       img = await generateViaOpenai({
-        baseUrl: this.openaiImageBase,
-        apiKey: this.openaiImageKey,
-        model: this.env('IMAGE_MODEL', 'gpt-image-1'),
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
         prompt: opts.prompt,
         size: opts.size,
       });
     } else {
+      if (!cfg.apiKey) {
+        throw new ServiceUnavailableException({ code: 'IMAGE_KEY_MISSING', message: '生图 API Key 未配置，请在「模型配置」页填写 MiniMax Key' });
+      }
       img = await generateViaMinimax({
-        baseUrl: this.baseUrl,
-        apiKey: this.apiKey,
-        model: this.env('IMAGE_MODEL', 'image-01'),
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
         prompt: opts.prompt,
         aspect: IMAGE_ASPECT[opts.size] ?? '16:9',
       });
@@ -185,8 +152,7 @@ export class MediaService {
   }
 
   /** 读取用户导出的 ComfyUI API 格式工作流 JSON */
-  private async loadComfyWorkflow(): Promise<Record<string, unknown>> {
-    const path = this.env('COMFYUI_WORKFLOW_PATH', 'comfyui-workflow.json');
+  private async loadComfyWorkflow(path: string): Promise<Record<string, unknown>> {
     try {
       const raw = await readFile(path, 'utf8');
       return JSON.parse(raw) as Record<string, unknown>;
@@ -224,9 +190,15 @@ export class MediaService {
 
     await this.tokens.consume(opts.tenantId, VIDEO_TOKENS, 'CONSUME', { kind: 'video', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
-    const submit = await fetch(`${this.baseUrl}/video_generation`, {
+    const vcfg = await this.modelConfig.videoConfig();
+    if (!vcfg.apiKey) {
+      throw new ServiceUnavailableException({ code: 'LLM_KEY_MISSING', message: '生视频 API Key 未配置，请在「模型配置」页填写 MiniMax Key' });
+    }
+    const videoKey = vcfg.apiKey;
+
+    const submit = await fetch(`${vcfg.baseUrl}/video_generation`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${videoKey}` },
       body: JSON.stringify({
         model: firstFrameImage ? 'I2V-01-Director' : 'T2V-01-Director',
         prompt: opts.prompt,
@@ -252,8 +224,8 @@ export class MediaService {
     let fileUrl = '';
     for (let i = 0; i < 100; i += 1) {
       await new Promise((r) => setTimeout(r, 3000));
-      const q = await fetch(`${this.baseUrl}/query/video_generation?task_id=${taskId}`, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+      const q = await fetch(`${vcfg.baseUrl}/query/video_generation?task_id=${taskId}`, {
+        headers: { Authorization: `Bearer ${videoKey}` },
       });
       const qd = (await q.json().catch(() => null)) as {
         status?: string;
@@ -261,8 +233,8 @@ export class MediaService {
         base_resp?: { status_msg?: string };
       } | null;
       if (qd?.status === 'Success' && qd.file_id) {
-        const f = await fetch(`${this.baseUrl}/files/retrieve?file_id=${qd.file_id}`, {
-          headers: { Authorization: `Bearer ${this.apiKey}` },
+        const f = await fetch(`${vcfg.baseUrl}/files/retrieve?file_id=${qd.file_id}`, {
+          headers: { Authorization: `Bearer ${videoKey}` },
         });
         const fd = (await f.json().catch(() => null)) as { file?: { download_url?: string } } | null;
         fileUrl = fd?.file?.download_url ?? '';

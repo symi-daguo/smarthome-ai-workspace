@@ -2,6 +2,26 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.18] - 2026-10-08
+
+### Added（模型配置在线可编辑：从"只读 .env 展示"升级为"DB 持久化 + 即时生效"）
+
+- **ModelSetting 表**（Prisma 迁移 `add_model_settings`）：chat/image/video 三条 JSON 配置行，管理员在页面上的修改持久化到数据库，重启不丢失；配置优先级 **DB（在线保存）> .env（部署者默认）**
+- **ModelConfigService 统一解析层**：`LlmService`/`MediaService` 生成链路改为每次运行时读取解析结果（DB 覆盖 env、空值回退），**保存即生效、无需重启容器**；`isConfigured()` 改异步
+- **配置 CRUD API**（仅 super_admin）：`PUT /api/admin/model-config/{chat|image|video}` 保存（Zod 校验：URL 格式、长度上限；apiKey 留空=保持原 Key，其余字段空串=清除回退 .env）；`DELETE /:scope` 恢复 .env 默认（整行删除含密钥）；`POST test-image`（comfyui=/system_stats、openai=/models、minimax=Key 检查）与 `POST test-video`（MiniMax ping）连通探测
+- **前端 ModelConfig 页重构为可编辑表单**：对话/生图/生视频三卡各带 Base URL、API Key（Password 输入，回显仅 `••••末四位`，留空保持不变）、模型字段；生图 provider 单选切换（MiniMax/OpenAI 兼容/ComfyUI 显示地址+工作流路径+四节点映射）；每卡「保存配置（即时生效）/连通性测试/恢复 .env 默认」操作组 + 结果 Alert
+- **接入引导可操作化**：云端 6 家与本地 3 家 provider 表格新增「选用」按钮，一键把 Base URL+推荐模型填入对话表单（原只读表格+`.env` 复制块移除）；ComfyUI 四步接入说明并入「本地大模型」Tab；底部保留「当前生效配置」速览
+- **布局修复**：页面从"三概览卡+测试卡+Tabs 长表"改为纵向卡片流式布局，表单 `labelCol/wrapperCol` 窄屏自动转 vertical，表格 `scroll={{x}}` 收敛——实测 1440/1920/768 三档均无横向溢出
+
+### Security
+
+- API Key 只进不出：保存后任何读取接口一律短掩码（`••••`+末四位），响应体经冒烟断言不含明文；「恢复 .env 默认」为唯一清除已存密钥的路径（二次确认弹窗明示）
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **38/38**（新增 7 用例：超管读取 200、保存 200、持久化生效 source=db+脱敏、响应无明文 Key、apiKey 留空保持/model 空串清除、未知 scope 拒绝、DELETE 恢复回退 env）
+- 浏览器实测（super_admin，1440/1920/768）：三档无横向溢出、输入框可编辑、「选用」预填、保存即时生效、连通测试失败态正确渲染（伪造 Key 401）、刷新持久化、恢复默认回退 .env、生图 provider 切换字段联动，console error 0
+
 ## [0.1.17] - 2026-10-08
 
 ### Added（模型配置中心：客户自部署本地+云端大模型）

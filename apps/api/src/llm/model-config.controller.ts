@@ -1,28 +1,35 @@
-import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { ConfigService } from '@nestjs/config';
+import type { AuthProfile } from '../auth/auth.service.js';
+import { CurrentUser } from '../auth/current-user.decorator.js';
 import { TenantGuard } from '../tenants/tenant.guard.js';
 import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
+import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { LlmService } from './llm.service.js';
+import { ModelConfigService, type ConfigScope } from './model-config.service.js';
+import { chatConfigSchema, imageConfigSchema, videoConfigSchema, type ChatConfigDto, type ImageConfigDto, type VideoConfigDto } from './model-config.schemas.js';
 
 /**
  * 模型配置中心（仅 super_admin）：
- *   - GET  返回当前 env 中各能力（对话 / 生图 / 生视频）的 provider 配置状态，API Key 一律脱敏（末四位 + 长度），绝不回传明文
- *   - POST 发起一次极小的对话请求做连通性探测，返回延迟与模型名
- * 配置本身只读展示，修改由部署者直接编辑 .env（开源自部署，密钥不进前端）。
+ *   - GET   返回各能力（对话/生图/生视频）当前生效配置，API Key 一律脱敏，绝不回传明文
+ *   - PUT   在线保存配置到数据库（即时生效，无需重启；优先级 DB > .env）
+ *   - POST  连通性测试（对话发极短请求；生图/生视频按 provider 探测端点可达性）
+ *   - DELETE 恢复 .env 默认（删除 DB 配置行）
  */
-interface ProviderStatus {
+interface ProviderView {
   provider: string;
   baseUrl: string;
   model: string;
   keyConfigured: boolean;
   keyMasked: string | null;
+  /** 配置来源：db=在线保存生效，env=读取 .env 默认 */
+  source: 'db' | 'env';
 }
 
-/** 固定短掩码（末四位可见）：既脱敏也不泄漏密钥长度，避免超长圆点撑爆 UI */
-function maskKey(key: string | undefined): string | null {
-  if (!key || key === 'replace-me') return null;
+/** 固定短掩码（末四位可见）：既脱敏也不泄漏密钥长度 */
+function maskKey(key: string | undefined | null): string | null {
+  if (!key) return null;
   return `••••${key.slice(-4)}`;
 }
 
@@ -30,77 +37,84 @@ function maskKey(key: string | undefined): string | null {
 @Controller('admin/model-config')
 export class ModelConfigController {
   constructor(
-    private readonly config: ConfigService,
     private readonly llm: LlmService,
+    private readonly modelConfig: ModelConfigService,
   ) {}
 
-  /** env 空串/空白视为未配置回退默认（compose 传 VAR= 空值时展示生效默认而非空） */
-  private env(key: string, fallback: string): string {
-    const v = this.config.get<string>(key);
-    return v && v.trim() ? v : fallback;
-  }
-
-  private chatStatus(): ProviderStatus {
-    const key = this.config.get<string>('LLM_API_KEY') || this.config.get<string>('MiniMax_API_KEY');
-    const usesLlmEnv = Boolean(this.config.get<string>('LLM_BASE_URL'));
+  @RequirePermissions('platform:billing:manage')
+  @Get()
+  async status(): Promise<{ chat: ProviderView & { comfyBaseUrl?: string; workflowPath?: string }; image: ProviderView & { comfyBaseUrl?: string; workflowPath?: string; promptNode?: string; negativeNode?: string; latentNode?: string; seedNode?: string }; video: ProviderView }> {
+    const [chat, image, video] = await Promise.all([
+      this.modelConfig.chatConfig(),
+      this.modelConfig.imageConfig(),
+      this.modelConfig.videoConfig(),
+    ]);
     return {
-      provider: usesLlmEnv ? 'openai-compatible' : 'MiniMax',
-      baseUrl: this.llm.baseUrl,
-      model: this.llm.configuredModel ?? '（跟随请求，默认 MiniMax-M3）',
-      keyConfigured: Boolean(key && key !== 'replace-me'),
-      keyMasked: maskKey(key),
-    };
-  }
-
-  private imageStatus(): ProviderStatus & { comfyBaseUrl?: string; comfyWorkflow?: string } {
-    const provider = (this.config.get<string>('IMAGE_PROVIDER') ?? 'minimax').toLowerCase();
-    if (provider === 'comfyui') {
-      return {
-        provider: 'comfyui',
-        baseUrl: (this.config.get<string>('COMFYUI_BASE_URL') || 'http://127.0.0.1:8188').replace(/\/+$/, ''),
-        model: this.env('IMAGE_MODEL', '本地 SD 工作流'),
-        keyConfigured: true,
-        keyMasked: null,
-        comfyWorkflow: this.env('COMFYUI_WORKFLOW_PATH', 'comfyui-workflow.json'),
-      };
-    }
-    if (provider === 'openai') {
-      const key = this.config.get<string>('IMAGE_API_KEY');
-      return {
-        provider: 'openai-images',
-        baseUrl: (this.config.get<string>('IMAGE_BASE_URL') || 'https://api.openai.com/v1').replace(/\/+$/, ''),
-        model: this.env('IMAGE_MODEL', 'gpt-image-1'),
-        keyConfigured: Boolean(key && key !== 'replace-me'),
-        keyMasked: maskKey(key),
-      };
-    }
-    const key = this.config.get<string>('MiniMax_API_KEY');
-    return {
-      provider: 'MiniMax image-01',
-      baseUrl: (this.config.get<string>('MiniMax_BASE_URL') || 'https://api.minimaxi.com/v1').replace(/\/+$/, ''),
-      model: this.env('IMAGE_MODEL', 'image-01'),
-      keyConfigured: Boolean(key && key !== 'replace-me'),
-      keyMasked: maskKey(key),
-    };
-  }
-
-  private videoStatus(): ProviderStatus {
-    const key = this.config.get<string>('MiniMax_API_KEY');
-    return {
-      provider: 'MiniMax Director',
-      baseUrl: (this.config.get<string>('MiniMax_BASE_URL') || 'https://api.minimaxi.com/v1').replace(/\/+$/, ''),
-      model: 'T2V-01-Director / I2V-01-Director',
-      keyConfigured: Boolean(key && key !== 'replace-me'),
-      keyMasked: maskKey(key),
+      chat: {
+        provider: chat.baseUrl.includes('minimax') ? 'MiniMax（OpenAI 兼容）' : 'OpenAI 兼容端点',
+        baseUrl: chat.baseUrl,
+        model: chat.model ?? '（跟随请求，默认 MiniMax-M3）',
+        keyConfigured: Boolean(chat.apiKey),
+        keyMasked: maskKey(chat.apiKey),
+        source: chat.source,
+      },
+      image: {
+        provider: image.provider === 'comfyui' ? 'ComfyUI（本地）' : image.provider === 'openai' ? 'OpenAI 兼容生图' : 'MiniMax image-01',
+        baseUrl: image.baseUrl,
+        model: image.model,
+        keyConfigured: image.provider === 'comfyui' ? true : Boolean(image.apiKey),
+        keyMasked: image.provider === 'comfyui' ? null : maskKey(image.apiKey),
+        source: image.source,
+        comfyBaseUrl: image.comfyBaseUrl,
+        workflowPath: image.workflowPath,
+        promptNode: image.promptNode,
+        negativeNode: image.negativeNode,
+        latentNode: image.latentNode,
+        seedNode: image.seedNode,
+      },
+      video: {
+        provider: 'MiniMax Director',
+        baseUrl: video.baseUrl,
+        model: 'T2V-01-Director / I2V-01-Director',
+        keyConfigured: Boolean(video.apiKey),
+        keyMasked: maskKey(video.apiKey),
+        source: video.source,
+      },
     };
   }
 
   @RequirePermissions('platform:billing:manage')
-  @Get()
-  status(): { chat: ProviderStatus; image: ProviderStatus; video: ProviderStatus } {
-    return { chat: this.chatStatus(), image: this.imageStatus(), video: this.videoStatus() };
+  @Put('chat')
+  async saveChat(@CurrentUser() user: AuthProfile, @Body(new ZodValidationPipe(chatConfigSchema)) dto: ChatConfigDto): Promise<{ ok: true }> {
+    await this.modelConfig.save('chat', dto as Record<string, string>, user.id);
+    return { ok: true };
   }
 
+  @RequirePermissions('platform:billing:manage')
+  @Put('image')
+  async saveImage(@CurrentUser() user: AuthProfile, @Body(new ZodValidationPipe(imageConfigSchema)) dto: ImageConfigDto): Promise<{ ok: true }> {
+    await this.modelConfig.save('image', dto as unknown as Record<string, string>, user.id);
+    return { ok: true };
+  }
+
+  @RequirePermissions('platform:billing:manage')
+  @Put('video')
+  async saveVideo(@CurrentUser() user: AuthProfile, @Body(new ZodValidationPipe(videoConfigSchema)) dto: VideoConfigDto): Promise<{ ok: true }> {
+    await this.modelConfig.save('video', dto as Record<string, string>, user.id);
+    return { ok: true };
+  }
+
+  @RequirePermissions('platform:billing:manage')
+  @Delete(':scope')
+  async reset(@Param('scope') scope: string): Promise<{ ok: true; scope: string }> {
+    if (scope !== 'chat' && scope !== 'image' && scope !== 'video') {
+      return { ok: true, scope: 'unknown' };
+    }
+    await this.modelConfig.reset(scope);
+    return { ok: true, scope };
+  }
+
+  /** 对话连通性测试：一条极短请求验证 Base URL 与 Key */
   @RequirePermissions('platform:billing:manage')
   @Post('test-chat')
   async testChat(): Promise<{ ok: boolean; model?: string; latencyMs?: number; error?: string }> {
@@ -113,8 +127,51 @@ export class ModelConfigController {
       });
       return { ok: true, model: r.model, latencyMs: r.latencyMs };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { ok: false, error: msg };
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** 生图连通性测试：不产生真实图片，仅探测端点可达（comfyui=/system_stats，openai=/models，minimax=Key 已配置即通过） */
+  @RequirePermissions('platform:billing:manage')
+  @Post('test-image')
+  async testImage(): Promise<{ ok: boolean; detail?: string; error?: string }> {
+    const cfg = await this.modelConfig.imageConfig();
+    try {
+      if (cfg.provider === 'comfyui') {
+        const res = await fetch(`${cfg.comfyBaseUrl}/system_stats`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return { ok: false, error: `ComfyUI 返回 ${res.status}，请确认本机 ComfyUI 已启动且地址正确` };
+        return { ok: true, detail: `ComfyUI 在线：${cfg.comfyBaseUrl}` };
+      }
+      if (cfg.provider === 'openai') {
+        if (!cfg.apiKey) return { ok: false, error: '生图 API Key 未配置' };
+        const res = await fetch(`${cfg.baseUrl}/models`, { headers: { Authorization: `Bearer ${cfg.apiKey}` }, signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return { ok: false, error: `端点返回 ${res.status}，请检查 Base URL 与 Key` };
+        return { ok: true, detail: `OpenAI 兼容端点可达：${cfg.baseUrl}` };
+      }
+      if (!cfg.apiKey) return { ok: false, error: 'MiniMax API Key 未配置' };
+      return { ok: true, detail: 'MiniMax Key 已配置（对话连通性测试可验证同一 Key）' };
+    } catch (e) {
+      return { ok: false, error: `无法连接：${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  /** 生视频连通性测试：同 Key 走对话 ping 验证 MiniMax Key 有效性 */
+  @RequirePermissions('platform:billing:manage')
+  @Post('test-video')
+  async testVideo(): Promise<{ ok: boolean; detail?: string; error?: string }> {
+    const cfg = await this.modelConfig.videoConfig();
+    if (!cfg.apiKey) return { ok: false, error: 'MiniMax API Key 未配置（生视频依赖 MiniMax Director 模型）' };
+    try {
+      const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify({ model: 'MiniMax-M3', messages: [{ role: 'user', content: 'ping' }], max_tokens: 4 }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) return { ok: false, error: `MiniMax 返回 ${res.status}，请检查 Key 与账户状态` };
+      return { ok: true, detail: 'MiniMax Key 有效，可提交 T2V/I2V 任务' };
+    } catch (e) {
+      return { ok: false, error: `无法连接：${e instanceof Error ? e.message : String(e)}` };
     }
   }
 }

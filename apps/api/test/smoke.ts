@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
 import { TokenService } from '../src/billing/token.service.js';
+import { PrismaService } from '../src/prisma/prisma.module.js';
 
 const checks: [string, boolean][] = [];
 
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
   });
   check('重复手机号注册被拒绝', dup.status === 409);
 
-  const me = await request<{ memberships: { tenantId: string }[] }>(base, '/api/auth/me', {
+  const me = await request<{ id: string; memberships: { tenantId: string }[] }>(base, '/api/auth/me', {
     headers: { Authorization: `Bearer ${regA.body.token}` },
   });
   check('me 返回成员关系', me.status === 200 && me.body.memberships.length === 1);
@@ -277,6 +278,59 @@ async function main(): Promise<void> {
     headers: { Authorization: `Bearer ${regA.body.token}` },
   });
   check('模型配置端点存在且普通用户被拒（403）', modelConfigForbidden.status === 403);
+
+  // ---------- 模型配置在线编辑 + 持久化（临时把 A 提为 super_admin） ----------
+  const prisma = app.get(PrismaService);
+  const superRole = await prisma.role.findUniqueOrThrow({ where: { key: 'super_admin' } });
+  const memberA = await prisma.membership.findFirstOrThrow({ where: { userId: me.body.id, tenantId: tenantA } });
+  const originalRoleId = memberA.roleId;
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: superRole.id } });
+  // jwt.strategy 每请求实时加载 profile，提权立即生效
+  const authA = { headers: { Authorization: `Bearer ${regA.body.token}` } };
+
+  const cfgOk = await request<{ chat: { source: string } }>(base, '/api/admin/model-config', authA);
+  check('超管读取模型配置 200', cfgOk.status === 200 && typeof cfgOk.body.chat.source === 'string');
+
+  const putChat = await request<{ ok: boolean }>(base, '/api/admin/model-config/chat', {
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', model: 'smoke-model', apiKey: 'sk-smoketest1234' }),
+  });
+  check('保存对话配置 200', putChat.status === 200 && putChat.body.ok === true);
+
+  const cfgAfter = await request<{ chat: { source: string; baseUrl: string; model: string; keyMasked: string | null } }>(base, '/api/admin/model-config', authA);
+  check(
+    '配置持久化生效（source=db + baseUrl/model 更新 + key 脱敏末四位）',
+    cfgAfter.body.chat.source === 'db' &&
+      cfgAfter.body.chat.baseUrl === 'http://127.0.0.1:9/v1' &&
+      cfgAfter.body.chat.model === 'smoke-model' &&
+      cfgAfter.body.chat.keyMasked === '••••1234',
+  );
+  const rawCfg = JSON.stringify(cfgAfter.body);
+  check('响应绝不回传明文 Key', !rawCfg.includes('sk-smoketest1234'));
+
+  const putAgain = await request<{ ok: boolean }>(base, '/api/admin/model-config/chat', {
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', model: '', apiKey: '' }),
+  });
+  const cfgAfter2 = await request<{ chat: { model: string; keyMasked: string | null } }>(base, '/api/admin/model-config', authA);
+  check(
+    'apiKey 留空保持原值、model 空串清除回退',
+    putAgain.status === 200 && cfgAfter2.body.chat.keyMasked === '••••1234' && cfgAfter2.body.chat.model.startsWith('（跟随'),
+  );
+
+  const badScope = await request(base, '/api/admin/model-config/nope', { ...authA, method: 'PUT', body: JSON.stringify({ baseUrl: 'x' }) });
+  check('未知 scope 保存被拒（400/404）', badScope.status === 400 || badScope.status === 404);
+
+  const delChat = await request<{ ok: boolean }>(base, '/api/admin/model-config/chat', { ...authA, method: 'DELETE' });
+  const cfgReset = await request<{ chat: { source: string } }>(base, '/api/admin/model-config', authA);
+  check(
+    '恢复 .env 默认（删除 DB 行后 source 回退 env）',
+    delChat.status === 200 && cfgReset.body.chat.source === 'env',
+  );
+
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: originalRoleId } });
 
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
