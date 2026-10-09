@@ -1,5 +1,5 @@
 import { PlayCircleOutlined } from '@ant-design/icons';
-import { App as AntApp, Button, Card, Empty, Tabs, Tag, Typography, theme } from 'antd';
+import { App as AntApp, Button, Card, Empty, Image, Modal, Tabs, Tag, Typography, theme } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
@@ -20,7 +20,7 @@ const EXCELLENT: Material[] = [
   { key: 'm2', title: '客厅的灯光秀展示', desc: '餐厅灯光场景切换演示', brand: '演示门店', downloads: 1, img: '/images/materials/m2.jpg' },
 ];
 
-function MaterialCard({ m, owned, onBuy }: { m: Material; owned: boolean; onBuy: (key: string) => void }): ReactNode {
+function MaterialCard({ m, owned, onBuy, onPreview }: { m: Material; owned: boolean; onBuy: (key: string) => void; onPreview: (m: Material) => void }): ReactNode {
   const { token } = theme.useToken();
   return (
     <div
@@ -52,7 +52,8 @@ function MaterialCard({ m, owned, onBuy }: { m: Material; owned: boolean; onBuy:
           <span>下载 {m.downloads}</span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button block size="small" style={{ borderRadius: 8 }} onClick={() => window.open(m.img, '_blank')}>
+          {/* 应用内预览弹窗（可关闭返回），不再 window.open 跳独立页面导致无法返回 */}
+          <Button block size="small" style={{ borderRadius: 8 }} onClick={() => onPreview(m)}>
             查看素材
           </Button>
           {owned ? (
@@ -90,6 +91,7 @@ export function MaterialLibrary(): ReactNode {
   const { token } = theme.useToken();
   const [tab, setTab] = useState('excellent');
   const [ownedKeys, setOwnedKeys] = useState<string[]>([]);
+  const [preview, setPreview] = useState<Material | null>(null);
 
   useEffect(() => {
     api<MediaRow[]>('/api/media/assets')
@@ -140,7 +142,7 @@ export function MaterialLibrary(): ReactNode {
       {tab === 'excellent' ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16, marginTop: 8 }}>
           {EXCELLENT.map((m) => (
-            <MaterialCard key={m.key} m={m} owned={ownedKeys.includes(m.key)} onBuy={buy} />
+            <MaterialCard key={m.key} m={m} owned={ownedKeys.includes(m.key)} onBuy={buy} onPreview={setPreview} />
           ))}
         </div>
       ) : tab === 'bought' ? (
@@ -149,7 +151,7 @@ export function MaterialLibrary(): ReactNode {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16, marginTop: 8 }}>
             {EXCELLENT.filter((m) => ownedKeys.includes(m.key)).map((m) => (
-              <MaterialCard key={m.key} m={m} owned onBuy={buy} />
+              <MaterialCard key={m.key} m={m} owned onBuy={buy} onPreview={setPreview} />
             ))}
           </div>
         )
@@ -159,6 +161,31 @@ export function MaterialLibrary(): ReactNode {
           style={{ marginTop: 48 }}
         />
       )}
+
+      {/* 应用内素材预览：关闭即回到列表，不离开当前页 */}
+      <Modal
+        title={preview ? `素材预览 · ${preview.title}` : ''}
+        open={!!preview}
+        onCancel={() => setPreview(null)}
+        footer={
+          preview ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <Text type="secondary" style={{ fontSize: 12, alignSelf: 'center' }}>{preview.desc}</Text>
+              <Button type="primary" onClick={() => setPreview(null)}>返回素材库</Button>
+            </div>
+          ) : null
+        }
+        width={720}
+        destroyOnHidden
+      >
+        {preview ? (
+          <Image
+            src={preview.img}
+            alt={preview.title}
+            style={{ width: '100%', borderRadius: 12, maxHeight: 480, objectFit: 'cover' }}
+          />
+        ) : null}
+      </Modal>
     </div>
   );
 }

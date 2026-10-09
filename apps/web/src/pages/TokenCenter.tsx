@@ -289,188 +289,199 @@ export function TokenCenter(): ReactNode {
         </Space>
       </Card>
 
-      {/* 资料与偏好 */}
-      <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
-        <Text strong style={{ fontSize: 15 }}>资料与偏好</Text>
-        <Form
-          form={profileForm}
-          layout="vertical"
-          initialValues={{ displayName: user?.displayName ?? '', avatarColor: user?.avatarColor ?? '#6D4DF6' }}
-          style={{ marginTop: 12, maxWidth: 520 }}
-        >
-          <Space align="start" size={16} style={{ width: '100%' }}>
-            <Form.Item noStyle shouldUpdate>
-              {() => (
-                <Avatar
-                  size={56}
+      {/* 两栏网格：左=资料与偏好，右=额度 */}
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={12}>
+          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
+            <Text strong style={{ fontSize: 15 }}>资料与偏好</Text>
+            <Form
+              form={profileForm}
+              layout="vertical"
+              initialValues={{ displayName: user?.displayName ?? '', avatarColor: user?.avatarColor ?? '#6D4DF6' }}
+              style={{ marginTop: 12 }}
+            >
+              <Space align="start" size={16} style={{ width: '100%' }}>
+                <Form.Item noStyle shouldUpdate>
+                  {() => (
+                    <Avatar
+                      size={56}
+                      style={{
+                        borderRadius: 14,
+                        background: (() => {
+                          const v = profileForm.getFieldValue('avatarColor');
+                          return typeof v === 'string' ? v : (v?.toHexString?.() ?? '#6D4DF6');
+                        })(),
+                        fontSize: 24,
+                        fontWeight: 700,
+                        flex: 'none',
+                      }}
+                    >
+                      {(profileForm.getFieldValue('displayName') ?? user?.displayName ?? 'U').slice(0, 1)}
+                    </Avatar>
+                  )}
+                </Form.Item>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Form.Item name="displayName" label="昵称" rules={[{ required: true, message: '请输入昵称' }, { max: 32 }]}>
+                    <Input placeholder="显示名称" />
+                  </Form.Item>
+                  <Form.Item name="avatarColor" label="头像颜色">
+                    <ColorPicker showText format="hex" disabledAlpha />
+                  </Form.Item>
+                </div>
+              </Space>
+              <Text type="secondary" style={{ fontSize: 12 }}>界面主题</Text>
+              <Radio.Group
+                style={{ display: 'block', margin: '8px 0 12px' }}
+                optionType="button"
+                buttonStyle="solid"
+                value={mode}
+                onChange={(e) => setMode(e.target.value as ThemeMode)}
+                options={THEME_OPTIONS}
+                block
+              />
+              <Button type="primary" loading={profileSaving} onClick={() => void saveProfile()} block>
+                保存资料
+              </Button>
+            </Form>
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
+            <Text strong style={{ fontSize: 15 }}>我的额度</Text>
+            <Row gutter={[16, 16]} style={{ marginTop: 14 }}>
+              <Col xs={24} md={10}>
+                <div style={{ fontSize: 34, fontWeight: 700, color: token.colorPrimary, lineHeight: 1.2 }}>
+                  {balance ? tokenToYuan(balance.tokenBalance) : '--'}
+                </div>
+                <Text type="secondary" style={{ fontSize: 13 }}>额度剩余</Text>
+              </Col>
+              <Col xs={12} md={7}>
+                <Text type="secondary" style={{ fontSize: 12 }}>总额度</Text>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(total)}</div>
+              </Col>
+              <Col xs={12} md={7}>
+                <Text type="secondary" style={{ fontSize: 12 }}>已使用</Text>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(consumed)}</div>
+              </Col>
+            </Row>
+            <Progress percent={usedPct} showInfo={false} strokeColor={token.colorPrimary} style={{ marginTop: 12 }} />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+              {PRICE_CHIPS.map((p) => (
+                <span
+                  key={p}
                   style={{
-                    borderRadius: 14,
-                    background: (() => {
-                      const v = profileForm.getFieldValue('avatarColor');
-                      return typeof v === 'string' ? v : (v?.toHexString?.() ?? '#6D4DF6');
-                    })(),
-                    fontSize: 24,
-                    fontWeight: 700,
-                    flex: 'none',
+                    fontSize: 12,
+                    padding: '4px 12px',
+                    borderRadius: 9999,
+                    background: token.colorFillQuaternary,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    color: token.colorTextSecondary,
                   }}
                 >
-                  {(profileForm.getFieldValue('displayName') ?? user?.displayName ?? 'U').slice(0, 1)}
-                </Avatar>
-              )}
-            </Form.Item>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item name="displayName" label="昵称" rules={[{ required: true, message: '请输入昵称' }, { max: 32 }]}>
-                <Input placeholder="显示名称" />
-              </Form.Item>
-              <Form.Item name="avatarColor" label="头像颜色">
-                <ColorPicker showText format="hex" disabledAlpha />
-              </Form.Item>
+                  {p}
+                </span>
+              ))}
             </div>
-          </Space>
-          <Text type="secondary" style={{ fontSize: 12 }}>界面主题</Text>
-          <Radio.Group
-            style={{ display: 'block', margin: '8px 0 12px' }}
-            optionType="button"
-            buttonStyle="solid"
-            value={mode}
-            onChange={(e) => setMode(e.target.value as ThemeMode)}
-            options={THEME_OPTIONS}
-            block
-          />
-          <Button type="primary" loading={profileSaving} onClick={() => void saveProfile()}>
-            保存资料
-          </Button>
-        </Form>
-      </Card>
+          </Card>
+        </Col>
 
-      {/* 数据备份与存储治理（管理员） */}
-      {isAdmin ? (
-        <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
-          <Text strong style={{ fontSize: 15 }}>数据备份与存储治理</Text>
-          <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 12 }}>
-            <Button icon={<DownloadOutlined />} loading={backing} onClick={() => void downloadBackup()}>
-              导出全库数据备份（JSON）
-            </Button>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              升级迁移前留底；产物文件位于 uploads 卷（docker volume），迁移时连同数据库卷一起备份即可完整恢复。
-            </Text>
-            <Space.Compact block>
-              <Button style={{ flex: 1 }} onClick={() => void loadStorage()}>
-                {storage ? `产物占用 ${(storage.usedBytes / 1048576).toFixed(1)} / ${(storage.quotaBytes / 1048576).toFixed(0)} MB` : '查看产物存储占用'}
-              </Button>
-              <Button danger loading={cleaning} disabled={!storage} onClick={() => void cleanup()}>
-                清理 30 天前未引用产物
-              </Button>
-            </Space.Compact>
-          </Space>
-        </Card>
-      ) : null}
-
-      {/* 额度卡 */}
-      <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
-        <Text strong style={{ fontSize: 15 }}>我的额度</Text>
-        <Row gutter={[16, 16]} style={{ marginTop: 14 }}>
-          <Col xs={24} md={10}>
-            <div style={{ fontSize: 34, fontWeight: 700, color: token.colorPrimary, lineHeight: 1.2 }}>
-              {balance ? tokenToYuan(balance.tokenBalance) : '--'}
-            </div>
-            <Text type="secondary" style={{ fontSize: 13 }}>额度剩余</Text>
-          </Col>
-          <Col xs={12} md={7}>
-            <Text type="secondary" style={{ fontSize: 12 }}>总额度</Text>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(total)}</div>
-          </Col>
-          <Col xs={12} md={7}>
-            <Text type="secondary" style={{ fontSize: 12 }}>已使用</Text>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(consumed)}</div>
-          </Col>
-        </Row>
-        <Progress percent={usedPct} showInfo={false} strokeColor={token.colorPrimary} style={{ marginTop: 12 }} />
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-          {PRICE_CHIPS.map((p) => (
-            <span
-              key={p}
+        {/* 第二行：左=邀请，右=备份治理（管理员）/改密占位 */}
+        <Col xs={24} lg={12}>
+          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
+            <Text strong style={{ fontSize: 15 }}>邀请好友 · 首充双方各得 10% 额度</Text>
+            <div
               style={{
-                fontSize: 12,
-                padding: '4px 12px',
-                borderRadius: 9999,
-                background: token.colorFillQuaternary,
-                border: `1px solid ${token.colorBorderSecondary}`,
-                color: token.colorTextSecondary,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                marginTop: 12,
+                padding: '10px 14px',
+                borderRadius: 10,
+                background: token.colorPrimaryBg,
               }}
             >
-              {p}
-            </span>
-          ))}
-        </div>
-      </Card>
+              <Text style={{ fontSize: 14 }}>
+                邀请码：<Text strong style={{ color: token.colorPrimary, fontSize: 16, letterSpacing: 1 }}>{code}</Text>
+              </Text>
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(`${window.location.origin}/register?invite=${code}`).catch(() => undefined);
+                  message.success('邀请链接已复制');
+                }}
+              >
+                复制邀请链接
+              </Button>
+            </div>
+            <Text type="secondary" style={{ fontSize: 12.5, display: 'block', marginTop: 10 }}>
+              把专属链接发给朋友，TA 注册后首次充值时，你和 TA 各得充值额 10% 的额度奖励。返点结算将在 0.2.0 上线。
+            </Text>
+          </Card>
+        </Col>
+        {isAdmin ? (
+          <Col xs={24} lg={12}>
+            <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
+              <Text strong style={{ fontSize: 15 }}>数据备份与存储治理</Text>
+              <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 12 }}>
+                <Button icon={<DownloadOutlined />} loading={backing} onClick={() => void downloadBackup()} block>
+                  导出全库数据备份（JSON）
+                </Button>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  升级迁移前留底；产物文件位于 uploads 卷（docker volume），迁移时连同数据库卷一起备份即可完整恢复。
+                </Text>
+                <Space.Compact block>
+                  <Button style={{ flex: 1 }} onClick={() => void loadStorage()}>
+                    {storage ? `产物占用 ${(storage.usedBytes / 1048576).toFixed(1)} / ${(storage.quotaBytes / 1048576).toFixed(0)} MB` : '查看产物存储占用'}
+                  </Button>
+                  <Button danger loading={cleaning} disabled={!storage} onClick={() => void cleanup()}>
+                    清理 30 天前未引用产物
+                  </Button>
+                </Space.Compact>
+              </Space>
+            </Card>
+          </Col>
+        ) : null}
 
-      {/* 邀请卡 */}
-      <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
-        <Text strong style={{ fontSize: 15 }}>邀请好友 · 首充双方各得 10% 额度</Text>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            marginTop: 12,
-            padding: '10px 14px',
-            borderRadius: 10,
-            background: token.colorPrimaryBg,
-          }}
-        >
-          <Text style={{ fontSize: 14 }}>
-            邀请码：<Text strong style={{ color: token.colorPrimary, fontSize: 16, letterSpacing: 1 }}>{code}</Text>
-          </Text>
-          <Button
-            size="small"
-            icon={<CopyOutlined />}
-            onClick={() => {
-              void navigator.clipboard?.writeText(`${window.location.origin}/register?invite=${code}`).catch(() => undefined);
-              message.success('邀请链接已复制');
-            }}
-          >
-            复制邀请链接
-          </Button>
-        </div>
-        <Text type="secondary" style={{ fontSize: 12.5, display: 'block', marginTop: 10 }}>
-          把专属链接发给朋友，TA 注册后首次充值时，你和 TA 各得充值额 10% 的额度奖励。返点结算将在 0.2.0 上线。
-        </Text>
-      </Card>
-
-      {/* 修改密码 */}
-      <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
-        <Space size={8} style={{ marginBottom: 12 }}>
-          <LockOutlined />
-          <Text strong style={{ fontSize: 15 }}>修改登录密码</Text>
-        </Space>
-        <Form form={pwdForm} layout="vertical" onFinish={changePassword} style={{ maxWidth: 420 }} requiredMark={false}>
-          <Form.Item name="oldPassword" rules={[{ required: true, message: '请输入原密码' }]}>
-            <Input.Password placeholder="原密码" size="large" />
-          </Form.Item>
-          <Form.Item name="newPassword" rules={[{ required: true, message: '请输入新密码' }, { min: 8, message: '至少 8 位' }]}>
-            <Input.Password placeholder="新密码（至少 8 位）" size="large" />
-          </Form.Item>
-          <Form.Item name="confirm" rules={[{ required: true, message: '请再次输入新密码' }]}>
-            <Input.Password placeholder="再次输入新密码" size="large" />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" loading={pwdLoading} style={{ background: INK_BLACK, border: 'none', borderRadius: 9999 }}>
-            保存新密码
-          </Button>
-        </Form>
-      </Card>
-
-      {/* 退出 */}
-      <Card
-        styles={{ body: { padding: '14px 20px', textAlign: 'center' } }}
-        style={{ marginBottom: 16 }}
-      >
-        <Button type="text" danger icon={<LogoutOutlined />} onClick={logout}>退出登录</Button>
-      </Card>
+        {/* 第三行：修改密码 + 退出登录 */}
+        <Col xs={24} lg={12}>
+          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
+            <Space size={8} style={{ marginBottom: 12 }}>
+              <LockOutlined />
+              <Text strong style={{ fontSize: 15 }}>修改登录密码</Text>
+            </Space>
+            <Form form={pwdForm} layout="vertical" onFinish={changePassword} requiredMark={false}>
+              <Form.Item name="oldPassword" rules={[{ required: true, message: '请输入原密码' }]}>
+                <Input.Password placeholder="原密码" />
+              </Form.Item>
+              <Form.Item name="newPassword" rules={[{ required: true, message: '请输入新密码' }, { min: 8, message: '至少 8 位' }]}>
+                <Input.Password placeholder="新密码（至少 8 位）" />
+              </Form.Item>
+              <Form.Item name="confirm" rules={[{ required: true, message: '请再次输入新密码' }]}>
+                <Input.Password placeholder="再次输入新密码" />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" loading={pwdLoading} style={{ background: INK_BLACK, border: 'none', borderRadius: 9999 }}>
+                保存新密码
+              </Button>
+            </Form>
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
+            <Text strong style={{ fontSize: 15 }}>账号安全</Text>
+            <Text type="secondary" style={{ fontSize: 12.5, display: 'block', margin: '10px 0 16px' }}>
+              当前设备登录的账号如需切换或结束会话，可在此退出登录；所有操作数据已持久化到数据库，退出不会丢失。
+            </Text>
+            <Button danger icon={<LogoutOutlined />} onClick={logout} block>
+              退出登录
+            </Button>
+          </Card>
+        </Col>
+      </Row>
 
       {/* 账本明细 */}
-      <Card title="账本明细" styles={{ body: { padding: 0 } }}>
+      <Card title="账本明细" style={{ marginTop: 16 }} styles={{ body: { padding: 0 } }}>
         <Table<LedgerEntry>
           rowKey="id"
           dataSource={ledger}

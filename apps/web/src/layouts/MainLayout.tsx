@@ -7,6 +7,7 @@ import {
   FileSearchOutlined,
   FolderOpenOutlined,
   HomeOutlined,
+  LeftOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MoreOutlined,
@@ -584,6 +585,19 @@ export function MainLayout(): ReactNode {
         >
           {!isDesktop ? (
             <Button type="text" icon={<MenuFoldOutlined />} onClick={() => setDrawerOpen(true)} />
+          ) : null}
+
+          {/* 全局返回：任何子页面都能退回上一页（无历史时回工作台） */}
+          {location.pathname !== '/' ? (
+            <Button
+              type="text"
+              icon={<LeftOutlined />}
+              aria-label="返回上一页"
+              onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}
+              style={{ color: token.colorTextSecondary }}
+            >
+              {isDesktop ? '返回' : null}
+            </Button>
           ) : null}
 
           <div style={{ flex: 1 }} />

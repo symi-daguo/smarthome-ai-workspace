@@ -2,6 +2,27 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.28] - 2026-10-09
+
+### Added（全局返回能力：任何子页面都能返回）
+
+用户指出视频素材库「查看素材」点击后无法返回，要求任何可点击的菜单界面都要支持返回。
+
+- **顶栏全局返回按钮** [MainLayout.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/layouts/MainLayout.tsx)：非工作台页一律显示「← 返回」（有历史 navigate(-1)，直达无历史回工作台），覆盖全部 15 个功能页
+- **素材预览改应用内弹窗** [MaterialLibrary.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/MaterialLibrary.tsx)：「查看素材」不再 `window.open` 跳独立图片页（离开应用无法返回），改为 Modal 大图预览 + 底部「返回素材库」按钮，关闭即回列表 URL 不变
+
+### Changed（个人中心布局标准化 + 全站布局执行标准）
+
+用户批评个人中心卡片全挤左侧、层次不一。确立全站页面布局执行标准并落地：
+
+- **布局标准**：① 顶层容器统一 `width:100%` 流式（0.1.25 已定）；② 功能页一律 PageHeader（标题+描述+右上操作区）；③ 多卡片页用 `Row gutter=[16,16] + Col xs=24 lg=12` 双栏网格、卡片 `height:100%` 等高，账本/表格类全宽收尾；④ 网格容器统一 16px 间距；⑤ 所有二级视图（弹窗/详情）必须提供应用内返回入口
+- **TokenCenter 重排** [TokenCenter.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/TokenCenter.tsx)：账号卡全宽 → 行1「资料与偏好 + 我的额度」→ 行2「邀请好友 + 数据备份与存储治理」→ 行3「修改登录密码 + 账号安全（退出登录）」→ 账本明细全宽；1920 实测左右各 781px 等宽，768 自动单列堆叠
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **88/88**（纯前端改动）
+- 浏览器实测 5 项全 PASS：顶栏返回按钮（/products、/materials 实测回退，首页不显示）、素材预览弹窗可返回（URL 不变）、/tokens 双栏等宽网格（1920 各 49.5% / 768 单列无溢出）、**15 页逐页布局审查**（标题区正常、内容铺满 rightGap=0、间距统一 16、全页无横向溢出）、真实 Chrome 全程 console 0 error/warning
+
 ## [0.1.27] - 2026-10-09
 
 ### Changed（产品图方形裁切 + 全站导航文案统一）
