@@ -192,14 +192,14 @@ export function MainLayout(): ReactNode {
     const creation: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-ai',
-      label: 'AI 能力',
+      label: 'AI 超能力',
       children: [
         { key: '/', icon: <HomeOutlined />, label: '工作台' },
         { key: '/order', icon: <AuditOutlined />, label: '开始接单' },
         { key: '/agents', icon: <RobotOutlined />, label: 'AI 智能体' },
         { key: '/image', icon: <PictureOutlined />, label: 'AI 生图' },
         { key: '/video', icon: <VideoCameraOutlined />, label: 'AI 生视频' },
-        { key: '/plan', icon: <FilePptOutlined />, label: '智能方案生成' },
+        { key: '/plan', icon: <FilePptOutlined />, label: '智能方案' },
         { key: '/products', icon: <ShopOutlined />, label: '产品中心' },
       ],
     };
@@ -210,26 +210,21 @@ export function MainLayout(): ReactNode {
       children: [
         { key: '/treasure', icon: <ToolOutlined />, label: '智能百宝箱' },
         { key: '/knowledge', icon: <BookOutlined />, label: '我的知识库' },
-        { key: '/works', icon: <FolderOpenOutlined />, label: '我的资料' },
-        { key: '/materials', icon: <StarOutlined />, label: '优秀视频素材库' },
+        { key: '/works', icon: <FolderOpenOutlined />, label: '我的资料库' },
+        { key: '/materials', icon: <StarOutlined />, label: '视频素材库' },
         { key: '/content', icon: <FileSearchOutlined />, label: '内容提取' },
       ],
     };
-    const resource: NonNullable<MenuProps['items']>[number] = {
-      type: 'group',
-      key: 'g-res',
-      label: '资源与账户',
-      children: [{ key: '/tokens', icon: <WalletOutlined />, label: '个人中心' }],
-    };
+    // 个人中心人人可见；模型配置仅具备平台配置权限（开源自部署默认 tenant_admin 即有）时追加
+    const systemChildren: NonNullable<MenuProps['items']> = [{ key: '/tokens', icon: <WalletOutlined />, label: '个人中心' }];
+    if (isSuperAdmin) systemChildren.push({ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' });
     const system: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-system',
       label: '系统管理',
-      children: [{ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' }],
+      children: systemChildren,
     };
-    const items: NonNullable<MenuProps['items']> = [creation, toolbox, resource];
-    if (isSuperAdmin) items.push(system);
-    return items;
+    return [creation, toolbox, system];
   }, [isSuperAdmin]);
 
   const selectedKey = useMemo(() => {

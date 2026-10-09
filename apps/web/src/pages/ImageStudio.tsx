@@ -104,7 +104,7 @@ export function ImageStudio(): ReactNode {
       const url = fileUrl(`${r.url}?t=${Date.now()}`);
       setHistory((prev) => [url, ...prev]);
       setHistIdx(0);
-      message.success('图片已生成并保存到「我的资料」');
+      message.success('图片已生成并保存到「我的资料库」');
     } catch (e) {
       message.error((e as Error).message || '生成失败');
     } finally {
@@ -252,7 +252,7 @@ export function ImageStudio(): ReactNode {
               {generating ? '生成中（约 15 秒）' : '生成图片'}
             </Button>
             <Text type="secondary" style={{ fontSize: 13 }}>
-              每张按额度扣费（单价由部署者配置），生成结果自动保存到「我的资料」
+              每张按额度扣费（单价由部署者配置），生成结果自动保存到「我的资料库」
             </Text>
           </div>
         </div>

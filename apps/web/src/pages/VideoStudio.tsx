@@ -120,7 +120,7 @@ export function VideoStudio(): ReactNode {
         }),
       });
       setVideoUrl(fileUrl(`${r.url}?t=${Date.now()}`));
-      message.success(firstFrame ? '视频已生成（图生视频）并保存到「我的资料」' : '视频已生成并保存到「我的资料」');
+      message.success(firstFrame ? '视频已生成（图生视频）并保存到「我的资料库」' : '视频已生成并保存到「我的资料库」');
     } catch (e) {
       message.error((e as Error).message || '生成失败');
     } finally {
@@ -148,7 +148,7 @@ export function VideoStudio(): ReactNode {
             }}
           >
             <Text strong style={{ display: 'block', fontSize: 15, marginBottom: 10 }}>
-              ① 首帧图（可选）：上传或用「我的资料」里的效果图，作为视频第一帧
+              ① 首帧图（可选）：上传或用「我的资料库」里的效果图，作为视频第一帧
             </Text>
             {firstFrame ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -165,7 +165,7 @@ export function VideoStudio(): ReactNode {
                 <Upload accept="image/*" maxCount={1} showUploadList={false} beforeUpload={onUpload}>
                   <Button icon={<PlusOutlined />} loading={uploading}>选择文件</Button>
                 </Upload>
-                <Button type="link" size="small" onClick={() => void openPicker()}>从「我的资料」选择</Button>
+                <Button type="link" size="small" onClick={() => void openPicker()}>从「我的资料库」选择</Button>
                 <Text type="secondary" style={{ fontSize: 12 }}>不选首帧则按文字描述直接生成</Text>
               </div>
             )}
@@ -302,9 +302,9 @@ export function VideoStudio(): ReactNode {
         </div>
       </div>
 
-      {/* 从我的资料选择首帧 */}
+      {/* 从我的资料库选择首帧 */}
       <Modal
-        title="从「我的资料」选择首帧图"
+        title="从「我的资料库」选择首帧图"
         open={pickerOpen}
         onCancel={() => setPickerOpen(false)}
         footer={null}

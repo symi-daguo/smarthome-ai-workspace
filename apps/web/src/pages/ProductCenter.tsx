@@ -150,14 +150,14 @@ export function ProductCenter(): ReactNode {
     }
   };
 
-  /** 上传产品图：先 canvas 压缩（最长边 ≤1024），再传 /api/media/uploads */
+  /** 上传产品图：先 canvas 压缩+中心裁切为正方形（1:1 点位图标口径），再传 /api/media/uploads */
   const uploadProductImage = async (file: File, title: string): Promise<{ id: string; url: string } | null> => {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
       message.warning('仅支持 JPG / PNG / WebP');
       return null;
     }
     try {
-      const compressed = await compressImage(file);
+      const compressed = await compressImage(file, { square: true });
       const fd = new FormData();
       fd.append('file', compressed);
       fd.append('title', title.slice(0, 40));

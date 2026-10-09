@@ -2,6 +2,25 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.27] - 2026-10-09
+
+### Changed（产品图方形裁切 + 全站导航文案统一）
+
+用户指出产品图应正方形（比例不对要裁切），并要求各板块文字统一：AI 能力→AI 超能力、智能方案生成→智能方案、我的资料→我的资料库、优秀视频素材库→视频素材库、"资源与账户"并入"系统管理"（含个人中心 + 模型配置）。
+
+- **方形裁切** [compress.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/compress.ts)：`compressImage(file, { square: true })` 等比 cover 后中心裁切为正方形（短边对齐 1024，小图不放大）——产品主图/点位图标 1:1 口径统一；户型图保持 `square: false` 原始比例（非方形图裁切会破坏户型）。实测 2400x1600 源图：产品图 → 1024x1024，户型图 → 1024x683
+- **导航文案** [MainLayout.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/layouts/MainLayout.tsx)：分组重构为「AI 超能力 / 智能百宝箱 / 系统管理」三组；模型配置仍按 `platform:billing:manage` 权限动态加入系统管理组（个人中心人人可见）；页面标题与提示文案同步（MyAssets/MaterialLibrary 标题、ImageStudio/VideoStudio 的「我的资料」引用、README）
+
+### Fixed
+
+- /works 视频缩略 `<video>` 加 `preload="metadata"`，消除历史条目预加载被取消产生的 `net::ERR_ABORTED` 控制台日志（复验 5 路由 0 error、/file 请求 0 次 ABORTED）
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **88/88**（纯前端改动）
+- 浏览器实测 5 项全 PASS：侧栏三组文案、页面标题、产品图方形裁切（1024x1024）、户型图保持 3:2、console 应用自身 0 error/warning（trae-preview 注入脚本的 `<anonymous>` TypeError 与应用无关）
+- 运行状态：docker stats 内存 api 139MB / web 10MB / db 50MB / redis 12MB 正常；api 日志 0 error/warn、web 访问日志 0 次 4xx/5xx
+
 ## [0.1.26] - 2026-10-09
 
 ### Fixed（传图不成功根因）

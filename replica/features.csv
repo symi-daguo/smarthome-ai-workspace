@@ -4,7 +4,7 @@ feature,area,priority,original,clone,notes
 免费注册开通团队,onboarding,must,yes,yes,注册即建租户+赠送额度
 多账号共享额度与个人隔离,onboarding,should,yes,partial,后端多租户已有；成员共享额度策略待补
 首次登录使用说明弹窗,onboarding,should,yes,yes,0.1.16 按用户 id 的 localStorage 标记自动弹一次，顶栏手动入口保留
-白色侧栏+分组导航+渐变新对话按钮,shell,must,yes,yes,渐变值需改为实测 #5B5BF0→#8E7BF6
+白色侧栏+分组导航+渐变新对话按钮,shell,must,yes,yes,渐变值需改为实测 #5B5BF0→#8E7BF6；0.1.27 文案统一：AI 超能力/智能百宝箱/系统管理 三组，智能方案/我的资料库/视频素材库
 历史对话内嵌侧栏(标题+智能体·时间),shell,must,yes,yes,
 侧栏底部个人中心卡(额度/设置/退出),shell,must,yes,yes,
 侧栏折叠,shell,should,yes,yes,

@@ -1,13 +1,19 @@
 /**
  * 上传图片统一压缩（canvas 原生实现，零依赖）：
- * 产品图/户型图等经 canvas 等比缩放到最长边 ≤1024 再上传——
  * 手机原图动辄 4000x3000/5MB，既超 nginx 体积限制，也让点位合成与列表缩略卡顿。
+ * - square=true（产品主图 / 点位图标）：等比 cover 后**中心裁切为正方形**，保证 1:1 口径
+ * - square=false（户型图 / 现场照片）：等比缩放到最长边 ≤1024，**保持原始比例**（户型图非方形）
  * 输出：原为 PNG 保留透明（image/png），其余转 JPEG 质量 0.85。
  */
 const MAX_EDGE = 1024;
 const JPEG_QUALITY = 0.85;
 
-export async function compressImage(file: File): Promise<File> {
+interface CompressOptions {
+  /** true=输出正方形（中心裁切）；false=保持宽高比 */
+  square?: boolean;
+}
+
+async function decode(file: File): Promise<HTMLImageElement> {
   const img = new Image();
   const url = URL.createObjectURL(file);
   try {
@@ -16,28 +22,59 @@ export async function compressImage(file: File): Promise<File> {
       img.onerror = () => reject(new Error('IMAGE_DECODE_FAILED'));
       img.src = url;
     });
-    const { width, height } = img;
-    if (!width || !height) throw new Error('IMAGE_EMPTY');
-    const scale = Math.min(1, MAX_EDGE / Math.max(width, height));
-    // 尺寸未超限且体积不大（<800KB）直接放行，避免无谓重编码
-    if (scale === 1 && file.size < 800 * 1024) return file;
-    const w = Math.round(width * scale);
-    const h = Math.round(height * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('CANVAS_UNAVAILABLE');
-    ctx.drawImage(img, 0, 0, w, h);
-    const isPng = file.type === 'image/png';
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, isPng ? 'image/png' : 'image/jpeg', JPEG_QUALITY),
-    );
-    if (!blob) throw new Error('IMAGE_ENCODE_FAILED');
-    const ext = isPng ? 'png' : 'jpg';
-    const base = file.name.replace(/\.[^.]+$/, '') || 'image';
-    return new File([blob], `${base}.${ext}`, { type: isPng ? 'image/png' : 'image/jpeg' });
   } finally {
     URL.revokeObjectURL(url);
   }
+  if (!img.naturalWidth || !img.naturalHeight) throw new Error('IMAGE_EMPTY');
+  return img;
+}
+
+function encode(canvas: HTMLCanvasElement, isPng: boolean): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('IMAGE_ENCODE_FAILED'))),
+      isPng ? 'image/png' : 'image/jpeg',
+      JPEG_QUALITY,
+    );
+  });
+}
+
+function toFile(blob: Blob, name: string, isPng: boolean): File {
+  const ext = isPng ? 'png' : 'jpg';
+  const base = name.replace(/\.[^.]+$/, '') || 'image';
+  return new File([blob], `${base}.${ext}`, { type: isPng ? 'image/png' : 'image/jpeg' });
+}
+
+export async function compressImage(file: File, opts: CompressOptions = {}): Promise<File> {
+  const { square = false } = opts;
+  const img = await decode(file);
+  const { naturalWidth: w, naturalHeight: h } = img;
+  const isPng = file.type === 'image/png';
+
+  // 正方形口径：已是 1:1 且尺寸/体积达标则原样放行，避免无谓重编码
+  const alreadySquare = w === h;
+  if (square && alreadySquare && w <= MAX_EDGE && file.size < 800 * 1024) return file;
+  if (!square && w <= MAX_EDGE && h <= MAX_EDGE && file.size < 800 * 1024) return file;
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('CANVAS_UNAVAILABLE');
+
+  if (square) {
+    // cover 中心裁切：短边对齐 MAX_EDGE（小图不放大），长边超出部分居中丢弃
+    const side = Math.min(MAX_EDGE, Math.min(w, h));
+    canvas.width = side;
+    canvas.height = side;
+    const scale = side / Math.min(w, h);
+    const dw = w * scale;
+    const dh = h * scale;
+    ctx.drawImage(img, (side - dw) / 2, (side - dh) / 2, dw, dh);
+  } else {
+    const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }
+
+  return toFile(await encode(canvas, isPng), file.name, isPng);
 }

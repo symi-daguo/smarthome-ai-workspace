@@ -103,7 +103,7 @@ export function MyAssets(): ReactNode {
 
   return (
     <div style={{ width: '100%', paddingBottom: 24 }}>
-      <Title level={3} style={{ marginBottom: 4 }}>我的资料</Title>
+      <Title level={3} style={{ marginBottom: 4 }}>我的资料库</Title>
       <Text type="secondary">你生成的图片、视频、方案都保存在这里，随时查看与下载</Text>
 
       <div style={{ display: 'flex', gap: 8, margin: '18px 0 20px', flexWrap: 'wrap' }}>
@@ -186,7 +186,7 @@ export function MyAssets(): ReactNode {
                     ) : a.url && a.kind === 'image' ? (
                       <img src={a.url} alt={a.title} onError={() => markUnavailable(a.id)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : a.url && a.kind === 'video' ? (
-                      <video src={a.url} muted playsInline onError={() => markUnavailable(a.id)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <video src={a.url} muted playsInline preload="metadata" onError={() => markUnavailable(a.id)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (
                       KIND_ICON[a.kind]
                     )}

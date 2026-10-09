@@ -114,7 +114,7 @@ export function MaterialLibrary(): ReactNode {
     <div style={pageContainerStyle}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 280 }}>
-          <Title level={3} style={{ marginBottom: 4 }}>优秀视频素材库</Title>
+          <Title level={3} style={{ marginBottom: 4 }}>视频素材库</Title>
           <Text type="secondary">发现同行的优秀视频作品。首次购买支付 1 元额度，即可下载对应原图和完整视频。</Text>
         </div>
         <Card
