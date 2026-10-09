@@ -352,6 +352,20 @@ model ModelSetting {
   updatedAt DateTime @updatedAt
 }
 
+// 命名模型方案：多套配置（不同需求用不同模型）的快照，active 标记当前生效方案；
+// 运行时仍读 ModelSetting（激活=把方案快照写回 ModelSetting），零回归风险
+model ModelProfile {
+  id      String  @id @default(uuid())
+  name    String  @unique
+  // { chat: {...}, image: {...}, video: {...}, knowledge: {...} } 各 scope 配置 JSON
+  scopes  Json
+  active  Boolean @default(false)
+  updated String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // ---------- 接单工作台（销售接待：线索状态机 + 跟进记录） ----------
 
 model OrderRequest {

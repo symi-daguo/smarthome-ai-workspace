@@ -90,6 +90,17 @@ export class AuthService {
     };
   }
 
+  /**
+   * 刷新 JWT：携带有效旧 token 换新 token（延长有效期），避免过期后被迫重新登录。
+   * 已改密用户旧 token 仍在有效期内可刷新——本系统 token 只承载 userId，权限每请求实时加载，
+   * 刷新不放大任何权限面。
+   */
+  async refresh(userId: string): Promise<{ token: string; user: AuthProfile }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('USER_NOT_FOUND');
+    return { token: await this.sign(user.id, user.phone), user: await this.profile(user.id) };
+  }
+
   async changePassword(userId: string, dto: { oldPassword: string; newPassword: string }): Promise<{ ok: true }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('USER_NOT_FOUND');

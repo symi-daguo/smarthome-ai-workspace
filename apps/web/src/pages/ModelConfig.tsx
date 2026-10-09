@@ -2,10 +2,12 @@ import {
   ApiOutlined,
   CheckCircleFilled,
   CloudServerOutlined,
+  CopyOutlined,
   DeleteOutlined,
   DesktopOutlined,
   PictureOutlined,
   ReloadOutlined,
+  RobotOutlined,
   SaveOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons';
@@ -65,6 +67,14 @@ interface TestResult {
   latencyMs?: number;
   detail?: string;
   error?: string;
+}
+
+interface ModelProfile {
+  id: string;
+  name: string;
+  active: boolean;
+  updatedAt: string;
+  scopes: Record<string, { hasKey: boolean }>;
 }
 
 interface ChatForm {
@@ -153,6 +163,10 @@ export function ModelConfig(): ReactNode {
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [results, setResults] = useState<{ chat: TestResult | null; image: TestResult | null; comfy: TestResult | null; video: TestResult | null }>({ chat: null, image: null, comfy: null, video: null });
+  const [profiles, setProfiles] = useState<ModelProfile[]>([]);
+  const [profileName, setProfileName] = useState('');
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [skillBusy, setSkillBusy] = useState(false);
 
   const [chatForm] = Form.useForm<ChatForm>();
   const [imageForm] = Form.useForm<ImageForm>();
@@ -190,7 +204,82 @@ export function ModelConfig(): ReactNode {
     load()
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false));
+    void loadProfiles();
   }, [canManageModels, load, message]);
+
+  const loadProfiles = async (): Promise<void> => {
+    try {
+      setProfiles(await api<ModelProfile[]>('/api/admin/model-config/profiles'));
+    } catch {
+      setProfiles([]);
+    }
+  };
+
+  /** 把当前生效配置快照为命名方案（同名覆盖更新） */
+  const saveAsProfile = async (): Promise<void> => {
+    const name = profileName.trim();
+    if (!name) {
+      message.warning('请先给方案起个名称，如「文案快省」「出图高质量」');
+      return;
+    }
+    setProfileBusy(true);
+    try {
+      await api('/api/admin/model-config/profiles/save', { method: 'POST', body: JSON.stringify({ name }) });
+      message.success(`方案「${name}」已保存（同名覆盖更新）`);
+      setProfileName('');
+      await loadProfiles();
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const activateProfile = async (p: ModelProfile): Promise<void> => {
+    setProfileBusy(true);
+    try {
+      await api(`/api/admin/model-config/profiles/${p.id}/activate`, { method: 'POST' });
+      message.success(`已切换到方案「${p.name}」，即时生效`);
+      await Promise.all([load(), loadProfiles()]);
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const deleteProfile = (p: ModelProfile): void => {
+    modal.confirm({
+      title: `删除方案「${p.name}」？`,
+      content: '仅删除该命名快照，不影响当前生效配置。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await api(`/api/admin/model-config/profiles/${p.id}`, { method: 'DELETE' });
+          message.success('已删除');
+          await loadProfiles();
+        } catch (e) {
+          message.error((e as Error).message);
+        }
+      },
+    });
+  };
+
+  /** 复制 Agent 集成技能包（API 端点+认证+用法，可直接粘贴给任意智能体） */
+  const copySkillPack = async (): Promise<void> => {
+    setSkillBusy(true);
+    try {
+      const r = await api<{ text: string }>('/api/admin/model-config/agent-skillpack');
+      await navigator.clipboard.writeText(r.text);
+      message.success('技能包已复制（Markdown），粘贴给你的智能体即可接入全部能力');
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setSkillBusy(false);
+    }
+  };
 
   if (!canManageModels) {
     return (
@@ -292,6 +381,67 @@ export function ModelConfig(): ReactNode {
             showIcon
             message="配置优先级：本页保存的在线配置 > .env 默认值。API Key 保存后不再回显（仅显示末四位），留空保存表示保持原 Key 不变。"
           />
+
+          {/* —— 模型方案（多套配置，不同需求用不同模型） —— */}
+          <Card
+            title={<Space><ApiOutlined style={{ color: '#5B5BF0' }} />模型方案（多套配置 · 一键切换）</Space>}
+            styles={{ body: { padding: 18 } }}
+          >
+            <Text type="secondary">
+              把当前「对话 / 生图 / ComfyUI / 生视频」的全部配置存为一个命名方案（如「文案快省」用 DeepSeek、「出图高质量」用 OpenAI 图像），
+              不同需求随时切换，切换即时生效；方案持久化到数据库，升级迁移不丢失。
+            </Text>
+            <Space wrap style={{ margin: '12px 0', width: '100%' }}>
+              <Input
+                placeholder="方案名称，如：文案快省 / 出图高质量 / 本地离线"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                maxLength={40}
+                style={{ width: 300 }}
+                onPressEnter={() => void saveAsProfile()}
+              />
+              <Button type="primary" icon={<SaveOutlined />} loading={profileBusy} onClick={() => void saveAsProfile()} style={{ background: BRAND_GRADIENT, border: 'none' }}>
+                保存当前配置为方案
+              </Button>
+            </Space>
+            {profiles.length === 0 ? (
+              <Alert type="warning" showIcon message="还没有命名方案：配好一组模型后输入名称保存即可" />
+            ) : (
+              <Table<ModelProfile>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                dataSource={profiles}
+                columns={[
+                  { title: '方案', dataIndex: 'name', render: (v: string, r) => <Space size={6}><Text strong>{v}</Text>{r.active ? <Tag color="green" icon={<CheckCircleFilled />}>当前使用</Tag> : null}</Space> },
+                  {
+                    title: '包含配置',
+                    dataIndex: 'scopes',
+                    render: (v: ModelProfile['scopes']) => (
+                      <Space size={4} wrap>
+                        {Object.entries(v).map(([k, s]) => <Tag key={k} color={s.hasKey ? 'blue' : 'default'}>{({ chat: '对话', image: '生图', video: '生视频', knowledge: '知识库' } as Record<string, string>)[k] ?? k}</Tag>)}
+                      </Space>
+                    ),
+                  },
+                  { title: '更新时间', dataIndex: 'updatedAt', width: 160, render: (v: string) => <Text type="secondary" style={{ fontSize: 12 }}>{new Date(v).toLocaleString('zh-CN')}</Text> },
+                  {
+                    title: '操作',
+                    width: 140,
+                    render: (_, r) => (
+                      <Space size={4}>
+                        <Button size="small" type={r.active ? 'default' : 'primary'} disabled={r.active || profileBusy} onClick={() => void activateProfile(r)}>
+                          {r.active ? '使用中' : '切换使用'}
+                        </Button>
+                        {!r.active ? (
+                          <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteProfile(r)} />
+                        ) : null}
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            )}
+          </Card>
 
           {/* —— 对话 —— */}
           <Card
@@ -401,6 +551,23 @@ export function ModelConfig(): ReactNode {
             </Form>
             {actionButtons({ saveScope: 'video', testScope: 'video', resetScope: 'video', resetLabel: '生视频', showReset: status.video.source === 'db' })}
             <TestAlert result={results.video} />
+          </Card>
+
+          {/* —— Agent 集成技能包 —— */}
+          <Card
+            title={<Space><RobotOutlined style={{ color: '#5B5BF0' }} />Agent 集成技能包（Skill Pack）</Space>}
+            styles={{ body: { padding: 18 } }}
+          >
+            <Text type="secondary">
+              一键复制完整接入文档（API 端点清单 + JWT 认证 + 计费/权限/限流规则 + 典型工作流提示词），
+              粘贴给 Claude / GPT / Trae / Cursor 等任意智能体，即可让外部 Agent 直接驱动本工作台的对话、生图、生视频、方案、接单、产品库与知识库全部能力，
+              操作自动按租户隔离并留痕。
+            </Text>
+            <div style={{ marginTop: 12 }}>
+              <Button type="primary" icon={<CopyOutlined />} loading={skillBusy} onClick={() => void copySkillPack()} style={{ background: BRAND_GRADIENT, border: 'none' }}>
+                复制技能包（Markdown）
+              </Button>
+            </div>
           </Card>
 
           {/* —— 接入指南 —— */}

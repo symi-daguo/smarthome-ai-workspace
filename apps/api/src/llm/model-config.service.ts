@@ -209,6 +209,68 @@ export class ModelConfigService {
     await this.prisma.modelSetting.deleteMany({ where: { scope } });
   }
 
+  // ---------- 命名模型方案（多套配置，不同需求用不同模型） ----------
+
+  /** 方案列表（不含明文 key，仅返回 keyMasked 状态） */
+  async listProfiles() {
+    const rows = await this.prisma.modelProfile.findMany({ orderBy: [{ active: 'desc' }, { updatedAt: 'desc' }] });
+    return rows.map((r) => {
+      const scopes = r.scopes as Record<string, { apiKey?: string }>;
+      return {
+        id: r.id,
+        name: r.name,
+        active: r.active,
+        updatedAt: r.updatedAt.toISOString(),
+        scopes: Object.fromEntries(
+          Object.entries(scopes).map(([k, v]) => [k, { hasKey: Boolean(v?.apiKey) }]),
+        ),
+      };
+    });
+  }
+
+  /** 把当前生效的 ModelSetting 各 scope 快照为命名方案（可覆盖同名）；无任何激活方案时新方案即当前 */
+  async saveProfile(name: string, actorId: string) {
+    const cleanName = name.trim().slice(0, 40);
+    if (!cleanName) throw new BadRequestException('PROFILE_NAME_REQUIRED');
+    const settings = await this.prisma.modelSetting.findMany();
+    const scopes: Record<string, unknown> = {};
+    for (const s of settings) scopes[s.scope] = s.config;
+    const hasActive = await this.prisma.modelProfile.count({ where: { active: true } });
+    const row = await this.prisma.modelProfile.upsert({
+      where: { name: cleanName },
+      create: { name: cleanName, scopes: scopes as object, active: hasActive === 0, updated: actorId },
+      update: { scopes: scopes as object, updated: actorId },
+    });
+    return { id: row.id, name: row.name };
+  }
+
+  /** 激活方案：把快照写回 ModelSetting（即时生效，运行时链路零改动） */
+  async activateProfile(id: string, actorId: string): Promise<void> {
+    const row = await this.prisma.modelProfile.findUnique({ where: { id } });
+    if (!row) throw new BadRequestException('PROFILE_NOT_FOUND');
+    const scopes = row.scopes as Record<string, object>;
+    await this.prisma.$transaction([
+      this.prisma.modelProfile.updateMany({ where: { active: true }, data: { active: false } }),
+      ...SCOPES.map((scope) =>
+        scopes[scope]
+          ? this.prisma.modelSetting.upsert({
+              where: { scope },
+              create: { scope, config: scopes[scope], updated: actorId },
+              update: { config: scopes[scope], updated: actorId },
+            })
+          : this.prisma.modelSetting.deleteMany({ where: { scope } }),
+      ),
+    ]);
+    await this.prisma.modelProfile.update({ where: { id }, data: { active: true } });
+  }
+
+  async removeProfile(id: string): Promise<void> {
+    const row = await this.prisma.modelProfile.findUnique({ where: { id } });
+    if (!row) throw new BadRequestException('PROFILE_NOT_FOUND');
+    if (row.active) throw new BadRequestException({ code: 'PROFILE_ACTIVE', message: '当前生效方案不可删除，请先切换到其他方案' });
+    await this.prisma.modelProfile.delete({ where: { id } });
+  }
+
   /** 已存明文 key（仅服务端内部使用，绝不出现在任何响应中） */
   async storedKey(scope: ConfigScope): Promise<string> {
     const db = await this.read<{ apiKey?: string }>(scope);

@@ -119,6 +119,108 @@ export class ModelConfigController {
     return { ok: true, scope };
   }
 
+  // ---------- 命名模型方案：多套配置，不同需求用不同模型 ----------
+
+  @RequirePermissions('platform:billing:manage')
+  @Get('profiles')
+  profiles() {
+    return this.modelConfig.listProfiles();
+  }
+
+  /** 把当前生效配置快照为命名方案（同名覆盖=更新该方案） */
+  @RequirePermissions('platform:billing:manage')
+  @Post('profiles/save')
+  saveProfile(@CurrentUser() user: AuthProfile, @Body() body: { name?: string }) {
+    return this.modelConfig.saveProfile(body.name ?? '', user.id);
+  }
+
+  @RequirePermissions('platform:billing:manage')
+  @Post('profiles/:id/activate')
+  async activateProfile(@CurrentUser() user: AuthProfile, @Param('id') id: string): Promise<{ ok: true }> {
+    await this.modelConfig.activateProfile(id, user.id);
+    return { ok: true };
+  }
+
+  @RequirePermissions('platform:billing:manage')
+  @Delete('profiles/:id')
+  async removeProfile(@Param('id') id: string): Promise<{ ok: true }> {
+    await this.modelConfig.removeProfile(id);
+    return { ok: true };
+  }
+
+  /**
+   * Agent 集成技能包：一键复制给外部智能体（Claude / GPT / Trae / Cursor 等）使用的接入说明。
+   * 纯静态模板 + 当前生效配置摘要（不含任何 Key），供「模型配置」页复制按钮使用。
+   */
+  @RequirePermissions('platform:billing:manage')
+  @Get('agent-skillpack')
+  async agentSkillPack(@CurrentUser() user: AuthProfile & { activeTenantId?: string }): Promise<{ text: string }> {
+    const [chat, image, video] = await Promise.all([
+      this.modelConfig.chatConfig(),
+      this.modelConfig.imageConfig(),
+      this.modelConfig.videoConfig(),
+    ]);
+    const origin = this.configOrigin();
+    const text = `# 智能家居 AI 工作台 · Agent 接入技能包（Skill Pack）
+
+你可以通过 HTTP API 驱动本工作台的全部 AI 能力。以下协议对任意智能体（Claude / GPT / Trae / Cursor / 自建 Agent）通用。
+
+## 1. 认证
+所有请求携带 JWT Bearer Token（在工作台「个人中心」登录后获取，或调用登录接口）：
+
+\`\`\`bash
+curl -X POST ${origin}/api/auth/login \\
+  -H 'Content-Type: application/json' \\
+  -d '{"phone":"<手机号>","password":"<密码>"}'
+# 响应 { "token": "<JWT>", "user": {...} }，token 有效期 7 天，
+# 过期后重新登录或调用 POST /api/auth/refresh 刷新（携带旧 token 即可换新）。
+\`\`\`
+
+后续请求统一加：\`-H "Authorization: Bearer $TOKEN"\`
+
+## 2. 核心能力端点
+
+| 能力 | 方法与路径 | 请求体 | 说明 |
+|---|---|---|---|
+| AI 对话 | POST /api/llm/chat | {prompt, systemPrompt?} | 走当前激活模型方案（对话：${chat.baseUrl}） |
+| AI 生图 | POST /api/media/images | {prompt, size?} | size=1024x1024/1536x1024/1024x1536（生图：${image.provider}） |
+| AI 生视频 | POST /api/media/videos | {prompt, duration?, resolution?, ratio?, firstFrameAssetId?} | 生视频：${video.provider} |
+| 智能方案 | POST /api/plans/generate | {title, customer, ...资料字段} | 产出 9 页可编辑 PPT 方案 |
+| 接单解析 | POST /api/orders/intake | {rawInput} | 客户原话→结构化建档+产品推荐 |
+| 产品库 | GET /api/products | - | 公共库+我的库合并（含分类/品牌/产品图） |
+| 我的产品 | POST /api/products/mine | {name, category, brand?, model?, priceMin?, priceMax?, imageUrl?} | 新增到我的库 |
+| 产品批量处理 | POST /api/products/ai-process | {ids:[...]} | agent 补文案+批量生成产品主图 |
+| 知识库检索 | POST /api/knowledge/external/search | {query} | 外部 RAG（WeKnora/Obsidian） |
+| 内容提取 | POST /api/content/extractions/upload | multipart file+docType | 产品资料→结构化入库并同步产品库 |
+| 文件上传 | POST /api/media/uploads | multipart file | 图片落盘并返回 {id,url} |
+
+## 3. 模型方案切换（不同任务用不同模型）
+
+\`\`\`bash
+curl ${origin}/api/admin/model-config/profiles -H "Authorization: Bearer $TOKEN"
+# [{id,name,active,scopes:{chat:{hasKey},...}}, ...]
+curl -X POST ${origin}/api/admin/model-config/profiles/<id>/activate -H "Authorization: Bearer $TOKEN"
+\`\`\`
+
+## 4. 规则与边界
+- 计费：所有 AI 端点按额度扣费（响应 402 = 额度不足）；校验失败不扣费
+- 权限：需 content:generate（生成类）/ knowledge:manage（知识库）等平台权限；越权返回 403
+- 数据隔离：所有读写自动限定在当前租户；公共库产品只读（可复制到我的库）
+- 审计：agent 触发的检索/批量处理均写入操作留痕（AuditLog）
+- 限流：全局 ${process.env.RATE_LIMIT_GLOBAL ?? 300} 次/分钟/IP，认证接口 ${process.env.RATE_LIMIT_AUTH ?? 10} 次/分钟
+
+## 5. 典型工作流（复制给智能体作为 system prompt 片段）
+「你是智能家居门店运营助手。用上面的 API 完成：1) 把客户资料 POST /api/orders/intake 建档；
+2) 用 GET /api/products 选品；3) 需要图时用 POST /api/media/images 生成；
+4) 全部产物自动落库到「我的资料库」，无需本地保存。」`;
+    return { text };
+  }
+
+  /** 请求来源（compose 部署即 web 容器同源地址） */
+  private configOrigin(): string {
+    return process.env.PUBLIC_ORIGIN ?? 'http://localhost:5173';
+  }
+
   /** 对话连通性测试：一条极短请求验证 Base URL 与 Key */
   @RequirePermissions('platform:billing:manage')
   @Post('test-chat')

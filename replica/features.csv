@@ -36,7 +36,7 @@ AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,partial,0.1.16 �
 智能设备点位布局(上传户型图+布点+导出图纸/清单),treasure,must,yes,yes,0.1.24 升级：布点携带产品主图→点位显示产品照片(圆裁白底)，无图回退 0.1.23 品类 SVG 徽章(预览/PNG/PPTX/分享四端一致)+一键美化图纸(白底增强保持户型)+挂接方案空间动线页
 产品中心-公共库与我的库双 tab,treasure,must,yes,yes,0.1.26 完善：24 预置品类字典(CategoryDef 表)+自定义分类(图标/颜色可选/在用拒绝删除)；品牌筛选+AutoComplete；lucide(ISC) 线条图标库；上传 canvas 压缩至 1024px；知识库产品资料确认入库自动同步到我的库(价格解析+品类推断)；修 nginx 1m 默认体限制致传图 413 + api() 空 body JSON 解析报错
 全站流式布局无留白,shell,must,yes,yes,0.1.25 重做：pageContainerStyle 去一切 maxWidth 封顶，卡片随视口拉宽铺满(2560 档实测主卡片占内容区约 97%)；生图/生视频双列改 flex 百分比；四档视口无横向溢出
-个人中心-统一承载设置(资料偏好+备份治理),profile,must,yes,yes,0.1.24 改造：侧栏「设置」直达 /tokens 不再弹独立弹窗，ProfileSettings 迁入个人中心(昵称/头像色/主题三选/备份导出/存储治理)，消除与个人中心改密的重复
+- **个人中心-统一承载设置(资料偏好+备份治理)**：0.1.24 迁入个人中心页(/tokens)统一承载，0.1.29 新增「刷新登录令牌」+JWT 自动续期(6h 巡检,<2 天续期),保证会话不丢数据
 WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.1.14 真实化：additive 径向光斑红强绿弱+图例，复用点位编辑器 ?mode=wifi
 灯光点位效果图(灯具布点+暖光光晕),treasure,should,yes,yes,0.1.14 真实化：暖光晕+徽章标签，复用点位编辑器 ?mode=light
 智能报价(选品配单+区间算价+报价单导出),treasure,must,yes,yes,0.1.14 真实化：QuoteStudio /quote 产品库选品+数量步进+区间合计+CSV(BOM)含合规说明
@@ -52,7 +52,7 @@ WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.
 个人设置(昵称/头像色/主题/改密/备份/存储治理),profile,must,yes,yes,0.1.20 新增弹窗承载；0.1.24 迁入个人中心页(/tokens)统一承载，PATCH /api/auth/profile 持久化头像色，管理员含全库备份导出+产物占用清理
 数据备份与磁盘治理,system,must,yes,yes,0.1.20 新增：GET /api/admin/backup 全库 JSON 快照；storage 占用统计+30 天未引用产物清理；compose 日志轮转；nginx index.html 禁缓存根治发版报错
 个人中心-退出登录,profile,must,yes,yes,
-模型配置中心(对话/生图/ComfyUI/生视频四卡在线编辑+持久化+脱敏+连通测试),system,must,yes,yes,0.1.19 升级：生视频 provider 可选(MiniMax Director/OpenAI Sora)不再写死，ComfyUI 配置提升为独立常驻卡，四卡均可编辑保存即生效、Key 只进不出、恢复默认回退 env
+- **模型配置中心(对话/生图/ComfyUI/生视频四卡在线编辑+持久化+脱敏+连通测试)**：0.1.19 升级生视频 provider 可选(MiniMax Director/OpenAI Sora)不再写死，ComfyUI 配置提升为独立常驻卡，四卡均可编辑保存即生效、Key 只进不出、恢复默认回退 env；0.1.29 新增多套命名方案 CRUD+一键切换(ModelProfile 表，零回归切换)、Agent 集成技能包(Markdown 一键复制给外部智能体)、JWT 刷新端点(避免过期丢会话)
 开始接单-5 步向导整页替换,order,must,yes,yes,0.1.21 完整开发：AI 解析建档+状态机(new→qualified→proposed→quoted→won/lost)+跟进记录+AI 跟进建议+产品库匹配+方案挂接
 开始接单-历史方案,order,should,yes,yes,0.1.21 接待列表按状态分组持久化（OrderRequest 表），点击直达向导
 短视频工作台-IP 档案(传记+4×4)新建/导入,biography,should,yes,partial,页面框架已有，档案逻辑 0.3.0+

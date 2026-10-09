@@ -427,6 +427,34 @@ async function main(): Promise<void> {
     delChat.status === 200 && cfgReset.body.chat.source === 'env',
   );
 
+  // ---------- 命名模型方案：多套配置一键切换 ----------
+  await request(base, '/api/admin/model-config/chat', { ...authA, method: 'PUT', body: JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', model: 'profile-A-model', apiKey: 'sk-profileA9999' }) });
+  const prof1 = await request<{ id: string; name: string }>(base, '/api/admin/model-config/profiles/save', { ...authA, method: 'POST', body: JSON.stringify({ name: '方案A-省钱文案' }) });
+  check('保存命名方案 201', prof1.status === 201 && prof1.body.name === '方案A-省钱文案');
+  await request(base, '/api/admin/model-config/chat', { ...authA, method: 'PUT', body: JSON.stringify({ baseUrl: 'http://127.0.0.1:8/v1', model: 'profile-B-model', apiKey: 'sk-profileB8888' }) });
+  const prof2 = await request<{ id: string }>(base, '/api/admin/model-config/profiles/save', { ...authA, method: 'POST', body: JSON.stringify({ name: '方案B-高质量' }) });
+  const profList = await request<{ id: string; name: string; active: boolean; scopes: Record<string, { hasKey: boolean }> }[]>(base, '/api/admin/model-config/profiles', authA);
+  check('方案列表含两套且首个自动为当前', profList.status === 200 && profList.body.length >= 2 && profList.body.find((p) => p.name === '方案A-省钱文案')?.active === true);
+  check('方案列表不回传明文 Key', !JSON.stringify(profList.body).includes('sk-profile'));
+  const act = await request<{ ok: boolean }>(base, `/api/admin/model-config/profiles/${prof2.body.id}/activate`, { ...authA, method: 'POST' });
+  const cfgAfterAct = await request<{ chat: { baseUrl: string; model: string; keyMasked: string | null } }>(base, '/api/admin/model-config', authA);
+  check(
+    '切换方案即时生效（配置回到方案B快照）',
+    act.status === 201 && cfgAfterAct.body.chat.baseUrl === 'http://127.0.0.1:8/v1' && cfgAfterAct.body.chat.model === 'profile-B-model' && cfgAfterAct.body.chat.keyMasked === '••••8888',
+  );
+  const delActive = await request(base, `/api/admin/model-config/profiles/${prof2.body.id}`, { ...authA, method: 'DELETE' });
+  check('当前使用方案不可删除（400）', delActive.status === 400);
+  const delInactive = await request<{ ok: boolean }>(base, `/api/admin/model-config/profiles/${prof1.body.id}`, { ...authA, method: 'DELETE' });
+  check('非当前方案可删除', delInactive.status === 200);
+  const skillPack = await request<{ text: string }>(base, '/api/admin/model-config/agent-skillpack', authA);
+  check('Agent 技能包端点返回完整文档且不含明文 Key', skillPack.status === 200 && skillPack.body.text.includes('/api/media/images') && !skillPack.body.text.includes('sk-profile'));
+
+  // ---------- JWT 刷新：旧 token 换新 token ----------
+  const refreshed = await request<{ token: string }>(base, '/api/auth/refresh', { ...authA, method: 'POST' });
+  const meWithNew = await request<{ id: string }>(base, '/api/auth/me', { headers: { Authorization: `Bearer ${refreshed.body.token}` } });
+  check('刷新令牌可用（新 token 通过鉴权）', refreshed.status === 201 && meWithNew.status === 200 && meWithNew.body.id === me.body.id);
+  await request(base, '/api/admin/model-config/chat', { ...authA, method: 'DELETE' });
+
   // 生视频 provider 可切换（不再写死 MiniMax）+ ComfyUI 独立配置持久化
   const putVideo = await request<{ ok: boolean }>(base, '/api/admin/model-config/video', {
     ...authA,

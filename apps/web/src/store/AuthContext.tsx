@@ -25,6 +25,8 @@ interface AuthContextValue {
   logout: () => void;
   /** 重新拉取 /api/auth/me（个人设置保存后刷新头像色/昵称） */
   refresh: () => Promise<void>;
+  /** 刷新 JWT 令牌（延长有效期，避免过期丢会话；成功返回 true） */
+  renewToken: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -84,7 +86,37 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
     setUser(await fetchMe());
   }, []);
 
-  return <AuthContext.Provider value={{ user, loading, login, register, logout, refresh }}>{children}</AuthContext.Provider>;
+  const renewToken = useCallback(async (): Promise<boolean> => {
+    const old = tokenStore.get();
+    if (!old) return false;
+    try {
+      const r = await api<{ token: string }>('/api/auth/refresh', { method: 'POST' });
+      tokenStore.set(r.token);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // JWT exp 临期（<2 天）自动续期：会话不因令牌过期而丢失
+  useEffect(() => {
+    if (!user) return;
+    const check = (): void => {
+      const t = tokenStore.get();
+      if (!t) return;
+      try {
+        const payload = JSON.parse(atob(t.split('.')[1] ?? '')) as { exp?: number };
+        if (payload.exp && payload.exp * 1000 - Date.now() < 2 * 86_400_000) void renewToken();
+      } catch {
+        // token 结构异常不处理，下次请求自然触发重新登录
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 6 * 3600_000);
+    return () => window.clearInterval(timer);
+  }, [user, renewToken]);
+
+  return <AuthContext.Provider value={{ user, loading, login, register, logout, refresh, renewToken }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {

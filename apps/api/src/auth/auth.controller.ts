@@ -35,6 +35,13 @@ export class AuthController {
     return user;
   }
 
+  /** 刷新 JWT（携带有效旧 token 换新 token，延长有效期避免过期丢会话） */
+  @UseGuards(AuthGuard('jwt'))
+  @Post('refresh')
+  refresh(@CurrentUser() user: AuthProfile): Promise<{ token: string; user: AuthProfile }> {
+    return this.auth.refresh(user.id);
+  }
+
   @UseGuards(AuthGuard('jwt'))
   @Post('change-password')
   changePassword(

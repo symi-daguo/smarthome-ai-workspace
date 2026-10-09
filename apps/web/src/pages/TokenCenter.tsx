@@ -4,6 +4,7 @@ import {
   LockOutlined,
   LogoutOutlined,
   PlusOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import {
   Alert,
@@ -102,8 +103,9 @@ function inviteCode(userId: string): string {
 export function TokenCenter(): ReactNode {
   const { message, modal } = AntApp.useApp();
   const { token } = useToken();
-  const { user, logout, refresh } = useAuth();
+  const { user, logout, refresh, renewToken } = useAuth();
   const { mode, setMode } = useTheme();
+  const [renewing, setRenewing] = useState(false);
   const [balance, setBalance] = useState<TokenBalance | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -242,6 +244,14 @@ export function TokenCenter(): ReactNode {
     } finally {
       setBacking(false);
     }
+  };
+
+  const renew = async (): Promise<void> => {
+    setRenewing(true);
+    const ok = await renewToken();
+    setRenewing(false);
+    if (ok) message.success('登录令牌已刷新，有效期重新计时');
+    else message.error('刷新失败，请重新登录');
   };
 
   const membership = user?.memberships[0];
@@ -470,12 +480,17 @@ export function TokenCenter(): ReactNode {
         <Col xs={24} lg={12}>
           <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
             <Text strong style={{ fontSize: 15 }}>账号安全</Text>
-            <Text type="secondary" style={{ fontSize: 12.5, display: 'block', margin: '10px 0 16px' }}>
-              当前设备登录的账号如需切换或结束会话，可在此退出登录；所有操作数据已持久化到数据库，退出不会丢失。
+            <Text type="secondary" style={{ fontSize: 12.5, display: 'block', margin: '10px 0 12px' }}>
+              登录令牌有效期 7 天，临期自动续期；也可手动刷新换取新令牌，避免过期丢会话。所有操作数据已持久化到数据库，退出不会丢失。
             </Text>
-            <Button danger icon={<LogoutOutlined />} onClick={logout} block>
-              退出登录
-            </Button>
+            <Space direction="vertical" size={10} style={{ width: '100%' }}>
+              <Button loading={renewing} icon={<SyncOutlined />} onClick={() => void renew()} block>
+                刷新登录令牌
+              </Button>
+              <Button danger icon={<LogoutOutlined />} onClick={logout} block>
+                退出登录
+              </Button>
+            </Space>
           </Card>
         </Col>
       </Row>

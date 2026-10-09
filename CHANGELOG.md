@@ -2,6 +2,21 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.29] - 2026-10-09
+
+### Added（模型方案多套配置 + Agent 技能包 + Token 刷新 + PWA）
+
+- **多套命名模型方案** `ModelProfile` 表（migration `model_profile`）：把当前对话/生图/ComfyUI/生视频/知识库各 scope 的配置整体快照为命名方案（如「文案快省」用 DeepSeek、「出图高质量」用 OpenAI 图像），命名后「切换使用」即时写回 `ModelSetting`（运行时链路零改动、零回归风险）；同名覆盖更新；当前使用方案不可删；激活/非激活互斥；备份清单纳入 `modelProfile`；端点 `GET /api/admin/model-config/profiles`、`POST /profiles/save`、`POST /profiles/:id/activate`、`DELETE /profiles/:id`
+- **Agent 集成技能包** `GET /api/admin/model-config/agent-skillpack`：返回完整 Markdown 接入文档（API 端点清单 + JWT 登录/刷新/认证 + 计费/权限/限流规则 + 典型工作流提示词 + 当前生效 provider 摘要），**不含任何明文 Key**；「模型配置」页一键复制即可粘贴给 Claude/GPT/Trae/Cursor 等任意智能体，让外部 Agent 直接驱动本工作台全部能力并按租户隔离+审计留痕
+- **JWT 刷新** `POST /api/auth/refresh` + `AuthContext.renewToken`：携带旧 token 换新 token（延长有效期）；前端 6 小时巡检 exp，<2 天自动续期；「个人中心 / 账号安全」卡手动「刷新登录令牌」按钮
+- **PWA 多端应用** index.html + manifest.webmanifest + icon.svg（SVG 矢量、零二进制依赖），theme-color=#5B5BF0 品牌色，`display: standalone` 桌面/移动 PWA 安装条件齐全；nginx 补 `types { application/manifest+json webmanifest; }` MIME
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **96/96**（+8：方案保存/列表/激活/删激活保护/技能包不含明文/JWT 刷新/新 token 鉴权/方案 active 状态）
+- 端到端 curl 验收：list/save/activate/delete-active-400/delete-inactive-200/JWT refresh/PWA manifest 200+application/manifest+json/icon 200+image/svg+xml
+- 运行：api 日志 0 error、内存 api 168MB / web 12MB / db 50MB / redis 12MB
+
 ## [0.1.28] - 2026-10-09
 
 ### Added（全局返回能力：任何子页面都能返回）
