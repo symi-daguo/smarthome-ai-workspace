@@ -9,9 +9,13 @@ import { TenantGuard } from '../tenants/tenant.guard.js';
 import { LayoutService } from './layout.service.js';
 import {
   createLayoutSchema,
+  createProductSchema,
   updateLayoutSchema,
+  updateProductSchema,
   type CreateLayoutDto,
+  type CreateProductDto,
   type UpdateLayoutDto,
+  type UpdateProductDto,
 } from './layout.schemas.js';
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
@@ -20,10 +24,41 @@ import {
 export class LayoutController {
   constructor(private readonly layout: LayoutService) {}
 
-  /** 产品目录（点位图标数据源） */
+  /** 产品目录（公共库+我的库合并，布点/报价选品数据源） */
   @Get('products')
-  products() {
-    return this.layout.products();
+  products(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
+    return this.layout.products(user.activeTenantId);
+  }
+
+  /** 我的产品库：新增 */
+  @Post('products/mine')
+  createProduct(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(createProductSchema)) dto: CreateProductDto,
+  ) {
+    return this.layout.createProduct(user.activeTenantId as string, dto);
+  }
+
+  /** 公共库产品复制到我的库 */
+  @Post('products/:id/copy-to-mine')
+  copyProduct(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
+    return this.layout.copyProductToMine(user.activeTenantId as string, id);
+  }
+
+  /** 我的产品库：编辑（仅本租户行） */
+  @Patch('products/:id')
+  updateProduct(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateProductSchema)) dto: UpdateProductDto,
+  ) {
+    return this.layout.updateProduct(user.activeTenantId as string, id, dto);
+  }
+
+  /** 我的产品库：删除（仅本租户行） */
+  @Delete('products/:id')
+  removeProduct(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
+    return this.layout.removeProduct(user.activeTenantId as string, id);
   }
 
   @Post('layouts')

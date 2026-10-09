@@ -228,6 +228,46 @@ async function main(): Promise<void> {
   });
   check('产品目录可查（种子 >=20）', products.status === 200 && Array.isArray(products.body) && products.body.length >= 20);
 
+  // ---------- 产品中心：我的库 CRUD + 查重 + 复制到我的库 + 租户隔离 ----------
+  const auth0 = { headers: { Authorization: `Bearer ${regA.body.token}` } };
+  type ProductRow = { id: string; name: string; tenantId: string | null; brand?: string };
+  const pub = (products.body as ProductRow[]).find((p) => p.tenantId === null);
+  check('种子产品均为公共库行', Boolean(pub));
+
+  const myCreate = await request<ProductRow>(base, '/api/products/mine', {
+    ...auth0,
+    method: 'POST',
+    body: JSON.stringify({ name: '冒烟自定义产品', category: 'switch', brand: '测试品牌', model: 'SMOKE-1', priceMin: 100, priceMax: 200 }),
+  });
+  check('新增我的库产品（tenantId 归属当前租户）', myCreate.status === 201 && myCreate.body.tenantId === tenantA);
+  const myId = myCreate.body.id;
+
+  const myDup = await request(base, '/api/products/mine', { ...auth0, method: 'POST', body: JSON.stringify({ name: '冒烟自定义产品', category: 'switch' }) });
+  check('我的库重名被拒（应用层查重）', myDup.status === 400);
+
+  const badCat = await request(base, '/api/products/mine', { ...auth0, method: 'POST', body: JSON.stringify({ name: '非法品类产品', category: 'not-a-cat' }) });
+  check('非法品类被校验拒绝', badCat.status === 400);
+
+  const merged = await request<ProductRow[]>(base, '/api/products', auth0);
+  check('产品列表合并公共+我的', merged.status === 200 && merged.body.some((p) => p.id === myId) && merged.body.some((p) => p.tenantId === null));
+
+  const copyRes = await request<ProductRow>(base, `/api/products/${pub?.id}/copy-to-mine`, { ...auth0, method: 'POST' });
+  check('公共库复制到我的库', copyRes.status === 201 && copyRes.body.tenantId === tenantA && copyRes.body.name === pub?.name);
+
+  const copyDup = await request(base, `/api/products/${pub?.id}/copy-to-mine`, { ...auth0, method: 'POST' });
+  check('重复复制被查重拒绝', copyDup.status === 400);
+
+  const patchPub = await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ name: '篡改公共库' }) });
+  check('编辑公共库产品被拒（租户隔离 404）', patchPub.status === 404);
+
+  const patchMine = await request<ProductRow>(base, `/api/products/${myId}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ brand: '改后品牌' }) });
+  check('编辑我的库产品', patchMine.status === 200 && patchMine.body.brand === '改后品牌');
+
+  await request(base, `/api/products/${myId}`, { ...auth0, method: 'DELETE' });
+  const afterDel = await request<ProductRow[]>(base, '/api/products', auth0);
+  check('删除我的库产品后列表不再包含', !afterDel.body.some((p) => p.id === myId));
+  await request(base, `/api/products/${copyRes.body.id}`, { ...auth0, method: 'DELETE' });
+
   const layoutBadAsset = await request<{ message?: unknown }>(base, '/api/layouts', {
     method: 'POST',
     headers: { Authorization: `Bearer ${regA.body.token}` },

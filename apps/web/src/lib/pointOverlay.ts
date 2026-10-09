@@ -1,4 +1,5 @@
 import { categoryIconDataUrl } from './product-icons';
+import { fileUrl } from './api';
 
 /** 设备点位叠加共享模块：类别配色 + canvas 合成标注图（点位编辑器导出与方案 PPTX 共用） */
 
@@ -6,6 +7,8 @@ export interface PointLike {
   productId?: string;
   name: string;
   category: string;
+  /** 产品主图（已解析的完整 URL）；有图点位用产品照片作图标，加载失败回退品类 SVG（对齐参考站"产品图=点位图标"） */
+  iconUrl?: string;
   x: number;
   y: number;
 }
@@ -43,18 +46,29 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
   const ctx = canvas.getContext('2d');
   if (!ctx) return baseSrc;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  // 预加载各品类图标（去重）
+  // 预加载图标：产品主图优先（圆形裁剪），无图/失败回退品类 SVG
   const iconCache = new Map<string, HTMLImageElement>();
-  for (const cat of new Set(points.map((p) => p.category))) {
-    try {
-      iconCache.set(cat, await loadImage(categoryIconDataUrl(cat)));
-    } catch {
-      // 图标加载失败回退首字
+  const loadIcon = async (p: PointLike): Promise<HTMLImageElement | null> => {
+    if (p.iconUrl) {
+      try {
+        return await loadImage(fileUrl(p.iconUrl));
+      } catch {
+        // 产品图不可用（跨域/已删除/分享页无 token），回退品类图标
+      }
     }
-  }
+    if (!iconCache.has(p.category)) {
+      try {
+        iconCache.set(p.category, await loadImage(categoryIconDataUrl(p.category)));
+      } catch {
+        // 图标加载失败回退首字
+      }
+    }
+    return iconCache.get(p.category) ?? null;
+  };
+  const pointIcons = await Promise.all(points.map(loadIcon));
   const r = Math.max(14, canvas.width * 0.016);
   ctx.font = `bold ${Math.round(r * 0.95)}px "Microsoft YaHei", sans-serif`;
-  for (const p of points) {
+  points.forEach((p, idx) => {
     const x = p.x * canvas.width;
     const y = p.y * canvas.height;
     const color = catMeta(p.category).color;
@@ -68,10 +82,25 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
     ctx.lineWidth = Math.max(2, r * 0.12);
     ctx.strokeStyle = '#ffffff';
     ctx.stroke();
-    const icon = iconCache.get(p.category);
+    const icon = pointIcons[idx];
     if (icon) {
       const s = r * 1.35;
-      ctx.drawImage(icon, x - s / 2, y - s / 2, s, s);
+      if (p.iconUrl) {
+        // 产品照片：圆形裁剪贴入徽章
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, s / 2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(x - s / 2, y - s / 2, s, s);
+        const ratio = Math.max(s / icon.naturalWidth, s / icon.naturalHeight);
+        const dw = icon.naturalWidth * ratio;
+        const dh = icon.naturalHeight * ratio;
+        ctx.drawImage(icon, x - dw / 2, y - dh / 2, dw, dh);
+        ctx.restore();
+      } else {
+        ctx.drawImage(icon, x - s / 2, y - s / 2, s, s);
+      }
     } else {
       ctx.fillStyle = '#fff';
       ctx.textAlign = 'center';
@@ -90,7 +119,7 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(p.name, lx, ly + r * 0.35);
-  }
+  });
   return canvas.toDataURL('image/png');
 }
 

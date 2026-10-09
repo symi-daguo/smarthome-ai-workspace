@@ -17,6 +17,7 @@ import { PlanStudio } from './pages/PlanStudio';
 import { TreasureBox } from './pages/TreasureBox';
 import { DeviceLayout } from './pages/DeviceLayout';
 import { QuoteStudio } from './pages/QuoteStudio';
+import { ProductCenter } from './pages/ProductCenter';
 import { KnowledgeBase } from './pages/KnowledgeBase';
 import { MyAssets } from './pages/MyAssets';
 import { OrderStudio } from './pages/OrderStudio';
@@ -43,6 +44,7 @@ function ProtectedRoutes(): React.ReactNode {
           <Route path="treasure" element={<TreasureBox />} />
           <Route path="device-layout" element={<DeviceLayout />} />
           <Route path="quote" element={<QuoteStudio />} />
+          <Route path="products" element={<ProductCenter />} />
           <Route path="knowledge" element={<KnowledgeBase />} />
           <Route path="works" element={<MyAssets />} />
           <Route path="content" element={<ContentExtract />} />

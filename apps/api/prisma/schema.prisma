@@ -295,9 +295,17 @@ model PlanProject {
 // 全局共享产品目录（种子数据；租户自建产品留待后续）
 model Product {
   id       String  @id @default(uuid())
-  name     String  @unique
+  // null = 公共库（平台种子）；非空 = 租户「我的产品库」
+  tenantId String?
+  name     String
   // gateway | switch | sensor | light | curtain | security | appliance | audio | hvac
   category String
+  brand    String  @default("")
+  model    String  @default("")
+  // 计量单位（台/个/套…）
+  unit     String  @default("台")
+  // 产品主图（MediaAsset 相对路径）；点位编辑器优先用产品图作图标，无图回退品类 SVG
+  imageUrl String  @default("")
   // 参考价区间（元，仅演示口径；实际以门店为准）
   priceMin Int     @default(0)
   priceMax Int     @default(0)
@@ -307,6 +315,7 @@ model Product {
   sortOrder Int    @default(0)
 
   @@index([category, sortOrder])
+  @@index([tenantId, category])
 }
 
 // ---------- 模型配置中心（DB 持久化，覆盖 env 默认；key 只进不出） ----------

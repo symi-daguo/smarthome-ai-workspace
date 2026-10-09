@@ -43,7 +43,7 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
   {
     title: '产品中心',
     tools: [
-      { key: 'product-lib', name: '公共库与我的库', desc: '上传产品，联动报价和点位', to: '/knowledge' },
+      { key: 'product-lib', name: '公共库与我的库', desc: '上传产品，联动报价和点位', to: '/products' },
       { key: 'quote', name: '智能报价', desc: '选品配单，自动算价导出报价单', to: '/quote' },
     ],
   },

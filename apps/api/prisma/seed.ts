@@ -133,11 +133,13 @@ async function main(): Promise<void> {
   let productCount = 0;
   for (let i = 0; i < PRODUCT_DEFS.length; i++) {
     const d = PRODUCT_DEFS[i];
-    await prisma.product.upsert({
-      where: { name: d.name },
-      update: { category: d.category, priceMin: d.priceMin, priceMax: d.priceMax, perRoom: d.perRoom, sortOrder: i },
-      create: { ...d, sortOrder: i },
-    });
+    // 公共库种子按 name 幂等（name 不再全局 unique，应用层查重）
+    const existing = await prisma.product.findFirst({ where: { name: d.name, tenantId: null } });
+    if (existing) {
+      await prisma.product.update({ where: { id: existing.id }, data: { category: d.category, priceMin: d.priceMin, priceMax: d.priceMax, perRoom: d.perRoom, sortOrder: i } });
+    } else {
+      await prisma.product.create({ data: { ...d, sortOrder: i } });
+    }
     productCount++;
   }
 

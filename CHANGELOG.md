@@ -2,6 +2,28 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.24] - 2026-10-09
+
+### Added（产品中心独立板块：公共库/我的库双 tab + 产品图=点位图标 + 设置入口统一）
+
+用户登录参考站实地审查后指出两点：底部「设置」不应重复造轮子弹弹窗、应与个人中心统一；图标库（产品中心）没有独立界面，要求对齐参考站的呈现与联动方式。
+
+- **数据层租户化** [schema.prisma](file:///Volumes/hasskit/codex/aisaas/apps/api/prisma/schema.prisma)：`Product` 新增 `tenantId`（null=公共库）、`brand`/`model`/`unit`/`imageUrl`（产品主图），`name` 去全局 unique 改应用层查重（migration `product_tenant_fields`）；seed 改 findFirst+update/create 幂等
+- **后端 products 全链路** [layout.service.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/layout/layout.service.ts)：`GET /api/products` 合并公共+我的（布点/报价选品数据源不变）；新增 `POST /products/mine`、`PATCH /products/:id`、`DELETE /products/:id`（findFirst {id,tenantId} 租户隔离，公共库行不可改删）、`POST /products/:id/copy-to-mine`（对齐参考站"复制到我的库"联动规则）；重名/非法品类返回 400
+- **产品中心页** [ProductCenter.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/ProductCenter.tsx)：`/products` 路由 + 百宝箱「公共库与我的库」卡直达；公共库/我的库双 tab（带计数）、搜索+分类筛选、表格列（缩略图/名称/分类/品牌型号/参考价/布置提示/操作）、新增/编辑 Modal 含产品图上传（走 `/api/media/uploads`）、复制到我的库、顶部「智能报价/设备点位」联动入口
+- **产品图=点位图标**（参考站核心模式）：布点时携带产品 `imageUrl` 存为点位 `iconUrl`；[pointOverlay.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/pointOverlay.ts) `compositePoints` 有图点位圆形裁剪绘制产品照片（白底 cover），无图/加载失败回退 0.1.23 品类 SVG；DeviceLayout 画布 DOM 点位同步。预览/PNG/PPTX/分享四端共用合成函数，全端一致
+
+### Changed（设置入口统一，消灭重复轮子）
+
+- 侧栏底部「设置」与顶栏「个人设置」→ 直接跳转 `/tokens` 个人中心，不再弹独立弹窗
+- [TokenCenter.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/TokenCenter.tsx) 迁入原弹窗全部能力：「资料与偏好」卡（昵称/头像色 ColorPicker/主题三选/保存资料）+「数据备份与存储治理」卡（全库 JSON 导出/产物占用/清理 30 天前未引用产物，管理员可见）；删除 `ProfileSettings.tsx` 组件
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **72/72**（+10：我的库 CRUD/应用层查重/复制到我的库/重复复制拒绝/编辑公共库 404 租户隔离/合并列表/删除后不可见/非法品类）
+- 浏览器实测（1440/1920/768）：产品中心双 tab 计数、复制到我的库+1、新增弹窗含产品图上传、设置入口跳 /tokens、个人中心昵称保存成功、点位编辑器产品分组渲染、三档无横向溢出、console 0 error
+- 修复部署回归：api 容器镜像仍为旧 seed（`product.upsert` 撞已删除的 name 唯一约束导致重启循环），`docker compose build api web` 重建后恢复
+
 ## [0.1.23] - 2026-10-08
 
 ### Added（产品图标库 + 户型图美化：补齐 PPT 空间动线页的图标布点表达）

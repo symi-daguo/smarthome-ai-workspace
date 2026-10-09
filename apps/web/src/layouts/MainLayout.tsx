@@ -44,7 +44,6 @@ import { tokenToYuan } from '../lib/money';
 import { BRAND_GRADIENT } from '../theme/tokens';
 import { BrandMark } from '../components/BrandMark';
 import { TaskBall } from '../components/TaskBall';
-import { ProfileSettings } from '../components/ProfileSettings';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore, type WorkbenchConversation } from '../store/ChatStore';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
@@ -144,7 +143,6 @@ export function MainLayout(): ReactNode {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [plans, setPlans] = useState<PlanSidebarItem[]>([]);
 
   // 侧栏历史列表需要方案记录；在路由切换时刷新，保证生成/编辑后及时更新
@@ -470,7 +468,7 @@ export function MainLayout(): ReactNode {
             </span>
             <span
               style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
-              onClick={() => setProfileOpen(true)}
+              onClick={() => go('/tokens')}
             >
               <SettingOutlined />
               设置
@@ -514,7 +512,7 @@ export function MainLayout(): ReactNode {
         onClick: () => setMode(item.key),
       })),
       { type: 'divider' },
-      { key: 'profile', icon: <SettingOutlined />, label: '个人设置', onClick: () => setProfileOpen(true) },
+      { key: 'profile', icon: <SettingOutlined />, label: '个人设置', onClick: () => go('/tokens') },
       { type: 'divider' },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: logout },
     ],
@@ -679,7 +677,6 @@ export function MainLayout(): ReactNode {
       </Layout>
 
       <TaskBall />
-      <ProfileSettings open={profileOpen} onClose={() => setProfileOpen(false)} />
     </Layout>
   );
 }

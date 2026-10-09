@@ -1,5 +1,6 @@
 import {
   CopyOutlined,
+  DownloadOutlined,
   LockOutlined,
   LogoutOutlined,
   PlusOutlined,
@@ -7,14 +8,17 @@ import {
 import {
   Alert,
   App as AntApp,
+  Avatar,
   Button,
   Card,
   Col,
+  ColorPicker,
   Empty,
   Form,
   Input,
   Modal,
   Progress,
+  Radio,
   Row,
   Space,
   Table,
@@ -24,10 +28,11 @@ import {
 } from 'antd';
 import dayjs from 'dayjs';
 import { useEffect, useState, type ReactNode } from 'react';
-import { api } from '../lib/api';
+import { api, tokenStore } from '../lib/api';
 import { tokenToYuan } from '../lib/money';
 import { PageHeader } from '../components/PageHeader';
-import { useAuth } from '../store/AuthContext';
+import { useAuth, type UserProfile } from '../store/AuthContext';
+import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
 import { BRAND_GRADIENT, INK_BLACK } from '../theme/tokens';
 
 const { Text } = Typography;
@@ -52,6 +57,19 @@ const REASON_META: Record<string, { label: string; color: string }> = {
   RECHARGE: { label: '充值', color: 'green' },
   REFUND: { label: '退还', color: 'orange' },
 };
+
+interface StorageStat {
+  usedBytes: number;
+  quotaBytes: number;
+  assets: number;
+  oldest: string | null;
+}
+
+const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
+  { label: '跟随系统', value: 'auto' },
+  { label: '浅色', value: 'light' },
+  { label: '深色', value: 'dark' },
+];
 
 const PRICE_CHIPS = [
   '生图 / 生视频 / 生方案 / 文案',
@@ -84,7 +102,8 @@ function inviteCode(userId: string): string {
 export function TokenCenter(): ReactNode {
   const { message, modal } = AntApp.useApp();
   const { token } = useToken();
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
+  const { mode, setMode } = useTheme();
   const [balance, setBalance] = useState<TokenBalance | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +111,18 @@ export function TokenCenter(): ReactNode {
   const [selectedPlan, setSelectedPlan] = useState<string>('standard');
   const [pwdForm] = Form.useForm();
   const [pwdLoading, setPwdLoading] = useState(false);
+  const [profileForm] = Form.useForm<{ displayName: string; avatarColor: string | { toHexString?: () => string } }>();
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [backing, setBacking] = useState(false);
+  const [storage, setStorage] = useState<StorageStat | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+  const isAdmin = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
+
+  // 管理员进入页面即拉取产物占用（存储治理卡）
+  useEffect(() => {
+    if (isAdmin) void loadStorage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   useEffect(() => {
     Promise.all([
@@ -140,6 +171,79 @@ export function TokenCenter(): ReactNode {
     }
   };
 
+  const saveProfile = async (): Promise<void> => {
+    let values: { displayName: string; avatarColor: string | { toHexString?: () => string } };
+    try {
+      values = await profileForm.validateFields();
+    } catch {
+      return;
+    }
+    setProfileSaving(true);
+    try {
+      const color = typeof values.avatarColor === 'string' ? values.avatarColor : values.avatarColor?.toHexString?.() ?? '#6D4DF6';
+      await api<UserProfile>('/api/auth/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ displayName: values.displayName.trim(), avatarColor: color }),
+      });
+      await refresh();
+      message.success('个人资料已保存');
+    } catch (err: unknown) {
+      message.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const loadStorage = async (): Promise<void> => {
+    try {
+      setStorage(await api<StorageStat>('/api/admin/storage'));
+    } catch (err: unknown) {
+      message.error(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const cleanup = (): void => {
+    modal.confirm({
+      title: '清理 30 天前的产物？',
+      content: '删除 30 天前生成且未被方案/点位布局引用的图片与视频（含本地文件），用于释放磁盘空间。此操作不可恢复。',
+      okText: '确认清理',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setCleaning(true);
+        try {
+          const r = await api<{ deleted: number; freedBytes: number }>('/api/admin/storage/cleanup?beforeDays=30', { method: 'POST' });
+          message.success(`已清理 ${r.deleted} 项，释放 ${(r.freedBytes / 1048576).toFixed(1)} MB`);
+          await loadStorage();
+        } catch (err: unknown) {
+          message.error(err instanceof Error ? err.message : String(err));
+        } finally {
+          setCleaning(false);
+        }
+      },
+    });
+  };
+
+  const downloadBackup = async (): Promise<void> => {
+    setBacking(true);
+    try {
+      const res = await fetch('/api/admin/backup', { headers: { Authorization: `Bearer ${tokenStore.get() ?? ''}` } });
+      if (!res.ok) throw new Error(`备份失败 ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success('全库 JSON 已导出（产物文件在 uploads 卷，迁移时一并备份）');
+    } catch (err: unknown) {
+      message.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBacking(false);
+    }
+  };
+
   const membership = user?.memberships[0];
 
   return (
@@ -164,22 +268,12 @@ export function TokenCenter(): ReactNode {
       {/* 账号卡 */}
       <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
         <Space size={16} align="center" wrap>
-          <div
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: 14,
-              background: BRAND_GRADIENT,
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 24,
-              fontWeight: 700,
-            }}
+          <Avatar
+            size={56}
+            style={{ borderRadius: 14, background: user?.avatarColor ?? BRAND_GRADIENT, fontSize: 24, fontWeight: 700, flex: 'none' }}
           >
             {(user?.displayName ?? 'U').slice(0, 1)}
-          </div>
+          </Avatar>
           <div>
             <Space size={8}>
               <Text strong style={{ fontSize: 17 }}>{user?.displayName ?? '未命名'}</Text>
@@ -194,6 +288,83 @@ export function TokenCenter(): ReactNode {
           </div>
         </Space>
       </Card>
+
+      {/* 资料与偏好 */}
+      <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
+        <Text strong style={{ fontSize: 15 }}>资料与偏好</Text>
+        <Form
+          form={profileForm}
+          layout="vertical"
+          initialValues={{ displayName: user?.displayName ?? '', avatarColor: user?.avatarColor ?? '#6D4DF6' }}
+          style={{ marginTop: 12, maxWidth: 520 }}
+        >
+          <Space align="start" size={16} style={{ width: '100%' }}>
+            <Form.Item noStyle shouldUpdate>
+              {() => (
+                <Avatar
+                  size={56}
+                  style={{
+                    borderRadius: 14,
+                    background: (() => {
+                      const v = profileForm.getFieldValue('avatarColor');
+                      return typeof v === 'string' ? v : (v?.toHexString?.() ?? '#6D4DF6');
+                    })(),
+                    fontSize: 24,
+                    fontWeight: 700,
+                    flex: 'none',
+                  }}
+                >
+                  {(profileForm.getFieldValue('displayName') ?? user?.displayName ?? 'U').slice(0, 1)}
+                </Avatar>
+              )}
+            </Form.Item>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Form.Item name="displayName" label="昵称" rules={[{ required: true, message: '请输入昵称' }, { max: 32 }]}>
+                <Input placeholder="显示名称" />
+              </Form.Item>
+              <Form.Item name="avatarColor" label="头像颜色">
+                <ColorPicker showText format="hex" disabledAlpha />
+              </Form.Item>
+            </div>
+          </Space>
+          <Text type="secondary" style={{ fontSize: 12 }}>界面主题</Text>
+          <Radio.Group
+            style={{ display: 'block', margin: '8px 0 12px' }}
+            optionType="button"
+            buttonStyle="solid"
+            value={mode}
+            onChange={(e) => setMode(e.target.value as ThemeMode)}
+            options={THEME_OPTIONS}
+            block
+          />
+          <Button type="primary" loading={profileSaving} onClick={() => void saveProfile()}>
+            保存资料
+          </Button>
+        </Form>
+      </Card>
+
+      {/* 数据备份与存储治理（管理员） */}
+      {isAdmin ? (
+        <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
+          <Text strong style={{ fontSize: 15 }}>数据备份与存储治理</Text>
+          <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 12 }}>
+            <Button icon={<DownloadOutlined />} loading={backing} onClick={() => void downloadBackup()}>
+              导出全库数据备份（JSON）
+            </Button>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              升级迁移前留底；产物文件位于 uploads 卷（docker volume），迁移时连同数据库卷一起备份即可完整恢复。
+            </Text>
+            <Space.Compact block>
+              <Button style={{ flex: 1 }} onClick={() => void loadStorage()}>
+                {storage ? `产物占用 ${(storage.usedBytes / 1048576).toFixed(1)} / ${(storage.quotaBytes / 1048576).toFixed(0)} MB` : '查看产物存储占用'}
+              </Button>
+              <Button danger loading={cleaning} disabled={!storage} onClick={() => void cleanup()}>
+                清理 30 天前未引用产物
+              </Button>
+            </Space.Compact>
+          </Space>
+        </Card>
+      ) : null}
 
       {/* 额度卡 */}
       <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>

@@ -30,6 +30,11 @@ interface Product {
   priceMin: number;
   priceMax: number;
   perRoom: string;
+  brand?: string;
+  model?: string;
+  unit?: string;
+  imageUrl?: string;
+  tenantId?: string | null;
 }
 
 interface LayoutPoint {
@@ -37,6 +42,8 @@ interface LayoutPoint {
   productId: string;
   name: string;
   category: string;
+  /** 产品主图相对路径（有图点位显示产品照片） */
+  iconUrl?: string;
   x: number;
   y: number;
 }
@@ -181,7 +188,7 @@ export function DeviceLayout(): ReactNode {
     const pos = stagePos(e.clientX, e.clientY);
     if (!pos) return;
     if (pending) {
-      setPoints((prev) => [...prev, { id: nextPointId(), productId: pending.id, name: pending.name, category: pending.category, ...pos }]);
+      setPoints((prev) => [...prev, { id: nextPointId(), productId: pending.id, name: pending.name, category: pending.category, iconUrl: pending.imageUrl || undefined, ...pos }]);
       setSelected('');
       return;
     }
@@ -220,7 +227,7 @@ export function DeviceLayout(): ReactNode {
       const dto = {
         title,
         mediaAssetId: assetId,
-        points: points.map(({ productId, name, category, x, y }) => ({ productId, name, category, x: +x.toFixed(4), y: +y.toFixed(4) })),
+        points: points.map(({ productId, name, category, iconUrl, x, y }) => ({ productId, name, category, ...(iconUrl ? { iconUrl } : {}), x: +x.toFixed(4), y: +y.toFixed(4) })),
       };
       await api('/api/layouts', { method: 'POST', body: JSON.stringify(dto) });
       if (planId) {
@@ -312,9 +319,18 @@ export function DeviceLayout(): ReactNode {
                     style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%,-50%)', cursor: 'grab', zIndex: isSel ? 3 : 2 }}
                   >
                     <Tooltip title={`${p.name}（拖动调整位置，选中后按 Delete 或点右侧删除）`}>
-                      <div style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', background: m.color, border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <span style={{ display: 'inline-flex', color: '#fff', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: categoryIconSvg(p.category, isSel ? 20 : 16, '#ffffff') }} />
-                      </div>
+                      {p.iconUrl ? (
+                        <img
+                          src={fileUrl(p.iconUrl)}
+                          alt={p.name}
+                          draggable={false}
+                          style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', objectFit: 'cover', background: '#fff', border: `2px solid ${m.color}`, boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'block' }}
+                        />
+                      ) : (
+                        <div style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', background: m.color, border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <span style={{ display: 'inline-flex', color: '#fff', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: categoryIconSvg(p.category, isSel ? 20 : 16, '#ffffff') }} />
+                        </div>
+                      )}
                     </Tooltip>
                   </div>
                 );
