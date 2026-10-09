@@ -2,6 +2,26 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.30] - 2026-10-09
+
+### Added（工作台输入区与真实能力对齐）
+
+用户反馈工作台首页 4 个 div chip（上传附件 / 图生图 / 生视频 / 生方案）只是装饰、文字只追加到输入框、不触发功能；右侧发送位置无法选择模型；要求整个工作台每个功能都要正确可用、匹配真实数据和交互。
+
+- **共享激活模型上下文** [configStore.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/configStore.tsx)：一次性拉取 `model-config` + `model-config/profiles`，向全应用暴露 `{ profileName, chatBaseUrl, chatModel, chatKeyConfigured, imageProvider, videoProvider, refresh }`；启动 + 发送后自动 refresh
+- **聊天 store 使用真实 chatModel** [ChatStore.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/store/ChatStore.tsx)：`send()` 不再硬编码 `'MiniMax-M3'`，改用 `useActiveConfig().config.chatModel || 'MiniMax-M3'`，与命名方案激活/切换实时联动
+- **Sender header 模型方案下拉** [Dashboard.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/Dashboard.tsx#L367-L405)：输入卡顶部显示「当前模型 · 方案 · 模型名」药丸按钮，Dropdown 显示当前激活项（不可点）+ 「去配置/切换方案」跳 `/model-config`；`adding Attachment` 按钮与 `Upload` beforeUpload 合并（≤4MB，类型白名单 image/text/pdf/json/zip，超限/类型错误 AntApp 弹 `message.error`）
+- **Sender footer 4 个 chip 真实可点** [Dashboard.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/Dashboard.tsx#L408-L433)：「上传附件」跳 `/content`，「图生图/生视频/生方案」分别跳 `/image` `/video` `/plan`；`role="button"` + `tabIndex=0` + Enter/Space 键触发，覆盖 a11y
+- **附件上传 + 缩略带 + 应用内大图预览** 缩略带自动渲染（图片 28px 缩略图、其它文件 PaperClip 图标），× 单个删除；图片点击 Modal 大图预览 + 「返回编辑」按钮；提交时附件摘要追加到 prompt
+- **能力状态条可点击导航** CAPABILITY_TAGS（AI 智能体对话 / 空间效果图 / 演示短视频 / 9 页方案 PPT / 设备点位图 / 智能报价）改为 `div role="button"` + keydown(Enter/Space)，每条跳实际能力页
+- **TS 语法修复** [Dashboard.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/Dashboard.tsx#L189)：regex `\/` 后紧跟 `/` 的歧义（`^text\//|^application`）改写为 `^text\/|^application`，避免 TS lexer 误判正则为结束
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **96/96**
+- 浏览器实测 http://localhost:5173/：`/` 200 text/html，`/assets/index-*.js` 200，`/api/admin/model-config/profiles` 200（无脏数据后），`/api/admin/model-config` 304，`/api/plans` 304
+- 运行：api 日志 0 error、内存 api 170MB / web 12MB / db 50MB / redis 12MB
+
 ## [0.1.29] - 2026-10-09
 
 ### Added（模型方案多套配置 + Agent 技能包 + Token 刷新 + PWA）

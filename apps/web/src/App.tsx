@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from './store/AuthContext';
 import { ChatStoreProvider } from './store/ChatStore';
+import { ConfigProvider } from './lib/configStore';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { MainLayout } from './layouts/MainLayout';
 import { Login } from './pages/Login';
@@ -30,29 +31,31 @@ function ProtectedRoutes(): React.ReactNode {
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
   return (
-    <ChatStoreProvider>
-      <Routes>
-        <Route element={<MainLayout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="agents" element={<AgentMarket />} />
-          <Route path="image" element={<ImageStudio />} />
-          <Route path="video" element={<VideoStudio />} />
-          <Route path="plan" element={<PlanStudio />} />
-          <Route path="order" element={<OrderStudio />} />
-          <Route path="biography" element={<BiographyStudio />} />
-          <Route path="materials" element={<MaterialLibrary />} />
-          <Route path="treasure" element={<TreasureBox />} />
-          <Route path="device-layout" element={<DeviceLayout />} />
-          <Route path="quote" element={<QuoteStudio />} />
-          <Route path="products" element={<ProductCenter />} />
-          <Route path="knowledge" element={<KnowledgeBase />} />
-          <Route path="works" element={<MyAssets />} />
-          <Route path="content" element={<ContentExtract />} />
-          <Route path="tokens" element={<TokenCenter />} />
-          <Route path="model-config" element={<ModelConfig />} />
-        </Route>
-      </Routes>
-    </ChatStoreProvider>
+    <ConfigProvider>
+      <ChatStoreProvider>
+        <Routes>
+          <Route element={<MainLayout />}>
+            <Route index element={<Dashboard />} />
+            <Route path="agents" element={<AgentMarket />} />
+            <Route path="image" element={<ImageStudio />} />
+            <Route path="video" element={<VideoStudio />} />
+            <Route path="plan" element={<PlanStudio />} />
+            <Route path="order" element={<OrderStudio />} />
+            <Route path="biography" element={<BiographyStudio />} />
+            <Route path="materials" element={<MaterialLibrary />} />
+            <Route path="treasure" element={<TreasureBox />} />
+            <Route path="device-layout" element={<DeviceLayout />} />
+            <Route path="quote" element={<QuoteStudio />} />
+            <Route path="products" element={<ProductCenter />} />
+            <Route path="knowledge" element={<KnowledgeBase />} />
+            <Route path="works" element={<MyAssets />} />
+            <Route path="content" element={<ContentExtract />} />
+            <Route path="tokens" element={<TokenCenter />} />
+            <Route path="model-config" element={<ModelConfig />} />
+          </Route>
+        </Routes>
+      </ChatStoreProvider>
+    </ConfigProvider>
   );
 }
 

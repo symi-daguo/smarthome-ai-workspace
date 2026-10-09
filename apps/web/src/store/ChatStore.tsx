@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
+import { useActiveConfig } from '../lib/configStore';
 
 export interface ChatMessage {
   id: string;
@@ -104,6 +105,8 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
   const [readAt, setReadAt] = useState<number>(() => Number(localStorage.getItem('ai_task_read_at') ?? 0));
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // 读取当前激活模型方案（ConfigProvider 注入），发送时把模型名传给后端
+  const { config } = useActiveConfig();
 
   useEffect(() => {
     localStorage.setItem(CONV_STORAGE_KEY, JSON.stringify(conversations));
@@ -190,7 +193,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
       api<{ reply: string }>('/api/llm/chat', {
         method: 'POST',
         body: JSON.stringify({
-          model: 'MiniMax-M3',
+          model: config.chatModel || 'MiniMax-M3',
           prompt: content,
           systemPrompt: effPrompt ?? systemPromptFor(effAgent),
         }),
@@ -198,7 +201,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
         .then((r) => finish(r.reply))
         .catch(() => finish(offlineReply(content)));
     },
-    [activeKey, conversations, sending],
+    [activeKey, conversations, sending, config.chatModel],
   );
 
   const clearFinished = useCallback(() => {

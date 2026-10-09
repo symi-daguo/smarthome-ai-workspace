@@ -1,18 +1,23 @@
 import {
   ArrowRightOutlined,
+  CloudServerOutlined,
   FileTextOutlined,
   HomeOutlined,
+  PaperClipOutlined,
   PictureOutlined,
+  PlusOutlined,
   RobotOutlined,
+  SendOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons';
-import { Avatar, Button, Grid, Typography, theme } from 'antd';
+import { App as AntApp, Avatar, Button, Dropdown, Grid, Modal, Typography, Upload, theme } from 'antd';
 import { Bubble, Sender, type BubbleItemType } from '@ant-design/x';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { BrandMark } from '../components/BrandMark';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore } from '../store/ChatStore';
+import { useActiveConfig } from '../lib/configStore';
 import { BRAND_GRADIENT } from '../theme/tokens';
 
 const { Text, Title } = Typography;
@@ -62,21 +67,39 @@ const QUICK_CARDS = [
   },
 ];
 
-/** 输入卡底部功能 chip */
-const INPUT_CHIPS = ['上传附件', '图生图', '生视频', '生方案'];
+/** 输入卡底部功能 chip：每个 chip 真实可点击，触发对应能力（避免装饰性死按钮） */
+const INPUT_CHIPS: { key: 'attachment' | 'image' | 'video' | 'plan'; label: string; helper: string; route: string; needsAttachment?: boolean }[] = [
+  { key: 'attachment', label: '上传附件', helper: '把图片/户型/对话纪要上传到资料库', route: '/content', needsAttachment: true },
+  { key: 'image', label: '图生图', helper: '上传参考图后生图', route: '/image' },
+  { key: 'video', label: '生视频', helper: '首帧图/纯文字生成短视频', route: '/video' },
+  { key: 'plan', label: '生方案', helper: '9 页可编辑 PPT 智能方案', route: '/plan' },
+];
 
 /** 能力状态条（宽屏一行铺满，窄屏自动换行） */
 const CAPABILITY_TAGS = ['AI 智能体对话', '空间效果图', '演示短视频', '9 页方案 PPT', '设备点位图', '智能报价'];
 
+interface AttachmentItem {
+  uid: string;
+  name: string;
+  size: number;
+  kind: 'image' | 'file';
+  dataUrl: string;
+}
+
 export function Dashboard(): ReactNode {
+  const { message } = AntApp.useApp();
   const { token } = useToken();
   const { user } = useAuth();
   const screens = Grid.useBreakpoint();
   const isWide = screens.md ?? false;
+  const navigate = useNavigate();
 
   const { activeConversation, setActiveKey, sending, createNew, send } = useChatStore();
+  const { config, refresh: refreshConfig } = useActiveConfig();
   const location = useLocation();
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentItem | null>(null);
   const agentRef = useRef<string | undefined>(undefined);
   const promptRef = useRef<string | undefined>(undefined);
   const [agentName, setAgentName] = useState<string | undefined>();
@@ -139,12 +162,93 @@ export function Dashboard(): ReactNode {
 
   const handleSubmit = (value: string): void => {
     const content = value.trim();
-    if (!content) return;
-    send(content, agentRef.current, promptRef.current);
+    if (!content || sending) return;
+    // 附件以摘要形式追加到提示词中，模型可参考（图片用 <img src> data URL）
+    const promptWithAttachments = attachments.length
+      ? content +
+        '\n\n[附件 ' +
+        attachments.map((a) => `${a.name}(${a.kind}, ${Math.round(a.size / 1024)}KB)`).join('、') +
+        ']'
+      : content;
+    send(promptWithAttachments, agentRef.current, promptRef.current);
     agentRef.current = undefined;
     promptRef.current = undefined;
     setInput('');
+    setAttachments([]);
+    // 模型方案若有变化，刷新活动配置展示
+    void refreshConfig();
   };
+
+  /** 读取文件为 dataURL（≤4MB，仅类型白名单；大文件走素材库/产品中心更合适） */
+  const readFile = (file: File): Promise<AttachmentItem> =>
+    new Promise((resolve, reject) => {
+      if (file.size > 4 * 1024 * 1024) {
+        reject(new Error('附件单文件 ≤4MB；大文件请到「内容提取」上传'));
+        return;
+      }
+      if (!/^image\/(png|jpe?g|webp|gif)$|^text\/|^application\/(pdf|json|zip)$/.test(file.type)) {
+        reject(new Error('不支持的附件类型'));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () =>
+        resolve({
+          uid: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          size: file.size,
+          kind: file.type.startsWith('image/') ? 'image' : 'file',
+          dataUrl: String(reader.result),
+        });
+      reader.onerror = () => reject(new Error('读取失败'));
+      reader.readAsDataURL(file);
+    });
+
+  const onUpload = useCallback(
+    async (file: File) => {
+      try {
+        const item = await readFile(file);
+        setAttachments((prev) => [...prev, item]);
+        if (item.kind === 'image') setAttachmentPreview(item);
+        return false; // 阻止 antd Upload 默认上传
+      } catch (e) {
+        message.error((e as Error).message);
+        return false;
+      }
+    },
+    [message],
+  );
+
+  const removeAttachment = (uid: string): void => {
+    setAttachments((prev) => prev.filter((a) => a.uid !== uid));
+  };
+
+  /** chip 点击：图片/视频/方案直接跳到对应能力页，上传附件打开「内容提取」 */
+  const onChipClick = (key: 'attachment' | 'image' | 'video' | 'plan'): void => {
+    if (key === 'attachment') {
+      message.info('已为您打开「内容提取」上传资料，提取后可同步到产品中心', 2);
+      navigate('/content');
+      return;
+    }
+    const route = INPUT_CHIPS.find((c) => c.key === key)?.route ?? '/';
+    message.info(`已为你打开「${INPUT_CHIPS.find((c) => c.key === key)?.label}」`, 1.5);
+    navigate(route);
+  };
+
+  const capabilityRoute: Record<string, string> = {
+    'AI 智能体对话': '/agents',
+    '空间效果图': '/image',
+    '演示短视频': '/video',
+    '9 页方案 PPT': '/plan',
+    '设备点位图': '/device-layout',
+    '智能报价': '/quote',
+  };
+
+  /** 输入区模型方案下拉：点击切到模型配置中心 */
+  const modelSwitchItems = [
+    { key: 'current', label: `当前：${config.profileName || '默认（.env）'} · ${config.chatModel || 'MiniMax-M3'}`, disabled: true },
+    { type: 'divider' as const },
+    { key: 'config', label: '去配置/切换方案', icon: <CloudServerOutlined />, onClick: () => navigate('/model-config') },
+  ];
 
   return (
     <div style={{ minHeight: 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column', background: token.colorBgLayout, position: 'relative' }}>
@@ -206,17 +310,53 @@ export function Dashboard(): ReactNode {
                 </Text>
               </div>
 
-              {/* 大输入卡 */}
+              {/* 大输入卡：附件 + 文本 + 模型方案 + 发送 */}
               <div
                 style={{
                   background: token.colorBgContainer,
                   borderRadius: 18,
                   border: `1px solid ${token.colorBorderSecondary}`,
                   boxShadow: token.boxShadowSecondary,
-                  padding: isWide ? '22px 28px 14px' : '14px 16px 10px',
-                  marginBottom: 20,
+                  padding: attachments.length ? '14px 16px 10px' : isWide ? '22px 28px 14px' : '14px 16px 10px',
+                  marginBottom: 12,
                 }}
               >
+                {/* 附件缩略带 */}
+                {attachments.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                    {attachments.map((a) => (
+                      <div
+                        key={a.uid}
+                        style={{
+                          position: 'relative',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '4px 8px 4px 4px',
+                          background: token.colorFillTertiary,
+                          borderRadius: 8,
+                          fontSize: 12,
+                        }}
+                      >
+                        {a.kind === 'image' ? (
+                          <img
+                            src={a.dataUrl}
+                            alt={a.name}
+                            onClick={() => setAttachmentPreview(a)}
+                            style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4, cursor: 'pointer' }}
+                          />
+                        ) : (
+                          <PaperClipOutlined style={{ color: token.colorTextSecondary }} />
+                        )}
+                        <span style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                        <Button type="text" size="small" onClick={() => removeAttachment(a.uid)} style={{ padding: '0 4px', height: 20 }}>
+                          ×
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
                 <Sender
                   value={input}
                   onChange={setInput}
@@ -224,12 +364,60 @@ export function Dashboard(): ReactNode {
                   loading={sending}
                   placeholder="说说你想创作什么…例如：给 140㎡ 三室两厅做一份全屋智能方案"
                   suffix={false}
+                  header={
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '4px 0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
+                        <span style={{ fontSize: 12, color: token.colorTextTertiary, whiteSpace: 'nowrap' }}>当前模型</span>
+                        <Dropdown menu={{ items: modelSwitchItems }} placement="bottomLeft">
+                          <Button
+                            size="small"
+                            type="text"
+                            style={{
+                              padding: '2px 10px',
+                              height: 24,
+                              fontSize: 12,
+                              color: token.colorPrimary,
+                              background: token.colorPrimaryBg,
+                              borderRadius: 9999,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              maxWidth: '100%',
+                            }}
+                          >
+                            <CloudServerOutlined style={{ fontSize: 12 }} />
+                            <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {config.profileName || '默认（.env）'} · {config.chatModel || 'MiniMax-M3'}
+                            </span>
+                          </Button>
+                        </Dropdown>
+                      </div>
+                      <Upload
+                        beforeUpload={onUpload}
+                        showUploadList={false}
+                        accept="image/*,text/*,.pdf,.json,.zip"
+                      >
+                        <Button type="text" size="small" icon={<PaperClipOutlined />}>
+                          添加附件
+                        </Button>
+                      </Upload>
+                    </div>
+                  }
                   footer={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingTop: 8 }}>
                       {INPUT_CHIPS.map((chip) => (
                         <span
-                          key={chip}
-                          onClick={() => setInput((prev) => (prev ? `${prev}（${chip}）` : chip))}
+                          key={chip.key}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => onChipClick(chip.key)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              onChipClick(chip.key);
+                            }
+                          }}
+                          title={chip.helper}
                           style={{
                             fontSize: 12,
                             padding: '3px 12px',
@@ -240,18 +428,20 @@ export function Dashboard(): ReactNode {
                             userSelect: 'none',
                           }}
                         >
-                          {chip}
+                          {chip.label}
                         </span>
                       ))}
                       <div style={{ flex: 1 }} />
                       <Button
                         shape="circle"
                         type="primary"
-                        icon={<ArrowRightOutlined />}
+                        icon={<SendOutlined />}
                         onClick={() => handleSubmit(input)}
                         loading={sending}
+                        disabled={!input.trim()}
+                        title="发送"
                         style={{
-                          background: '#151515',
+                          background: BRAND_GRADIENT,
                           color: '#ffffff',
                           border: 'none',
                           boxShadow: 'none',
@@ -262,23 +452,53 @@ export function Dashboard(): ReactNode {
                 />
               </div>
 
-              {/* 能力状态条 */}
+              {/* 附件图片预览弹窗（应用内可关闭返回，不离开工作台） */}
+              <Modal
+                title={attachmentPreview?.name ?? ''}
+                open={!!attachmentPreview && attachmentPreview.kind === 'image'}
+                onCancel={() => setAttachmentPreview(null)}
+                footer={<Button type="primary" onClick={() => setAttachmentPreview(null)}>返回编辑</Button>}
+                width={720}
+                destroyOnHidden
+              >
+                {attachmentPreview ? (
+                  <img src={attachmentPreview.dataUrl} alt={attachmentPreview.name} style={{ width: '100%', borderRadius: 12 }} />
+                ) : null}
+              </Modal>
+
+              {/* 能力状态条：每个标签可点击进入对应能力页 */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 30 }}>
-                {CAPABILITY_TAGS.map((t) => (
-                  <span
-                    key={t}
-                    style={{
-                      fontSize: 12,
-                      padding: '3px 12px',
-                      borderRadius: 9999,
-                      border: `1px solid ${token.colorBorderSecondary}`,
-                      background: token.colorBgContainer,
-                      color: token.colorTextSecondary,
-                    }}
-                  >
-                    {t}
-                  </span>
-                ))}
+                {CAPABILITY_TAGS.map((t) => {
+                  const route = capabilityRoute[t];
+                  const content = (
+                    <span
+                      style={{
+                        fontSize: 12,
+                        padding: '3px 12px',
+                        borderRadius: 9999,
+                        border: `1px solid ${token.colorBorderSecondary}`,
+                        background: token.colorBgContainer,
+                        color: token.colorTextSecondary,
+                        cursor: route ? 'pointer' : 'default',
+                      }}
+                    >
+                      {t}
+                    </span>
+                  );
+                  return route ? (
+                    <div
+                      key={t}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigate(route)}
+                      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate(route)}
+                    >
+                      {content}
+                    </div>
+                  ) : (
+                    <div key={t}>{content}</div>
+                  );
+                })}
               </div>
 
               {/* 快捷卡：auto-fit 自适应列数，宽屏铺满 */}
