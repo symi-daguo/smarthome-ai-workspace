@@ -87,7 +87,7 @@ export function AgentMarket(): ReactNode {
   };
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={{ width: '100%', paddingBottom: 24 }}>
       <div
         style={{
           display: 'flex',

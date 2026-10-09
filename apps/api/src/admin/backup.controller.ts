@@ -80,13 +80,16 @@ export class BackupController {
       select: { id: true, filePath: true, sizeBytes: true },
     });
     // 排除仍被引用的资产
-    const [plans, layouts] = await Promise.all([
+    const [plans, layouts, products] = await Promise.all([
       this.prisma.planProject.findMany({ where: { floorplanAssetId: { not: null } }, select: { floorplanAssetId: true } }),
       this.prisma.floorplanLayout.findMany({ select: { mediaAssetId: true } }),
+      // 产品主图（=点位图标）被引用时不得清理
+      this.prisma.product.findMany({ where: { active: true, imageUrl: { not: '' } }, select: { imageUrl: true } }),
     ]);
     const referenced = new Set<string>([
       ...plans.map((p) => p.floorplanAssetId),
       ...layouts.map((l) => l.mediaAssetId),
+      ...products.map((p) => p.imageUrl.match(/\/api\/media\/assets\/([^/]+)\/file/)?.[1]),
     ].filter((v): v is string => Boolean(v)));
 
     let deleted = 0;

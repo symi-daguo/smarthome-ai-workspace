@@ -102,7 +102,7 @@ export function MyAssets(): ReactNode {
   }, [visible]);
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={{ width: '100%', paddingBottom: 24 }}>
       <Title level={3} style={{ marginBottom: 4 }}>我的资料</Title>
       <Text type="secondary">你生成的图片、视频、方案都保存在这里，随时查看与下载</Text>
 

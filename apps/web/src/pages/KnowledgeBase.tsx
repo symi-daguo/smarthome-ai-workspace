@@ -16,7 +16,7 @@ import {
 } from 'antd';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
-import { BRAND_GRADIENT } from '../theme/tokens';
+import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 
@@ -276,7 +276,7 @@ export function KnowledgeBase(): ReactNode {
   };
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={pageContainerStyle}>
       <Title level={3} style={{ marginBottom: 4 }}>我的知识库</Title>
       <Text type="secondary">
         上传你的产品资料、报价规则、品牌话术等，之后所有智能体回答都会优先参考你的资料——一次上传，处处生效

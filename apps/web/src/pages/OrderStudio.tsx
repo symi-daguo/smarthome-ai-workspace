@@ -34,7 +34,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
-import { BRAND_GRADIENT } from '../theme/tokens';
+import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
@@ -304,7 +304,7 @@ export function OrderStudio(): ReactNode {
   }, [orders]);
 
   return (
-    <div style={{ maxWidth: 1280, margin: '0 auto', paddingBottom: 32 }}>
+    <div style={pageContainerStyle}>
       <PageHeader
         title="开始接单"
         description="销售接待工作台：粘贴客户原始描述由 AI 解析建档，按「了解客户 → 需求确认 → 方案匹配 → 报价 → 成单」状态机推进，全程跟进记录与 AI 跟进建议。"

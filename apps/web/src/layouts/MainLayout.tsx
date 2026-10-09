@@ -14,6 +14,7 @@ import {
   RightOutlined,
   RobotOutlined,
   SettingOutlined,
+  ShopOutlined,
   StarOutlined,
   ThunderboltOutlined,
   ToolOutlined,
@@ -199,6 +200,7 @@ export function MainLayout(): ReactNode {
         { key: '/image', icon: <PictureOutlined />, label: 'AI 生图' },
         { key: '/video', icon: <VideoCameraOutlined />, label: 'AI 生视频' },
         { key: '/plan', icon: <FilePptOutlined />, label: '智能方案生成' },
+        { key: '/products', icon: <ShopOutlined />, label: '产品中心' },
       ],
     };
     const toolbox: NonNullable<MenuProps['items']>[number] = {
@@ -233,7 +235,7 @@ export function MainLayout(): ReactNode {
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
-    for (const k of ['/agents', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/knowledge', '/works', '/content', '/tokens', '/model-config']) {
+    for (const k of ['/agents', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/tokens', '/model-config']) {
       if (p.startsWith(k)) return k;
     }
     return '/';

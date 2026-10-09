@@ -2,7 +2,7 @@ import { PlayCircleOutlined } from '@ant-design/icons';
 import { App as AntApp, Button, Card, Empty, Tabs, Tag, Typography, theme } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
-import { INK_BLACK } from '../theme/tokens';
+import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 
@@ -111,7 +111,7 @@ export function MaterialLibrary(): ReactNode {
   };
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={pageContainerStyle}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 280 }}>
           <Title level={3} style={{ marginBottom: 4 }}>优秀视频素材库</Title>

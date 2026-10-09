@@ -251,7 +251,7 @@ export function DeviceLayout(): ReactNode {
   }, [points]);
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={{ width: '100%', paddingBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 280 }}>
           <Title level={3} style={{ marginBottom: 4 }}>{MODE_LABEL[mode]}</Title>

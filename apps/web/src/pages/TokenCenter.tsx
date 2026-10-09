@@ -33,7 +33,7 @@ import { tokenToYuan } from '../lib/money';
 import { PageHeader } from '../components/PageHeader';
 import { useAuth, type UserProfile } from '../store/AuthContext';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
-import { BRAND_GRADIENT, INK_BLACK } from '../theme/tokens';
+import { BRAND_GRADIENT, INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
 const { useToken } = theme;
@@ -247,7 +247,7 @@ export function TokenCenter(): ReactNode {
   const membership = user?.memberships[0];
 
   return (
-    <div style={{ maxWidth: 1180, margin: '0 auto', paddingBottom: 24 }}>
+    <div style={pageContainerStyle}>
       <PageHeader
         title="个人中心"
         description="额度以统一 token 记账、按部署配置展示；注册赠送额度与充值额度合并管理"

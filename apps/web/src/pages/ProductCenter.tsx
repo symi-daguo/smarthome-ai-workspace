@@ -1,4 +1,4 @@
-import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ShopOutlined } from '@ant-design/icons';
+import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, RobotOutlined, ShopOutlined } from '@ant-design/icons';
 import { App as AntApp, Button, Card, Empty, Form, Image, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Typography, Upload } from 'antd';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -6,7 +6,7 @@ import { api, fileUrl } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { CATEGORY_META } from '../lib/pointOverlay';
 import { categoryIconSvg } from '../lib/product-icons';
-import { BRAND_GRADIENT } from '../theme/tokens';
+import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
 
@@ -45,7 +45,7 @@ const CATEGORY_OPTIONS = Object.entries(CATEGORY_META).map(([value, m]) => ({ va
  * 产品图即点位图标（编辑器优先用产品照片，无图回退品类 SVG）。
  */
 export function ProductCenter(): ReactNode {
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const navigate = useNavigate();
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +55,8 @@ export function ProductCenter(): ReactNode {
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [aiBusy, setAiBusy] = useState(false);
   const [form] = Form.useForm<ProductForm>();
 
   const reload = useCallback(async (): Promise<void> => {
@@ -130,6 +132,57 @@ export function ProductCenter(): ReactNode {
     }
   };
 
+  /** 任意行（含公共库）快速更换产品图：只 PATCH imageUrl，产品图即点位图标 */
+  const quickUploadImage = async (row: ProductRow, file: File): Promise<boolean> => {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
+      message.warning('仅支持 JPG / PNG / WebP');
+      return false;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('title', `产品图-${row.name}`.slice(0, 40));
+    try {
+      const res = await api<{ id: string; url: string }>('/api/media/uploads', { method: 'POST', body: fd });
+      await api(`/api/products/${row.id}`, { method: 'PATCH', body: JSON.stringify({ imageUrl: res.url }) });
+      message.success(`「${row.name}」产品图已更新`);
+      await reload();
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+    return false;
+  };
+
+  /** agent 批量处理：勾选行一次补全文案 + 批量生成产品图（生图按张扣额度） */
+  const aiProcess = (): void => {
+    if (!selectedIds.length) {
+      message.warning('请先勾选要处理的产品');
+      return;
+    }
+    modal.confirm({
+      title: `AI 批量处理 ${selectedIds.length} 个产品？`,
+      content: '智能体将补全缺失的品牌/型号/布置提示，并按产品名+品类生成白底产品主图（产品图即点位图标）。生图按张扣减额度，单个失败不影响其余。',
+      okText: '开始处理',
+      cancelText: '取消',
+      onOk: async () => {
+        setAiBusy(true);
+        try {
+          const r = await api<{ total: number; copyOk: number; imageOk: number; errors: { name: string; error: string }[] }>('/api/products/ai-process', {
+            method: 'POST',
+            body: JSON.stringify({ ids: selectedIds }),
+          });
+          const failNote = r.errors.length ? `，${r.errors.length} 个生图失败（${r.errors[0]?.error?.slice(0, 40) ?? ''}）` : '';
+          message.success(`处理完成：文案补全 ${r.copyOk} 项、产品图生成 ${r.imageOk} 项${failNote}`);
+          setSelectedIds([]);
+          await reload();
+        } catch (e) {
+          message.error((e as Error).message);
+        } finally {
+          setAiBusy(false);
+        }
+      },
+    });
+  };
+
   const uploadImage = async (file: File): Promise<boolean> => {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
       message.warning('仅支持 JPG / PNG / WebP');
@@ -156,7 +209,7 @@ export function ProductCenter(): ReactNode {
     );
 
   return (
-    <div style={{ maxWidth: 1180, margin: '0 auto', paddingBottom: 24 }}>
+    <div style={pageContainerStyle}>
       <PageHeader
         title="产品中心"
         description="公共库与我的库：上传或复制产品、维护产品图（产品图即点位图标），联动智能报价与设备/灯光点位选品"
@@ -166,6 +219,9 @@ export function ProductCenter(): ReactNode {
             <Button onClick={() => navigate('/device-layout')}>设备点位</Button>
             <Button type="primary" icon={<PlusOutlined />} style={{ background: BRAND_GRADIENT, border: 'none' }} onClick={() => openEdit()}>
               新增我的产品
+            </Button>
+            <Button icon={<RobotOutlined />} loading={aiBusy} disabled={!selectedIds.length} onClick={aiProcess}>
+              AI 批量处理{selectedIds.length ? `（${selectedIds.length}）` : ''}
             </Button>
           </Space>
         }
@@ -189,6 +245,10 @@ export function ProductCenter(): ReactNode {
           rowKey="id"
           loading={loading}
           dataSource={data}
+          rowSelection={{
+            selectedRowKeys: selectedIds,
+            onChange: (keys) => setSelectedIds(keys as string[]),
+          }}
           pagination={{ pageSize: 12, hideOnSinglePage: true, showSizeChanger: false }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={tab === 'mine' ? '我的库暂无产品：从公共库「复制到我的库」或点右上角新增' : '无匹配产品'} /> }}
           columns={[
@@ -205,10 +265,15 @@ export function ProductCenter(): ReactNode {
             { title: '布置提示', dataIndex: 'perRoom', ellipsis: true, render: (v: string) => <Text type="secondary" style={{ fontSize: 12 }}>{v || '-'}</Text> },
             {
               title: '操作',
-              width: 150,
+              width: 210,
               render: (_, r) =>
                 r.tenantId === null ? (
-                  <Button size="small" icon={<CopyOutlined />} onClick={() => void copyToMine(r)}>复制到我的库</Button>
+                  <Space size={4}>
+                    <Upload accept="image/jpeg,image/png,image/webp" showUploadList={false} beforeUpload={(f) => void quickUploadImage(r, f)}>
+                      <Button size="small" type="text" icon={<PlusOutlined />}>传图</Button>
+                    </Upload>
+                    <Button size="small" icon={<CopyOutlined />} onClick={() => void copyToMine(r)}>复制到我的库</Button>
+                  </Space>
                 ) : (
                   <Space size={4}>
                     <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>
@@ -221,7 +286,7 @@ export function ProductCenter(): ReactNode {
           ]}
         />
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
-          <ShopOutlined /> 联动规则：设备/灯光点位与智能报价的选品来源 = 公共库 + 我的库；上传产品图后，点位徽章将优先显示产品照片（无图回退品类图标）。
+          <ShopOutlined /> 联动规则：设备/灯光点位与智能报价的选品来源 = 公共库 + 我的库；每个产品都可上传自己的 PNG/JPG 主图（产品图即点位图标，无图回退品类图标）；勾选产品后「AI 批量处理」由智能体补全文案并批量生成产品主图。
         </Text>
       </Card>
 

@@ -7,7 +7,7 @@ import {
 import { App as AntApp, Button, Grid, Select, Typography, Upload, theme } from 'antd';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { api, fileUrl } from '../lib/api';
-import { INK_BLACK } from '../theme/tokens';
+import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 
@@ -115,13 +115,13 @@ export function ImageStudio(): ReactNode {
   const labelStyle: CSSProperties = { fontSize: 13, color: token.colorTextSecondary, marginBottom: 6, display: 'block' };
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={pageContainerStyle}>
       <Title level={3} style={{ marginBottom: 4 }}>AI 图片生成</Title>
       <Text type="secondary">生成智能家居空间效果图、氛围灯光图和方案配图，支持上传客户现场图作参考</Text>
 
       <div style={{ display: 'flex', gap: 20, marginTop: 20, alignItems: 'flex-start' }}>
         {/* 左：表单 */}
-        <div style={{ flex: 1, minWidth: 0, maxWidth: isWide ? 760 : undefined }}>
+        <div style={{ flex: '1 1 46%', minWidth: 320 }}>
           {/* ① 参考图 */}
           <div
             style={{
@@ -260,8 +260,9 @@ export function ImageStudio(): ReactNode {
         {/* 右：预览 */}
         <div
           style={{
-            width: isWide ? 460 : 320,
-            flex: 'none',
+            width: isWide ? undefined : 320,
+            flex: isWide ? '1 1 54%' : 'none',
+            minWidth: isWide ? 360 : undefined,
             minHeight: 380,
             background: token.colorFillQuaternary,
             border: `1px dashed ${token.colorBorder}`,

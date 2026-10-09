@@ -41,6 +41,10 @@ async function main(): Promise<void> {
     method: 'POST',
     body: JSON.stringify({ phone: phoneB, password: 'Test@12345', displayName: '冒烟测试B' }),
   });
+  const regB = await request<{ token: string }>(base, '/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ phone: phoneB, password: 'Test@12345' }),
+  });
 
   const dup = await request(base, '/api/auth/register', {
     method: 'POST',
@@ -230,7 +234,7 @@ async function main(): Promise<void> {
 
   // ---------- 产品中心：我的库 CRUD + 查重 + 复制到我的库 + 租户隔离 ----------
   const auth0 = { headers: { Authorization: `Bearer ${regA.body.token}` } };
-  type ProductRow = { id: string; name: string; tenantId: string | null; brand?: string };
+  type ProductRow = { id: string; name: string; tenantId: string | null; brand?: string; imageUrl?: string };
   const pub = (products.body as ProductRow[]).find((p) => p.tenantId === null);
   check('种子产品均为公共库行', Boolean(pub));
 
@@ -257,8 +261,12 @@ async function main(): Promise<void> {
   const copyDup = await request(base, `/api/products/${pub?.id}/copy-to-mine`, { ...auth0, method: 'POST' });
   check('重复复制被查重拒绝', copyDup.status === 400);
 
-  const patchPub = await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ name: '篡改公共库' }) });
-  check('编辑公共库产品被拒（租户隔离 404）', patchPub.status === 404);
+  const patchPubName = await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ name: '篡改公共库' }) });
+  check('公共库改文案被拒（仅允许换产品图 400）', patchPubName.status === 400);
+
+  const patchPubImg = await request<ProductRow>(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ imageUrl: '/api/media/assets/00000000-0000-0000-0000-000000000000/file' }) });
+  check('公共库行可直接更换产品图（200）', patchPubImg.status === 200 && (patchPubImg.body.imageUrl ?? '').endsWith('/file'));
+  await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ imageUrl: '' }) });
 
   const patchMine = await request<ProductRow>(base, `/api/products/${myId}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ brand: '改后品牌' }) });
   check('编辑我的库产品', patchMine.status === 200 && patchMine.body.brand === '改后品牌');
@@ -267,6 +275,26 @@ async function main(): Promise<void> {
   const afterDel = await request<ProductRow[]>(base, '/api/products', auth0);
   check('删除我的库产品后列表不再包含', !afterDel.body.some((p) => p.id === myId));
   await request(base, `/api/products/${copyRes.body.id}`, { ...auth0, method: 'DELETE' });
+
+  // ai-process 入参校验（不触发真实 LLM/生图链路）
+  const aiEmpty = await request(base, '/api/products/ai-process', { ...auth0, method: 'POST', body: JSON.stringify({ ids: [] }) });
+  check('AI 批量处理空勾选被校验拒绝', aiEmpty.status === 400);
+  const aiMissing = await request(base, '/api/products/ai-process', { ...auth0, method: 'POST', body: JSON.stringify({ ids: ['00000000-0000-0000-0000-000000000000'] }) });
+  check('AI 批量处理勾选不存在返回 404', aiMissing.status === 404);
+
+  // 公共产品图跨租户读取：A 上传图挂到公共产品后，B 可直读文件流（未挂接前 404）
+  const fdImg = new FormData();
+  fdImg.append('file', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'pub-product.png');
+  const upRes = await fetch(`${base}/api/media/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${regA.body.token}` }, body: fdImg });
+  const upAsset = (await upRes.json()) as { id: string; url: string };
+  check('A 上传公共产品图成功', upRes.status === 201 && Boolean(upAsset.id));
+  const fileUrlA = `/api/media/assets/${upAsset.id}/file?token=${regB.body.token}`;
+  const bBefore = await fetch(`${base}${fileUrlA}`);
+  check('未挂接产品前 B 跨租户读取被拒（404）', bBefore.status === 404);
+  await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ imageUrl: upAsset.url }) });
+  const bAfter = await fetch(`${base}${fileUrlA}`);
+  check('挂接公共产品后 B 跨租户可读产品图（200）', bAfter.status === 200);
+  await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ imageUrl: '' }) });
 
   const layoutBadAsset = await request<{ message?: unknown }>(base, '/api/layouts', {
     method: 'POST',

@@ -1,10 +1,21 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.module.js';
+import { LlmService } from '../llm/llm.service.js';
+import { MediaService } from '../media/media.service.js';
+import { TokenService } from '../billing/token.service.js';
+import { CATEGORY_META } from './category-meta.js';
 
 /** 产品目录（公共库+我的库）+ 点位布局图纸 CRUD */
 @Injectable()
 export class LayoutService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(LayoutService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly llm: LlmService,
+    private readonly media: MediaService,
+    private readonly tokens: TokenService,
+  ) {}
 
   /** 布点/报价选品数据源：公共库 + 本租户我的库（对齐参考站"我的产品库联动报价与点位"） */
   products(tenantId?: string) {
@@ -37,8 +48,12 @@ export class LayoutService {
 
   async updateProduct(tenantId: string, id: string, dto: Partial<{ name: string; category: string; brand: string; model: string; unit: string; priceMin: number; priceMax: number; perRoom: string; imageUrl: string }>) {
     const row = await this.prisma.product.findFirst({ where: { id, tenantId } });
-    if (!row) throw new NotFoundException('PRODUCT_NOT_FOUND');
-    return this.prisma.product.update({ where: { id }, data: dto });
+    if (row) return this.prisma.product.update({ where: { id }, data: dto });
+    // 公共库行：仅允许更换产品图（每个部署者都是平台方，上传/AI 生成产品图完善公共种子）
+    const pub = await this.prisma.product.findFirst({ where: { id, tenantId: null } });
+    if (!pub) throw new NotFoundException('PRODUCT_NOT_FOUND');
+    if (Object.keys(dto).some((k) => k !== 'imageUrl')) throw new BadRequestException('PUBLIC_PRODUCT_IMAGE_ONLY');
+    return this.prisma.product.update({ where: { id }, data: { imageUrl: dto.imageUrl ?? '' } });
   }
 
   async removeProduct(tenantId: string, id: string): Promise<void> {
@@ -56,6 +71,78 @@ export class LayoutService {
     return this.prisma.product.create({
       data: { tenantId, name: src.name, category: src.category, brand: src.brand, model: src.model, unit: src.unit, priceMin: src.priceMin, priceMax: src.priceMax, perRoom: src.perRoom, imageUrl: src.imageUrl },
     });
+  }
+
+  /**
+   * agent 批量处理产品：勾选的产品行（我的库 / 公共库均可）一次完成
+   * ① LLM 补全缺失文案（品牌/型号/布置提示，仅我的库行写回）
+   * ② 生图 provider 批量生成产品主图（产品图即点位图标），逐个扣生图额度
+   * 单个失败不阻塞其余；生图 key 未配置时诚实降级为仅文案。全程写审计留痕。
+   */
+  async aiProcessProducts(tenantId: string, userId: string, ids: string[]) {
+    const rows = await this.prisma.product.findMany({
+      where: { id: { in: ids }, active: true, OR: [{ tenantId: null }, { tenantId }] },
+    });
+    if (rows.length === 0) throw new NotFoundException('PRODUCT_NOT_FOUND');
+
+    // ① 一次 LLM 调用批量补文案（按传入顺序返回数组）
+    let copyOk = 0;
+    try {
+      const list = rows.map((r) => ({ id: r.id, name: r.name, category: CATEGORY_META[r.category]?.label ?? r.category, brand: r.brand, model: r.model, perRoom: r.perRoom }));
+      const filled = await this.llm.chatJson<{ id: string; brand?: string; model?: string; perRoom?: string }[]>({
+        systemPrompt: '你是智能家居产品资料助理。为每个产品补全缺失字段：brand（品牌，未知给空串）、model（型号，未知给空串）、perRoom（布置提示，如"每个窗帘位 1 台"）。已有值必须原样保留不得改写。返回与输入等长的 JSON 数组，每项 {id, brand, model, perRoom}。',
+        prompt: JSON.stringify(list),
+        rag: { tenantId, userId, scene: 'product-enrich' },
+      });
+      const byId = new Map(filled.map((f) => [f.id, f]));
+      for (const r of rows) {
+        if (r.tenantId !== tenantId) continue; // 公共库行不改文案
+        const f = byId.get(r.id);
+        if (!f) continue;
+        const data: Record<string, string> = {};
+        if (!r.brand && f.brand) data.brand = f.brand.slice(0, 40);
+        if (!r.model && f.model) data.model = f.model.slice(0, 40);
+        if (!r.perRoom && f.perRoom) data.perRoom = f.perRoom.slice(0, 60);
+        if (Object.keys(data).length) {
+          await this.prisma.product.update({ where: { id: r.id }, data });
+          copyOk += 1;
+        }
+      }
+      await this.tokens.consume(tenantId, 3, 'CONSUME', { kind: 'product-enrich', count: rows.length }, userId);
+    } catch (e) {
+      this.logger.warn(`产品文案批量补全降级: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // ② 逐个生成产品图（generateImage 内部扣额度+落盘）
+    let imageOk = 0;
+    const errors: { name: string; error: string }[] = [];
+    for (const r of rows) {
+      try {
+        const label = CATEGORY_META[r.category]?.label ?? r.category;
+        const res = await this.media.generateImage({
+          tenantId,
+          userId,
+          prompt: `${label}设备产品图：${[r.brand, r.name, r.model].filter(Boolean).join(' ')}，白色纯净背景，产品居中，柔和投影，电商主图风格，高清细节，无文字水印`,
+          size: '1024x1024',
+          title: `产品图-${r.name}`.slice(0, 60),
+        });
+        await this.prisma.product.update({ where: { id: r.id }, data: { imageUrl: res.url } });
+        imageOk += 1;
+      } catch (e) {
+        errors.push({ name: r.name, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    await this.auditProduct(tenantId, userId, `ids=${ids.length} copy=${copyOk} image=${imageOk} failed=${errors.length}`);
+    return { total: rows.length, copyOk, imageOk, errors };
+  }
+
+  private async auditProduct(tenantId: string, actorId: string, target: string): Promise<void> {
+    try {
+      await this.prisma.auditLog.create({ data: { tenantId, actorId, action: 'product.ai-process', target } });
+    } catch {
+      // 留痕失败不阻塞业务
+    }
   }
 
   async create(tenantId: string, userId: string, dto: { title: string; mediaAssetId: string; points: unknown[] }) {

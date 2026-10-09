@@ -300,7 +300,7 @@ export function ContentExtract(): ReactNode {
   ];
 
   return (
-    <div>
+    <div style={{ width: '100%', paddingBottom: 24 }}>
       <PageHeader
         title="内容提取"
         description="三源输入（上传资料 / 网页抓取 / 对话纪要）→ 字段结构化 → 质量评分 → 缺失确认后入库"
@@ -352,7 +352,7 @@ export function ContentExtract(): ReactNode {
                 </Space>
               ),
               children: (
-                <Form form={urlForm} layout="vertical" onFinish={submitUrl} initialValues={{ docType: 'product' }} style={{ maxWidth: 720 }}>
+                <Form form={urlForm} layout="vertical" onFinish={submitUrl} initialValues={{ docType: 'product' }}>
                   <Form.Item name="url" label="网页链接" rules={[{ required: true, message: '请输入链接' }]}>
                     <Input placeholder="https://example.com/product/xxx" size="large" prefix={<LinkOutlined />} />
                   </Form.Item>
@@ -375,7 +375,7 @@ export function ContentExtract(): ReactNode {
                 </Space>
               ),
               children: (
-                <Form form={transcriptForm} layout="vertical" onFinish={submitTranscript} initialValues={{ docType: 'meeting' }} style={{ maxWidth: 820 }}>
+                <Form form={transcriptForm} layout="vertical" onFinish={submitTranscript} initialValues={{ docType: 'meeting' }}>
                   <Form.Item name="title" label="纪要标题（可选）">
                     <Input placeholder="例如：9 月 27 日智能灯光方案沟通纪要" maxLength={100} />
                   </Form.Item>

@@ -2,6 +2,34 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.25] - 2026-10-09
+
+### Changed（全站流式布局：卡片随视口拉宽铺满，杜绝宽屏留白）
+
+用户两次指出宽屏响应式不达标：各页卡片忽宽忽窄，且拉宽窗口后卡片左右出现大片留白，要求"4K 也把卡片拉到对应宽度、每个板块统一、不可留白"。
+
+- **根因**：各页顶层容器混用 `maxWidth 1080/1180/1280/全宽`，即便统一为 1380 居中，超宽视口下仍两侧留白
+- **新基线** [tokens.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/theme/tokens.ts)：`pageContainerStyle` 去掉一切 maxWidth 封顶（`width:100%`），卡片/表格/网格一律铺满内容区（视口 − 侧栏 280 − 左右 padding 48），随视口等比拉宽；MainLayout 统一提供 padding，页面不再各自限宽
+- **逐页放开**：ProductCenter/TokenCenter/ModelConfig/OrderStudio（原 1180/1280 居中）改 `pageContainerStyle`；MyAssets/QuoteStudio/AgentMarket/TreasureBox/DeviceLayout/ContentExtract 内联容器去封顶；Dashboard 内容区 `100%`；ImageStudio/VideoStudio 双列改 `flex: 1 1 46% / 54%` 随视口铺满（原右列锁死 460/420）；PlanStudio 步骤条去 1080 限宽；ContentExtract 表单去 720/820 限宽
+- **保留合理窄元素**：表单输入框、TokenCenter 改密表单、Biography 引导等"内容本身就该窄"的元素仍限宽，但确保其父卡片 width:100% 铺满；PlanShareView 客户分享页幻灯片保持 960 居中（打印/微信阅读场景，非工作台板块）
+
+### Added（产品中心补齐：侧栏入口 + 每产品可换图 + agent 批量处理）
+
+- **侧栏入口** [MainLayout.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/layouts/MainLayout.tsx)：「AI 能力」分组新增「产品中心」菜单项（ShopOutlined），selectedKey 同步；此前只能从百宝箱卡片进入
+- **每个产品可换图**：公共库行操作列新增「传图」按钮（`quickUploadImage` 直传 PNG/JPG/WebP 替换产品主图=点位图标），我的库行编辑弹窗含上传区；后端 [layout.service.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/layout/layout.service.ts) `updateProduct` 放宽——公共库行仅允许改 `imageUrl`（改文案返回 400），其余字段仍租户隔离
+- **公共产品图跨租户可读** [media.service.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.service.ts)：新增 `resolveReadable`，文件流端点改用之——本租户资产放行，被任一启用产品 `imageUrl` 引用的资产跨租户可读（公共库对所有租户展示）
+- **agent 批量处理** `POST /api/products/ai-process`：勾选产品（我的库/公共库均可，单次 ≤20）一次完成 ① `LlmService.chatJson` 批量补全缺失的品牌/型号/布置提示（仅我的库行写回）② 生图 provider 逐个生成白底产品主图（产品图即点位图标）；单个失败不阻塞其余，生图 key 未配置诚实降级为仅文案；全程写 `AuditLog`（action=product.ai-process）；前端「AI 批量处理」按钮带勾选计数 + 确认弹窗 + 结果提示
+- **存储治理** [backup.controller.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/admin/backup.controller.ts)：清理未引用产物时把产品主图资产纳入引用集，防 30 天后误删
+
+### Fixed
+
+- `generateImage` 扣费前校验 API Key（原先扣后校验，批量生图失败会白扣额度，违反"校验在扣费前"硬约束）
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **78/78**（+6：公共库改文案 400 / 公共库换图 200 / ai-process 空勾选 400 / 勾选不存在 404 / 公共产品图跨租户读取 404→200）
+- 浏览器实测四档视口（768/1440/1920/2560）：/order 双栏合计铺满内容区（640+1576+16=2232）、/products 等 10 页主卡片宽 2217~2232 占内容区约 97%、无任何居中留白、全档无横向溢出、console 0 error
+
 ## [0.1.24] - 2026-10-09
 
 ### Added（产品中心独立板块：公共库/我的库双 tab + 产品图=点位图标 + 设置入口统一）

@@ -92,7 +92,7 @@ export function TreasureBox(): ReactNode {
   };
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={{ width: '100%', paddingBottom: 24 }}>
       <Title level={3} style={{ marginBottom: 4 }}>智能百宝箱</Title>
       <Text type="secondary">按业务任务选择工具，生成记录与作品可随时找回</Text>
 

@@ -7,7 +7,7 @@ import {
 import { App as AntApp, Button, Grid, Modal, Select, Typography, Upload, theme } from 'antd';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { api, fileUrl } from '../lib/api';
-import { INK_BLACK } from '../theme/tokens';
+import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 
@@ -131,12 +131,12 @@ export function VideoStudio(): ReactNode {
   const labelStyle: CSSProperties = { fontSize: 13, color: token.colorTextSecondary, marginBottom: 6, display: 'block' };
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={pageContainerStyle}>
       <Title level={3} style={{ marginBottom: 4 }}>AI 视频生成</Title>
       <Text type="secondary">上传首帧图做图生视频，或直接文字描述生成 5 秒 / 10 秒动态视频</Text>
 
       <div style={{ display: 'flex', gap: 20, marginTop: 20, alignItems: 'flex-start' }}>
-        <div style={{ flex: 1, minWidth: 0, maxWidth: isWide ? 760 : undefined }}>
+        <div style={{ flex: '1 1 46%', minWidth: 320 }}>
           {/* ① 首帧 */}
           <div
             style={{
@@ -275,8 +275,9 @@ export function VideoStudio(): ReactNode {
         {/* 右：预览 */}
         <div
           style={{
-            width: isWide ? 420 : 320,
-            flex: 'none',
+            width: isWide ? undefined : 320,
+            flex: isWide ? '1 1 54%' : 'none',
+            minWidth: isWide ? 360 : undefined,
             minHeight: 380,
             background: token.colorFillQuaternary,
             border: `1px dashed ${token.colorBorder}`,

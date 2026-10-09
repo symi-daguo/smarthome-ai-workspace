@@ -13,7 +13,7 @@ import { App as AntApp, Button, Drawer, Form, Input, Modal, Popconfirm, Select, 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
-import { BRAND_GRADIENT } from '../theme/tokens';
+import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText } from '../lib/planPptx';
 import { PlanSlide } from '../components/PlanSlide';
@@ -241,7 +241,7 @@ export function PlanStudio(): ReactNode {
   };
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={pageContainerStyle}>
       <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 260 }}>
           <Title level={3} style={{ marginBottom: 4 }}>新建智能方案</Title>
@@ -258,7 +258,7 @@ export function PlanStudio(): ReactNode {
       <Steps
         current={step}
         items={STEPS.map((s) => ({ title: s }))}
-        style={{ maxWidth: 1080, margin: '0 auto 28px' }}
+        style={{ margin: '0 auto 28px' }}
       />
 
       {/* 步骤 1：客户资料 */}

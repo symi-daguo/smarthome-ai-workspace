@@ -104,7 +104,7 @@ export class MediaFileController {
     @Param('id') id: string,
     @Res() res: Response,
   ): Promise<void> {
-    const asset = await this.media.get(user.activeTenantId as string, id);
+    const asset = await this.media.resolveReadable(user.activeTenantId as string, id);
     const abs = this.media.resolveSafe(asset.filePath);
     const buf = await readFile(abs);
     res.setHeader('Content-Type', asset.mimeType || 'application/octet-stream');

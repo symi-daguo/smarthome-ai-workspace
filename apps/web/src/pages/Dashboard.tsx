@@ -73,8 +73,6 @@ export function Dashboard(): ReactNode {
   const { user } = useAuth();
   const screens = Grid.useBreakpoint();
   const isWide = screens.md ?? false;
-  const isXl = screens.xl ?? false;
-  const isXxl = screens.xxl ?? false;
 
   const { activeConversation, setActiveKey, sending, createNew, send } = useChatStore();
   const location = useLocation();
@@ -99,16 +97,8 @@ export function Dashboard(): ReactNode {
   const isChatting = messages.length > 0;
   const currentAgent = activeConversation?.agent ?? agentName;
 
-  // 流式宽度：随视口增长（小屏全宽 → 宽屏 1380 封顶），不再锁死 960
-  const contentMaxWidth = isChatting
-    ? 'clamp(720px, 86%, 1380px)'
-    : isXxl
-      ? 1380
-      : isXl
-        ? 1200
-        : isWide
-          ? 960
-          : '100%';
+  // 流式宽度：内容区随视口铺满（4K 同样拉宽不留大片空白），可读性由气泡/卡片自身限宽保证
+  const contentMaxWidth = '100%';
 
   const bubbleItems = useMemo<BubbleItemType[]>(() => {
     const list: BubbleItemType[] = messages.map((m) => ({
@@ -370,7 +360,7 @@ export function Dashboard(): ReactNode {
             background: token.colorBgLayout,
           }}
         >
-          <div style={{ maxWidth: 'clamp(720px, 86%, 1380px)', margin: '0 auto' }}>
+          <div style={{ maxWidth: '100%', margin: '0 auto' }}>
             <Sender
               value={input}
               onChange={setInput}

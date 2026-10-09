@@ -33,7 +33,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../store/AuthContext';
 import { PageHeader } from '../components/PageHeader';
-import { BRAND_GRADIENT } from '../theme/tokens';
+import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
 
@@ -275,7 +275,7 @@ export function ModelConfig(): ReactNode {
   );
 
   return (
-    <div style={{ maxWidth: 1280, margin: '0 auto', paddingBottom: 32 }}>
+    <div style={pageContainerStyle}>
       <PageHeader
         title="模型配置"
         description="在线配置对话 / 生图 / ComfyUI / 生视频的大模型：支持国内外云端 API 与本地模型（Ollama / LM Studio / vLLM / ComfyUI / Sora）。保存即生效，配置持久化到数据库并优先于 .env。"

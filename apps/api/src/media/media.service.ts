@@ -82,9 +82,17 @@ export class MediaService {
     size: string;
     title?: string;
   }): Promise<{ id: string; url: string; status: string }> {
+    const cfg = await this.modelConfig.imageConfig();
+    // 校验在扣费前：key 缺失直接拒绝，不白扣额度（批量生图场景尤其重要）
+    const apiKey = cfg.apiKey ?? '';
+    if (cfg.provider !== 'comfyui' && !apiKey) {
+      throw new ServiceUnavailableException({
+        code: 'IMAGE_KEY_MISSING',
+        message: cfg.provider === 'openai' ? '生图 API Key 未配置（provider=openai），请在「模型配置」页填写' : '生图 API Key 未配置，请在「模型配置」页填写 MiniMax Key',
+      });
+    }
     await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
-    const cfg = await this.modelConfig.imageConfig();
     let img: GeneratedImage;
     if (cfg.provider === 'comfyui') {
       img = await generateViaComfyui({
@@ -99,23 +107,17 @@ export class MediaService {
         seedNode: cfg.seedNode,
       });
     } else if (cfg.provider === 'openai') {
-      if (!cfg.apiKey) {
-        throw new ServiceUnavailableException({ code: 'IMAGE_KEY_MISSING', message: '生图 API Key 未配置（provider=openai），请在「模型配置」页填写' });
-      }
       img = await generateViaOpenai({
         baseUrl: cfg.baseUrl,
-        apiKey: cfg.apiKey,
+        apiKey,
         model: cfg.model,
         prompt: opts.prompt,
         size: opts.size,
       });
     } else {
-      if (!cfg.apiKey) {
-        throw new ServiceUnavailableException({ code: 'IMAGE_KEY_MISSING', message: '生图 API Key 未配置，请在「模型配置」页填写 MiniMax Key' });
-      }
       img = await generateViaMinimax({
         baseUrl: cfg.baseUrl,
-        apiKey: cfg.apiKey,
+        apiKey,
         model: cfg.model,
         prompt: opts.prompt,
         aspect: IMAGE_ASPECT[opts.size] ?? '16:9',
@@ -246,6 +248,18 @@ export class MediaService {
     const asset = await this.prisma.mediaAsset.findFirst({ where: { id, tenantId } });
     if (!asset) throw new NotFoundException('ASSET_NOT_FOUND');
     return asset;
+  }
+
+  /**
+   * 文件流读取解析：本租户资产直接放行；
+   * 公共产品图（被任一启用产品 imageUrl 引用）跨租户可读——公共库对所有租户展示，其产品图天然是公开资产
+   */
+  async resolveReadable(tenantId: string, id: string) {
+    const asset = await this.prisma.mediaAsset.findFirst({ where: { id, tenantId } });
+    if (asset) return asset;
+    const referenced = await this.prisma.product.findFirst({ where: { active: true, imageUrl: { contains: id } } });
+    if (referenced) return this.byId(id);
+    throw new NotFoundException('ASSET_NOT_FOUND');
   }
 
   /** 按 id 直查（公开分享页文件流用，无租户上下文） */

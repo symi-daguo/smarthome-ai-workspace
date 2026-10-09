@@ -34,7 +34,8 @@ AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,partial,0.1.16 �
 智能方案-历史方案列表,plan,must,yes,yes,0.1.9 方案记录混排侧栏"历史对话"直达审稿(?id=深链)；抽屉列表保留
 百宝箱-4 组 18 工具卡(堆叠图+角标),treasure,must,yes,yes,页面框架+已有能力挂链先行
 智能设备点位布局(上传户型图+布点+导出图纸/清单),treasure,must,yes,yes,0.1.24 升级：布点携带产品主图→点位显示产品照片(圆裁白底)，无图回退 0.1.23 品类 SVG 徽章(预览/PNG/PPTX/分享四端一致)+一键美化图纸(白底增强保持户型)+挂接方案空间动线页
-产品中心-公共库与我的库双 tab,treasure,must,yes,yes,0.1.24 新增：/products 独立页+百宝箱直达；双 tab 计数、搜索分类筛选、我的库 CRUD(应用层查重)、公共库复制到我的库、产品图上传；后端 Product 加 tenantId/brand/model/unit/imageUrl，GET /api/products 合并公共+我的
+产品中心-公共库与我的库双 tab,treasure,must,yes,yes,0.1.25 补齐：侧栏「AI 能力」直达入口；公共库行亦可「传图」换产品主图(后端仅放宽 imageUrl)；勾选行 AI 批量处理(chatJson 补品牌/型号/布置提示 + 生图批量出白底主图，失败不阻塞、AuditLog 留痕)
+全站流式布局无留白,shell,must,yes,yes,0.1.25 重做：pageContainerStyle 去一切 maxWidth 封顶，卡片随视口拉宽铺满(2560 档实测主卡片占内容区约 97%)；生图/生视频双列改 flex 百分比；四档视口无横向溢出
 个人中心-统一承载设置(资料偏好+备份治理),profile,must,yes,yes,0.1.24 改造：侧栏「设置」直达 /tokens 不再弹独立弹窗，ProfileSettings 迁入个人中心(昵称/头像色/主题三选/备份导出/存储治理)，消除与个人中心改密的重复
 WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.1.14 真实化：additive 径向光斑红强绿弱+图例，复用点位编辑器 ?mode=wifi
 灯光点位效果图(灯具布点+暖光光晕),treasure,should,yes,yes,0.1.14 真实化：暖光晕+徽章标签，复用点位编辑器 ?mode=light

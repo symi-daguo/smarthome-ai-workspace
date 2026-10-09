@@ -17,6 +17,12 @@ export const updateProductSchema = createProductSchema.partial();
 export type CreateProductDto = z.infer<typeof createProductSchema>;
 export type UpdateProductDto = z.infer<typeof updateProductSchema>;
 
+/** AI 批量处理产品资料：ids=勾选的产品行 id（我的库行生成文案+产品图；公共库行仅生成产品图） */
+export const aiProcessProductsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, '请先勾选要处理的产品').max(20, '单次上限 20 个'),
+});
+export type AiProcessProductsDto = z.infer<typeof aiProcessProductsSchema>;
+
 export const createLayoutSchema = z.object({
   title: z.string().min(1, '请输入图纸名称').max(100),
   mediaAssetId: z.string().uuid('缺少户型底图'),

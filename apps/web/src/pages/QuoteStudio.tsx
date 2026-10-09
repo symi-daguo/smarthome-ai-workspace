@@ -101,7 +101,7 @@ export function QuoteStudio(): ReactNode {
   }, [products]);
 
   return (
-    <div style={{ paddingBottom: 24 }}>
+    <div style={{ width: '100%', paddingBottom: 24 }}>
       <div style={{ marginBottom: 16 }}>
         <Title level={3} style={{ marginBottom: 4 }}>智能报价</Title>
         <Text type="secondary" style={{ fontSize: 13 }}>从产品库选品配单，按数量与参考价区间自动算价，一键导出报价单（价格区间口径，实际以现场确认为准）。</Text>

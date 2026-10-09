@@ -10,10 +10,12 @@ import { LayoutService } from './layout.service.js';
 import {
   createLayoutSchema,
   createProductSchema,
+  aiProcessProductsSchema,
   updateLayoutSchema,
   updateProductSchema,
   type CreateLayoutDto,
   type CreateProductDto,
+  type AiProcessProductsDto,
   type UpdateLayoutDto,
   type UpdateProductDto,
 } from './layout.schemas.js';
@@ -59,6 +61,15 @@ export class LayoutController {
   @Delete('products/:id')
   removeProduct(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.removeProduct(user.activeTenantId as string, id);
+  }
+
+  /** agent 批量处理产品：补全文案 + 批量生成产品图（勾选行，含公共库） */
+  @Post('products/ai-process')
+  aiProcess(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(aiProcessProductsSchema)) dto: AiProcessProductsDto,
+  ) {
+    return this.layout.aiProcessProducts(user.activeTenantId as string, user.id, dto.ids);
   }
 
   @Post('layouts')
