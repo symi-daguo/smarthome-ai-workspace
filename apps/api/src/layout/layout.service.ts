@@ -25,9 +25,48 @@ export class LayoutService {
     });
   }
 
+  /** 品类字典：预置 24 类 + 本租户自定义（前端分类筛选/表单选项数据源） */
+  categories(tenantId?: string) {
+    return this.prisma.categoryDef.findMany({
+      where: { active: true, OR: [{ tenantId: null }, ...(tenantId ? [{ tenantId }] : [])] },
+      orderBy: [{ sortOrder: 'asc' }],
+    });
+  }
+
+  /** 租户自定义分类（label 自动生成 key，同名幂等返回） */
+  async createCategory(tenantId: string, dto: { label: string; icon: string; color: string }) {
+    const label = dto.label.trim();
+    if (!label) throw new BadRequestException('CATEGORY_LABEL_REQUIRED');
+    const key = `c-${Buffer.from(label, 'utf8').toString('base64url').slice(0, 24)}`;
+    const existing = await this.prisma.categoryDef.findFirst({ where: { tenantId, label } });
+    if (existing) return existing;
+    const max = await this.prisma.categoryDef.findFirst({ where: { tenantId }, orderBy: { sortOrder: 'desc' } });
+    return this.prisma.categoryDef.create({
+      data: { tenantId, key, label, icon: dto.icon, color: dto.color, sortOrder: (max?.sortOrder ?? 100) + 1 },
+    });
+  }
+
+  /** 删除自定义分类（预置类不可删；仍有产品在用时拒绝） */
+  async removeCategory(tenantId: string, id: string): Promise<void> {
+    const row = await this.prisma.categoryDef.findFirst({ where: { id, tenantId } });
+    if (!row) throw new NotFoundException('CATEGORY_NOT_FOUND');
+    const inUse = await this.prisma.product.findFirst({ where: { tenantId, category: row.key, active: true } });
+    if (inUse) throw new BadRequestException({ code: 'CATEGORY_IN_USE', message: `「${row.label}」下仍有产品，请先调整产品分类` });
+    await this.prisma.categoryDef.delete({ where: { id } });
+  }
+
+  /** 校验品类 key 合法（预置 + 本租户自定义；security 兼容归并） */
+  private async assertCategoryKey(tenantId: string, category: string): Promise<void> {
+    const ok = await this.prisma.categoryDef.findFirst({
+      where: { key: category, active: true, OR: [{ tenantId: null }, { tenantId }] },
+    });
+    if (!ok) throw new BadRequestException({ code: 'CATEGORY_INVALID', message: `未知品类「${category}」，请先创建自定义分类` });
+  }
+
   async createProduct(tenantId: string, dto: { name: string; category: string; brand?: string; model?: string; unit?: string; priceMin?: number; priceMax?: number; perRoom?: string; imageUrl?: string }) {
     const name = dto.name.trim();
     if (!name) throw new BadRequestException('PRODUCT_NAME_REQUIRED');
+    await this.assertCategoryKey(tenantId, dto.category);
     const dup = await this.prisma.product.findFirst({ where: { name, tenantId } });
     if (dup) throw new BadRequestException({ code: 'PRODUCT_DUPLICATE', message: `我的库已有「${name}」` });
     return this.prisma.product.create({
@@ -48,7 +87,10 @@ export class LayoutService {
 
   async updateProduct(tenantId: string, id: string, dto: Partial<{ name: string; category: string; brand: string; model: string; unit: string; priceMin: number; priceMax: number; perRoom: string; imageUrl: string }>) {
     const row = await this.prisma.product.findFirst({ where: { id, tenantId } });
-    if (row) return this.prisma.product.update({ where: { id }, data: dto });
+    if (row) {
+      if (dto.category) await this.assertCategoryKey(tenantId, dto.category);
+      return this.prisma.product.update({ where: { id }, data: dto });
+    }
     // 公共库行：仅允许更换产品图（每个部署者都是平台方，上传/AI 生成产品图完善公共种子）
     const pub = await this.prisma.product.findFirst({ where: { id, tenantId: null } });
     if (!pub) throw new NotFoundException('PRODUCT_NOT_FOUND');
@@ -85,12 +127,15 @@ export class LayoutService {
     });
     if (rows.length === 0) throw new NotFoundException('PRODUCT_NOT_FOUND');
 
-    // ① 一次 LLM 调用批量补文案（按传入顺序返回数组）
+    // ① 一次 LLM 调用批量补文案 + 品类归位（按传入顺序返回数组）
     let copyOk = 0;
     try {
-      const list = rows.map((r) => ({ id: r.id, name: r.name, category: CATEGORY_META[r.category]?.label ?? r.category, brand: r.brand, model: r.model, perRoom: r.perRoom }));
-      const filled = await this.llm.chatJson<{ id: string; brand?: string; model?: string; perRoom?: string }[]>({
-        systemPrompt: '你是智能家居产品资料助理。为每个产品补全缺失字段：brand（品牌，未知给空串）、model（型号，未知给空串）、perRoom（布置提示，如"每个窗帘位 1 台"）。已有值必须原样保留不得改写。返回与输入等长的 JSON 数组，每项 {id, brand, model, perRoom}。',
+      const catDict = await this.categories(tenantId);
+      const catKeys = new Set(catDict.map((c) => c.key));
+      const catList = catDict.map((c) => `${c.key}=${c.label}`).join('、');
+      const list = rows.map((r) => ({ id: r.id, name: r.name, category: r.category, brand: r.brand, model: r.model, perRoom: r.perRoom }));
+      const filled = await this.llm.chatJson<{ id: string; category?: string; brand?: string; model?: string; perRoom?: string }[]>({
+        systemPrompt: `你是智能家居产品资料助理。为每个产品输出：category（从品类字典里选最贴切的 key，字典：${catList}）、brand（品牌，未知给空串）、model（型号，未知给空串）、perRoom（布置提示，如"每个窗帘位 1 台"）。已有且合理的值必须原样保留不得改写。返回与输入等长的 JSON 数组，每项 {id, category, brand, model, perRoom}。`,
         prompt: JSON.stringify(list),
         rag: { tenantId, userId, scene: 'product-enrich' },
       });
@@ -103,6 +148,8 @@ export class LayoutService {
         if (!r.brand && f.brand) data.brand = f.brand.slice(0, 40);
         if (!r.model && f.model) data.model = f.model.slice(0, 40);
         if (!r.perRoom && f.perRoom) data.perRoom = f.perRoom.slice(0, 60);
+        // 品类归位：仅当 LLM 给出字典内的不同 key 时修正
+        if (f.category && catKeys.has(f.category) && f.category !== r.category) data.category = f.category;
         if (Object.keys(data).length) {
           await this.prisma.product.update({ where: { id: r.id }, data });
           copyOk += 1;

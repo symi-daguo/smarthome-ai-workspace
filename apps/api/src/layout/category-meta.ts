@@ -1,12 +1,13 @@
-/** 品类中文标签（与前端 pointOverlay.CATEGORY_META 同口径；AI 生成产品文案/生图提示词用） */
-export const CATEGORY_META: Record<string, { label: string }> = {
-  gateway: { label: '网关网络' },
-  switch: { label: '开关控制' },
-  sensor: { label: '传感器' },
-  light: { label: '灯光' },
-  curtain: { label: '窗帘' },
-  security: { label: '安防' },
-  appliance: { label: '家电控制' },
-  audio: { label: '影音' },
-  hvac: { label: '暖通环境' },
-};
+import { LEGACY_CATEGORY_ALIAS, PRESET_CATEGORIES } from './category-defs.js';
+
+/**
+ * 品类中文标签兜底表（AI 生成文案/生图提示词、以及 CategoryDef 未命中时使用）：
+ * 由预置清单派生，security 归并到 camera，与前端 pointOverlay.CATEGORY_META 同口径。
+ */
+export const CATEGORY_META: Record<string, { label: string }> = Object.fromEntries(
+  PRESET_CATEGORIES.map((c) => [c.key, { label: c.label }]),
+);
+CATEGORY_META.security = { label: '安防监控' };
+
+/** 旧 key 归一化（security -> camera），用于品类推断与存量数据兼容 */
+export const normalizeCategory = (c: string): string => LEGACY_CATEGORY_ALIAS[c] ?? c;

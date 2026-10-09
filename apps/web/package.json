@@ -1,6 +1,6 @@
 {
   "name": "@app/web",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,6 +14,7 @@
     "@ant-design/x": "2.9.0",
     "antd": "6.6.5",
     "dayjs": "1.11.23",
+    "lucide": "1.53.0",
     "pptxgenjs": "4.0.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",

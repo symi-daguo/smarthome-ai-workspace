@@ -298,7 +298,7 @@ model Product {
   // null = 公共库（平台种子）；非空 = 租户「我的产品库」
   tenantId String?
   name     String
-  // gateway | switch | sensor | light | curtain | security | appliance | audio | hvac
+  // 品类 key（见 CategoryDef：预置 24 类 + 租户自定义）
   category String
   brand    String  @default("")
   model    String  @default("")
@@ -316,6 +316,25 @@ model Product {
 
   @@index([category, sortOrder])
   @@index([tenantId, category])
+}
+
+// 品类字典：tenantId=null 为平台预置（24 类，覆盖市面智能家居品类），非空为租户自定义分类
+model CategoryDef {
+  id       String  @id @default(uuid())
+  tenantId String?
+  // 品类 key（预置如 gateway/light；自定义如 my-xxx，或直接用中文名 slug）
+  key      String
+  // 中文显示名
+  label    String
+  // 徽章配色（十六进制）
+  color    String  @default("#888888")
+  // lucide 图标名（自定义分类从预置图标里挑一个复用）
+  icon     String  @default("radar")
+  sortOrder Int    @default(0)
+  active   Boolean @default(true)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, active])
 }
 
 // ---------- 模型配置中心（DB 持久化，覆盖 env 默认；key 只进不出） ----------

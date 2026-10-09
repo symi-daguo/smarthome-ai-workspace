@@ -2,6 +2,27 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.26] - 2026-10-09
+
+### Fixed（传图不成功根因）
+
+用户报告产品传图失败。根因两处：① [nginx.conf](file:///Volumes/hasskit/codex/aisaas/apps/web/nginx.conf) 未设 `client_max_body_size`（默认 1m），手机照片普遍 >1MB 被反代直接 413 拒绝，Nest 侧 10MB 限制形同虚设——`/api/` 加 `client_max_body_size 12m`；② [api.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/api.ts) 封装无条件 `response.json()`，DELETE 等空响应体抛 `Unexpected end of JSON input`（分类删除报错的根因）——先 `text()` 空体返回 undefined。实测经 nginx 上传 1.25MB PNG 返回 201。
+
+### Added（图片压缩 + lucide 图标库 + 品类字典 + 品牌管理 + 知识库联动）
+
+- **上传压缩** [compress.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/compress.ts)：canvas 原生实现（零依赖），最长边 >1024 或体积 >800KB 时等比缩放（PNG 保透明、其余转 JPEG q0.85）；产品图与户型图上传前统一压缩，缩略图实测 naturalWidth=1024
+- **图标库升级** [product-icons.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/product-icons.ts)：自绘 9 类 path 换为 [lucide](https://lucide.dev)（ISC 许可证免费商用）24 个物体样式线条图标（网关/路由/开关/面板/传感/人体存在/水浸/温湿度/灯/窗帘/门锁/摄像头/报警/家电/厨卫/扫地机/晾衣/音响/投影/暖通/循环扇/灌溉/宠物/插座），按需显式导入（包体 +0.09MB 而非全量 2129 图标）；stroke 渲染经 dataURL 进 canvas，预览/PNG/PPTX/分享四端一致
+- **品类字典**：新表 `CategoryDef`（migration `category_def`；tenantId=null 预置 24 类，非空=租户自定义），[category-defs.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/layout/category-defs.ts) 单一事实源；`Product.category` 从 9 值 enum 放宽为自由字符串 + service 层白名单校验（未知品类 400 CATEGORY_INVALID）；旧 `security` 归并 `camera`（seed 迁移存量行 + 前端 LEGACY 映射兜底）；端点 `GET /api/categories`、`POST /categories/mine`（同名幂等）、`DELETE /categories/:id`（预置不可删、在用拒绝 CATEGORY_IN_USE）；备份清单纳入 categoryDef
+- **前端 categoryStore**：字典单例 + 预置兜底（加载失败不阻塞），分类筛选/表单选项/表格徽章/点位分组全部中文化并支持自定义分类；「分类管理」弹窗可增删自定义分类（图标从 24 预置图标选择、颜色 ColorPicker）
+- **品牌管理**：产品列表新增品牌筛选下拉（从现有产品 distinct 生成）；新增/编辑弹窗品牌改 AutoComplete（选已有或输入新品牌）
+- **知识库 <-> 产品中心联动** [product-sync.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/layout/product-sync.ts)：「内容提取」product 类文档确认入库（人工 confirm 与自动确认两条路径）时按 name+租户查重同步到我的产品库——价格解析（¥/区间/千分位）、品类关键词推断（24 类中文关键词，兜底 appliance）、卖点/规格进布置提示；失败降级 warn 日志不阻塞提取链路
+- **ai-process 品类归位**：agent 批量处理的 chatJson 提示词带品类字典，LLM 返回字典内 key 时自动修正产品分类（公共库行仍不改）
+
+### Verified
+
+- 门禁：typecheck + build + 冒烟 **88/88**（+10：品类字典 24 类/自定义分类 CRUD/同名幂等/产品用自定义分类/在用删除 400/预置不可删/知识库产品自动同步/品类推断非空）
+- 浏览器实测：侧栏「产品中心」入口、24 中文分类下拉、分类管理增删（删除修复复验 PASS）、品牌筛选+AutoComplete、1.25MB 传图成功且压缩生效（naturalWidth=1024）、点位 lucide 线条图标（stroke-width=2 白色描边）、/content 正常、768/2560 无横向溢出、console 0 error
+
 ## [0.1.25] - 2026-10-09
 
 ### Changed（全站流式布局：卡片随视口拉宽铺满，杜绝宽屏留白）

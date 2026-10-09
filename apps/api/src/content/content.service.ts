@@ -5,6 +5,7 @@ import { FIELD_SPECS } from './extractors/fields.js';
 import { runExtraction } from './extractors/pipeline.js';
 import type { DocType } from './extractors/types.js';
 import { LlmService } from '../llm/llm.service.js';
+import { syncProductFromDocument, type ProductDocFields } from '../layout/product-sync.js';
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const ALLOWED_EXT = ['txt', 'md', 'csv', 'json', 'html', 'htm', 'docx', 'xlsx', 'pdf'];
@@ -97,6 +98,20 @@ export class ContentService {
           await tx.extractedDocument.update({ where: { id: doc.id }, data: { confirmed: true } });
         }
       });
+
+      // 产品资料确认后同步到产品中心（知识库 <-> 产品库对应；失败降级不阻塞提取链路）
+      if (result.docType === 'product' && result.deficiencies.length === 0) {
+        try {
+          await syncProductFromDocument(
+            this.prisma,
+            opts.tenantId,
+            Object.fromEntries(result.fields.map((f) => [f.key, f.value])) as ProductDocFields,
+            result.content,
+          );
+        } catch (e) {
+          this.logger.warn(`产品同步失败（已降级）: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
 
       return this.detail(opts.tenantId, job.id);
     } catch (error) {
@@ -217,6 +232,18 @@ export class ContentService {
         create: { jobId, userId, payload: input.fields as Prisma.InputJsonValue },
       }),
     ]);
+
+    // 产品文档人工确认入库 -> 同步产品中心（失败降级，不影响确认结果）
+    if (job.document.docType === 'product') {
+      try {
+        const merged: Record<string, string> = {};
+        for (const f of job.document.fields) merged[f.key] = f.value;
+        for (const [k, v] of Object.entries(input.fields)) merged[k] = v.trim();
+        await syncProductFromDocument(this.prisma, tenantId, merged as ProductDocFields, job.document.content);
+      } catch (e) {
+        this.logger.warn(`产品同步失败（已降级）: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
 
     return this.detail(tenantId, jobId);
   }

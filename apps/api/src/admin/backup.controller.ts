@@ -20,7 +20,7 @@ const BACKUP_TABLES = [
   'tenant', 'user', 'role', 'permission', 'rolePermission', 'membership',
   'tokenLedger', 'auditLog', 'extractionJob', 'extractedDocument', 'extractedField',
   'extractionDeficiency', 'reviewConfirmation', 'mediaAsset', 'planProject',
-  'product', 'modelSetting', 'floorplanLayout', 'orderRequest', 'orderNote',
+  'product', 'categoryDef', 'modelSetting', 'floorplanLayout', 'orderRequest', 'orderNote',
 ] as const;
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)

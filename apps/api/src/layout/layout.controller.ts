@@ -10,11 +10,13 @@ import { LayoutService } from './layout.service.js';
 import {
   createLayoutSchema,
   createProductSchema,
+  createCategorySchema,
   aiProcessProductsSchema,
   updateLayoutSchema,
   updateProductSchema,
   type CreateLayoutDto,
   type CreateProductDto,
+  type CreateCategoryDto,
   type AiProcessProductsDto,
   type UpdateLayoutDto,
   type UpdateProductDto,
@@ -30,6 +32,27 @@ export class LayoutController {
   @Get('products')
   products(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.layout.products(user.activeTenantId);
+  }
+
+  /** 品类字典（预置 24 类 + 本租户自定义） */
+  @Get('categories')
+  categories(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
+    return this.layout.categories(user.activeTenantId);
+  }
+
+  /** 新增自定义品类（同名幂等） */
+  @Post('categories/mine')
+  createCategory(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(createCategorySchema)) dto: CreateCategoryDto,
+  ) {
+    return this.layout.createCategory(user.activeTenantId as string, dto);
+  }
+
+  /** 删除自定义品类（预置不可删，在用拒绝） */
+  @Delete('categories/:id')
+  removeCategory(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
+    return this.layout.removeCategory(user.activeTenantId as string, id);
   }
 
   /** 我的产品库：新增 */

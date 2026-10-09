@@ -1,4 +1,5 @@
 import { categoryIconDataUrl } from './product-icons';
+import { catMeta as catMetaDict } from './categoryStore';
 import { fileUrl } from './api';
 
 /** 设备点位叠加共享模块：类别配色 + canvas 合成标注图（点位编辑器导出与方案 PPTX 共用） */
@@ -13,19 +14,11 @@ export interface PointLike {
   y: number;
 }
 
-export const CATEGORY_META: Record<string, { label: string; color: string }> = {
-  gateway: { label: '网关网络', color: '#4FA8E0' },
-  switch: { label: '开关控制', color: '#B07A4A' },
-  sensor: { label: '传感器', color: '#5BA86B' },
-  light: { label: '灯光', color: '#D9A036' },
-  curtain: { label: '窗帘', color: '#8E7CC3' },
-  security: { label: '安防', color: '#D06A5A' },
-  appliance: { label: '家电控制', color: '#5AA8A0' },
-  audio: { label: '影音', color: '#C37FB0' },
-  hvac: { label: '暖通环境', color: '#7A8CA8' },
+/** 品类元数据统一走 categoryStore（预置 24 类 + 自定义分类，字典加载失败自动兜底预置） */
+export const catMeta = (c: string): { label: string; color: string } => {
+  const { label, color } = catMetaDict(c);
+  return { label, color };
 };
-
-export const catMeta = (c: string): { label: string; color: string } => CATEGORY_META[c] ?? { label: c, color: '#888888' };
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
   const img = new Image();

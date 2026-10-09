@@ -34,5 +34,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
     throw new Error(body?.message ?? response.statusText);
   }
-  return (await response.json()) as T;
+  // DELETE/204 等空响应体：response.json() 会抛 SyntaxError，先取 text 再解析
+  const text = await response.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }

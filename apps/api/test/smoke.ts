@@ -170,6 +170,14 @@ async function main(): Promise<void> {
   });
   check('已入库文档列表可查', Array.isArray(docs.body) && docs.body.length >= 2);
 
+  // 知识库产品资料确认入库 -> 自动同步产品中心（我的库 +1，品类自动推断）
+  {
+    const synced = await request<{ id: string; name: string; tenantId: string | null; category: string }[]>(base, '/api/products', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+    const mineProducts = synced.body.filter((p) => p.tenantId === tenantA);
+    check('产品资料确认入库自动同步到我的库', mineProducts.length >= 2);
+    check('同步产品品类自动推断（非默认兜底）', mineProducts.every((p) => p.category.length > 0));
+  }
+
   // ---------- S3 产物库：素材购买扣额度 + 重复购买幂等 ----------
   const buy = await request<{ url: string }>(base, '/api/media/materials/purchase', {
     method: 'POST',
@@ -251,6 +259,26 @@ async function main(): Promise<void> {
 
   const badCat = await request(base, '/api/products/mine', { ...auth0, method: 'POST', body: JSON.stringify({ name: '非法品类产品', category: 'not-a-cat' }) });
   check('非法品类被校验拒绝', badCat.status === 400);
+
+  // ---------- 品类字典：预置 24 类 + 自定义分类 CRUD ----------
+  type CategoryRow = { id: string; key: string; label: string; tenantId: string | null };
+  const cats = await request<CategoryRow[]>(base, '/api/categories', auth0);
+  check('品类字典含预置 24 类', cats.status === 200 && cats.body.filter((c) => c.tenantId === null).length >= 24);
+  const newCat = await request<CategoryRow>(base, '/api/categories/mine', { ...auth0, method: 'POST', body: JSON.stringify({ label: '适老照护', icon: 'paw-print', color: '#B08A4A' }) });
+  check('新增自定义分类', newCat.status === 201 && newCat.body.tenantId === tenantA && newCat.body.label === '适老照护');
+  const catsAfter = await request<CategoryRow[]>(base, '/api/categories', auth0);
+  check('自定义分类进入字典', catsAfter.body.some((c) => c.id === newCat.body.id));
+  const catDup = await request<CategoryRow>(base, '/api/categories/mine', { ...auth0, method: 'POST', body: JSON.stringify({ label: '适老照护', icon: 'lamp', color: '#111111' }) });
+  check('同名分类幂等返回', catDup.status === 201 && catDup.body.id === newCat.body.id);
+  const prodWithCustom = await request<{ id: string; category: string }>(base, '/api/products/mine', { ...auth0, method: 'POST', body: JSON.stringify({ name: '自定义分类产品', category: newCat.body.key }) });
+  check('产品可用自定义分类', prodWithCustom.status === 201 && prodWithCustom.body.category === newCat.body.key);
+  const delCatInUse = await request(base, `/api/categories/${newCat.body.id}`, { ...auth0, method: 'DELETE' });
+  check('分类在用删除被拒（400）', delCatInUse.status === 400);
+  await request(base, `/api/products/${prodWithCustom.body.id}`, { ...auth0, method: 'DELETE' });
+  const delCatOk = await request(base, `/api/categories/${newCat.body.id}`, { ...auth0, method: 'DELETE' });
+  check('删除自定义分类（无产品占用）', delCatOk.status === 200 || delCatOk.status === 204);
+  const delPresetCat = await request(base, `/api/categories/${cats.body.find((c) => c.tenantId === null)?.id}`, { ...auth0, method: 'DELETE' });
+  check('预置分类不可删（404 租户隔离）', delPresetCat.status === 404);
 
   const merged = await request<ProductRow[]>(base, '/api/products', auth0);
   check('产品列表合并公共+我的', merged.status === 200 && merged.body.some((p) => p.id === myId) && merged.body.some((p) => p.tenantId === null));

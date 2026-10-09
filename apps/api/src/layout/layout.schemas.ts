@@ -1,10 +1,9 @@
 import { z } from 'zod';
 
-export const CATEGORIES = ['gateway', 'switch', 'sensor', 'light', 'curtain', 'security', 'appliance', 'audio', 'hvac'] as const;
-
 export const createProductSchema = z.object({
   name: z.string().min(1).max(60),
-  category: z.enum(CATEGORIES),
+  // 品类 key：预置 24 类或租户自定义（校验在 service 层按 CategoryDef 白名单）
+  category: z.string().min(1).max(30),
   brand: z.string().max(40).optional(),
   model: z.string().max(40).optional(),
   unit: z.string().max(10).optional(),
@@ -16,6 +15,14 @@ export const createProductSchema = z.object({
 export const updateProductSchema = createProductSchema.partial();
 export type CreateProductDto = z.infer<typeof createProductSchema>;
 export type UpdateProductDto = z.infer<typeof updateProductSchema>;
+
+/** 自定义品类：label 中文名，icon 从预置 lucide 图标 key 里选 */
+export const createCategorySchema = z.object({
+  label: z.string().min(1).max(20),
+  icon: z.string().min(1).max(30).default('radar'),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#888888'),
+});
+export type CreateCategoryDto = z.infer<typeof createCategorySchema>;
 
 /** AI 批量处理产品资料：ids=勾选的产品行 id（我的库行生成文案+产品图；公共库行仅生成产品图） */
 export const aiProcessProductsSchema = z.object({

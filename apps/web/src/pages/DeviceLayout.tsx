@@ -3,6 +3,8 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { App as AntApp, Button, Card, Empty, Input, Segmented, Space, Spin, Tag, Tooltip, Typography, Upload } from 'antd';
 import { api, fileUrl } from '../lib/api';
+import { loadCategoryDict } from '../lib/categoryStore';
+import { compressImage } from '../lib/compress';
 import { catMeta, compositePoints, compositeHeatmap, compositeLightPlan, enhanceFloorplan } from '../lib/pointOverlay';
 import { categoryIconSvg } from '../lib/product-icons';
 
@@ -13,7 +15,7 @@ type Mode = 'device' | 'light' | 'wifi';
 const MODE_CATS: Record<Mode, string[] | null> = {
   device: null,
   light: ['light'],
-  wifi: ['gateway'],
+  wifi: ['gateway', 'network'],
 };
 const MODE_LABEL: Record<Mode, string> = { device: '设备点位布局', light: '灯光点位效果图', wifi: 'WiFi 信号热力图' };
 
@@ -114,7 +116,10 @@ export function DeviceLayout(): ReactNode {
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string } | null>(null);
 
+  const [dictReady, setDictReady] = useState(false);
+
   useEffect(() => {
+    void loadCategoryDict().then(() => setDictReady(true));
     api<Product[]>('/api/products').then(setProducts).catch((e) => message.error((e as Error).message));
   }, [message]);
 
@@ -128,7 +133,7 @@ export function DeviceLayout(): ReactNode {
       map.set(p.category, list);
     }
     return [...map.entries()];
-  }, [products, mode]);
+  }, [products, mode, dictReady]);
 
   const onUpload = useCallback(async (file: File) => {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
@@ -137,8 +142,9 @@ export function DeviceLayout(): ReactNode {
     }
     setUploading(true);
     try {
+      const compressed = await compressImage(file);
       const fd = new FormData();
-      fd.append('file', file);
+      fd.append('file', compressed);
       fd.append('title', file.name.replace(/\.[^.]+$/, '').slice(0, 60));
       const res = await api<{ id: string; url: string }>('/api/media/uploads', { method: 'POST', body: fd });
       setAssetId(res.id);
