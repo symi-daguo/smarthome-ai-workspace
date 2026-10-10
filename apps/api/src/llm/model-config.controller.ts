@@ -185,13 +185,20 @@ curl -X POST ${origin}/api/auth/login \\
 | AI 对话 | POST /api/llm/chat | {prompt, systemPrompt?} | 走当前激活模型方案（对话：${chat.baseUrl}） |
 | AI 生图 | POST /api/media/images | {prompt, size?} | size=1024x1024/1536x1024/1024x1536（生图：${image.provider}） |
 | AI 生视频 | POST /api/media/videos | {prompt, duration?, resolution?, ratio?, firstFrameAssetId?} | 生视频：${video.provider} |
-| 智能方案 | POST /api/plans/generate | {title, customer, ...资料字段} | 产出 9 页可编辑 PPT 方案 |
+| 智能方案 | POST /api/plans | {title, customer, ...资料字段} | 产出 9 页可编辑 PPT 方案 |
+| 方案列表 | GET /api/plans | - | 历史方案（侧栏「历史对话」同款数据源） |
 | 接单解析 | POST /api/orders/intake | {rawInput} | 客户原话→结构化建档+产品推荐 |
+| 接单列表 | GET /api/orders | - | 接待线索与状态（了解客户→需求确认→方案匹配→报价→成单） |
 | 产品库 | GET /api/products | - | 公共库+我的库合并（含分类/品牌/产品图） |
-| 我的产品 | POST /api/products/mine | {name, category, brand?, model?, priceMin?, priceMax?, imageUrl?} | 新增到我的库 |
+| 品类字典 | GET /api/categories | - | 39 个预置品类+租户自定义分类 |
+| 我的产品 | POST /api/products/mine | {name, category, brand?, model?, sku?, barcode?, snRule?, spec?, warranty?, priceRetail?, priceDealer?, priceProject?, rebateL1?, rebateL2?, rebateDesigner?} | 标准主数据：三级价格（指导/工程/经销，元）+ 三级返利（百分比 0-100）；保存三级价自动同步参考区间 |
+| 产品编辑 | PATCH /api/products/:id | 同上（字段可选） | 仅本租户行；公共库行仅允许 PATCH imageUrl |
 | 产品批量处理 | POST /api/products/ai-process | {ids:[...]} | agent 补文案+批量生成产品主图 |
+| 设备点位图 | POST /api/layouts | JSON（见 §3.1） | 智能体可直接把产品按坐标布到户型图上 |
+| 图纸列表 | GET /api/layouts | - | 已保存的点位图（含 points 设备坐标清单） |
 | 知识库检索 | POST /api/knowledge/external/search | {query} | 外部 RAG（WeKnora/Obsidian） |
 | 内容提取 | POST /api/content/extractions/upload | multipart file+docType | 产品资料→结构化入库并同步产品库 |
+| 素材库 | GET /api/media/assets | - | 我的资料库全部图片/视频产物 |
 | 文件上传 | POST /api/media/uploads | multipart file | 图片落盘并返回 {id,url} |
 
 ## 3. 模型方案切换（不同任务用不同模型）
@@ -200,6 +207,31 @@ curl -X POST ${origin}/api/auth/login \\
 curl ${origin}/api/admin/model-config/profiles -H "Authorization: Bearer $TOKEN"
 # [{id,name,active,scopes:{chat:{hasKey},...}}, ...]
 curl -X POST ${origin}/api/admin/model-config/profiles/<id>/activate -H "Authorization: Bearer $TOKEN"
+\`\`\`
+
+### 3.1 智能体自动布点（把产品放到户型平面图需要的位置）
+
+坐标为相对户型图的归一化比例（左上角 0,0，右下角 1,1），跨分辨率稳定；productId 必须来自 GET /api/products。
+
+\`\`\`bash
+# 1) 先上传户型底图，拿 mediaAssetId
+curl -X POST ${origin}/api/media/uploads -H "Authorization: Bearer $TOKEN" \\
+  -F file=@floorplan.png -F title=客户户型图
+# -> { id: "<mediaAssetId>", url: "/uploads/xxx.png" }
+
+# 2) 查产品库拿 productId（公共库+我的库）
+curl ${origin}/api/products -H "Authorization: Bearer $TOKEN"
+
+# 3) 提交点位图：产品+房间语义坐标，一次最多 200 点
+curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
+  -H 'Content-Type: application/json' -d '{
+    "title": "140㎡三室两厅设备点位图",
+    "mediaAssetId": "<mediaAssetId>",
+    "points": [
+      {"productId":"<网关id>","name":"全屋网关","category":"gateway","x":0.12,"y":0.18},
+      {"productId":"<门锁id>","name":"智能门锁","category":"lock","x":0.08,"y":0.92}
+    ]
+  }'
 \`\`\`
 
 ## 4. 规则与边界
@@ -212,7 +244,9 @@ curl -X POST ${origin}/api/admin/model-config/profiles/<id>/activate -H "Authori
 ## 5. 典型工作流（复制给智能体作为 system prompt 片段）
 「你是智能家居门店运营助手。用上面的 API 完成：1) 把客户资料 POST /api/orders/intake 建档；
 2) 用 GET /api/products 选品；3) 需要图时用 POST /api/media/images 生成；
-4) 全部产物自动落库到「我的资料库」，无需本地保存。」`;
+4) 做平面图设计时，先 POST /api/media/uploads 上传户型图，再 POST /api/layouts 把选好的
+产品按房间语义坐标（归一化 0-1）布到对应位置（网关居中高处、门锁在入户门、水浸在厨房/卫生间低点等）；
+5) 全部产物自动落库到「我的资料库」，无需本地保存。」`;
     return { text };
   }
 

@@ -15,7 +15,7 @@ export interface CategoryDef {
   tenantId: string | null;
 }
 
-/** 预置 24 类（后端 category-defs.ts 同步维护；字典加载失败时兜底，id 以 key 占位） */
+/** 预置 39 类（后端 category-defs.ts 同步维护；字典加载失败时兜底，id 以 key 占位） */
 export const PRESET_CATEGORIES: Omit<CategoryDef, 'id'>[] = [
   { key: 'gateway', label: '网关中枢', color: '#4FA8E0', icon: 'router', sortOrder: 1, tenantId: null },
   { key: 'network', label: '网络覆盖', color: '#3D8BD1', icon: 'wifi', sortOrder: 2, tenantId: null },
@@ -41,6 +41,21 @@ export const PRESET_CATEGORIES: Omit<CategoryDef, 'id'>[] = [
   { key: 'irrigation', label: '庭院灌溉', color: '#5BA85B', icon: 'flower-2', sortOrder: 22, tenantId: null },
   { key: 'pet', label: '宠物照护', color: '#B08A4A', icon: 'paw-print', sortOrder: 23, tenantId: null },
   { key: 'socket', label: '插座供电', color: '#A8863D', icon: 'plug', sortOrder: 24, tenantId: null },
+  { key: 'tv', label: '电视大屏', color: '#A06FB0', icon: 'tv', sortOrder: 25, tenantId: null },
+  { key: 'fridge', label: '冷藏冰箱', color: '#5AA8A0', icon: 'refrigerator', sortOrder: 26, tenantId: null },
+  { key: 'cooker', label: '微蒸烤厨电', color: '#4A8AA8', icon: 'microwave', sortOrder: 27, tenantId: null },
+  { key: 'bathroom', label: '智能卫浴', color: '#6FA8C8', icon: 'toilet', sortOrder: 28, tenantId: null },
+  { key: 'contact', label: '门窗传感', color: '#4E9C7F', icon: 'door-open', sortOrder: 29, tenantId: null },
+  { key: 'siren', label: '声光警号', color: '#D06A5A', icon: 'siren', sortOrder: 30, tenantId: null },
+  { key: 'speaker', label: '智能音箱', color: '#C37FB0', icon: 'speaker', sortOrder: 31, tenantId: null },
+  { key: 'doorbell', label: '可视门铃', color: '#C05A5A', icon: 'video', sortOrder: 32, tenantId: null },
+  { key: 'health', label: '健康监测', color: '#5BA86B', icon: 'heart-pulse', sortOrder: 33, tenantId: null },
+  { key: 'elderly', label: '适老照护', color: '#7A8CA8', icon: 'accessibility', sortOrder: 34, tenantId: null },
+  { key: 'baby', label: '婴童守护', color: '#D9A0B8', icon: 'baby', sortOrder: 35, tenantId: null },
+  { key: 'purifier', label: '净水饮水', color: '#4A90A8', icon: 'glass-water', sortOrder: 36, tenantId: null },
+  { key: 'humidifier', label: '加湿除湿', color: '#5B96A8', icon: 'cloud-fog', sortOrder: 37, tenantId: null },
+  { key: 'energy', label: '能源光伏', color: '#D9A036', icon: 'zap', sortOrder: 38, tenantId: null },
+  { key: 'storage', label: '私有存储', color: '#8E7CC3', icon: 'hard-drive', sortOrder: 39, tenantId: null },
 ];
 
 /** 旧 key 兼容（存量点位/产品） */

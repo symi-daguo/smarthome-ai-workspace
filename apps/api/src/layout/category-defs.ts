@@ -1,7 +1,8 @@
 /**
- * 平台预置品类字典（24 类，覆盖市面主流智能家居品类）：
+ * 平台预置品类字典（39 类，覆盖市面主流智能家居品类）：
  * key 与前端 lucide 图标映射一致（product-icons.ts），seed 写入 CategoryDef（tenantId=null）。
- * 旧 9 类 key 全部保留（存量数据兼容），新增 15 类补全品类体系。
+ * 旧 9 类 key 全部保留（存量数据兼容）；0.1.31 再补 15 类（电视/冰箱/厨电/卫浴/门窗磁/
+ * 警号/音箱/门铃/健康/适老/婴童/净水/加湿/能源/存储），图标池同步扩到 57 个供自定义分类选用。
  */
 export const PRESET_CATEGORIES: { key: string; label: string; color: string; icon: string; sortOrder: number }[] = [
   { key: 'gateway', label: '网关中枢', color: '#4FA8E0', icon: 'router', sortOrder: 1 },
@@ -28,6 +29,21 @@ export const PRESET_CATEGORIES: { key: string; label: string; color: string; ico
   { key: 'irrigation', label: '庭院灌溉', color: '#5BA85B', icon: 'flower-2', sortOrder: 22 },
   { key: 'pet', label: '宠物照护', color: '#B08A4A', icon: 'paw-print', sortOrder: 23 },
   { key: 'socket', label: '插座供电', color: '#A8863D', icon: 'plug', sortOrder: 24 },
+  { key: 'tv', label: '电视大屏', color: '#A06FB0', icon: 'tv', sortOrder: 25 },
+  { key: 'fridge', label: '冷藏冰箱', color: '#5AA8A0', icon: 'refrigerator', sortOrder: 26 },
+  { key: 'cooker', label: '微蒸烤厨电', color: '#4A8AA8', icon: 'microwave', sortOrder: 27 },
+  { key: 'bathroom', label: '智能卫浴', color: '#6FA8C8', icon: 'toilet', sortOrder: 28 },
+  { key: 'contact', label: '门窗传感', color: '#4E9C7F', icon: 'door-open', sortOrder: 29 },
+  { key: 'siren', label: '声光警号', color: '#D06A5A', icon: 'siren', sortOrder: 30 },
+  { key: 'speaker', label: '智能音箱', color: '#C37FB0', icon: 'speaker', sortOrder: 31 },
+  { key: 'doorbell', label: '可视门铃', color: '#C05A5A', icon: 'video', sortOrder: 32 },
+  { key: 'health', label: '健康监测', color: '#5BA86B', icon: 'heart-pulse', sortOrder: 33 },
+  { key: 'elderly', label: '适老照护', color: '#7A8CA8', icon: 'accessibility', sortOrder: 34 },
+  { key: 'baby', label: '婴童守护', color: '#D9A0B8', icon: 'baby', sortOrder: 35 },
+  { key: 'purifier', label: '净水饮水', color: '#4A90A8', icon: 'glass-water', sortOrder: 36 },
+  { key: 'humidifier', label: '加湿除湿', color: '#5B96A8', icon: 'cloud-fog', sortOrder: 37 },
+  { key: 'energy', label: '能源光伏', color: '#D9A036', icon: 'zap', sortOrder: 38 },
+  { key: 'storage', label: '私有存储', color: '#8E7CC3', icon: 'hard-drive', sortOrder: 39 },
 ];
 
 /** 旧 security 归并到新 lock/camera/alarm 的兼容映射（存量点位/产品读取时兜底） */

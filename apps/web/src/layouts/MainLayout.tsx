@@ -681,7 +681,7 @@ export function MainLayout(): ReactNode {
             padding: 0,
           }}
         >
-          <div style={{ width: '100%', padding: location.pathname === '/' || location.pathname.startsWith('/biography') ? 0 : isDesktop ? 24 : 12 }}>
+          <div style={{ width: '100%', padding: location.pathname === '/' ? 0 : isDesktop ? 24 : 12 }}>
             <Outlet />
           </div>
         </Layout.Content>

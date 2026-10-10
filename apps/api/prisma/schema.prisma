@@ -298,7 +298,7 @@ model Product {
   // null = 公共库（平台种子）；非空 = 租户「我的产品库」
   tenantId String?
   name     String
-  // 品类 key（见 CategoryDef：预置 24 类 + 租户自定义）
+  // 品类 key（见 CategoryDef：预置 39 类 + 租户自定义）
   category String
   brand    String  @default("")
   model    String  @default("")
@@ -306,7 +306,7 @@ model Product {
   unit     String  @default("台")
   // 产品主图（MediaAsset 相对路径）；点位编辑器优先用产品图作图标，无图回退品类 SVG
   imageUrl String  @default("")
-  // 参考价区间（元，仅演示口径；实际以门店为准）
+  // 参考价区间（元）：兼容点位清单/旧报价口径，保存时与三级价格同步（min=工程价,max=指导价）
   priceMin Int     @default(0)
   priceMax Int     @default(0)
   // 每空间典型数量提示（编辑器预置用）
@@ -314,8 +314,29 @@ model Product {
   active   Boolean @default(true)
   sortOrder Int    @default(0)
 
+  // ---------- 标准产品主数据（0.1.31，ERP/PIM 通用口径） ----------
+  // 商品编码/订货号（门店内部 SKU）
+  sku       String @default("")
+  // 商品条码（EAN-13/UPC；无条码留空，禁止录入真实第三方品牌码）
+  barcode   String @default("")
+  // SN 码规则（序列号前缀，如 ML-LOCK-；单台设备交付扫码按此前缀）
+  snRule    String @default("")
+  // 规格参数摘要（协议/尺寸/供电等一行）
+  spec      String @default("")
+  // 质保期（月）
+  warranty  Int    @default(12)
+  // 三级价格体系（元）：官方指导价（零售挂牌）/ 经销价（门店进货成本）/ 工程价（批量渠道成交参考）
+  priceRetail  Int @default(0)
+  priceDealer  Int @default(0)
+  priceProject Int @default(0)
+  // 多级返利（百分比整数 0-100）：一级经销返点 / 二级分销返点 / 设计师（介绍人）返点
+  rebateL1       Int @default(0)
+  rebateL2       Int @default(0)
+  rebateDesigner Int @default(0)
+
   @@index([category, sortOrder])
   @@index([tenantId, category])
+  @@index([sku])
 }
 
 // 品类字典：tenantId=null 为平台预置（24 类，覆盖市面智能家居品类），非空为租户自定义分类

@@ -50,10 +50,13 @@ export function ConfigProvider({ children }: { children: ReactNode }): ReactNode
         api<{ name: string; active: boolean }[]>('/api/admin/model-config/profiles'),
       ]);
       const active = profiles.find((p) => p.active)?.name ?? '';
+      // ponytail: 后端未锁定模型名时返回的是中文说明「（跟随请求，默认 MiniMax-M3）」而非模型名，
+      // 直接透传会让上游 chat/completions 收到非法 model 报错；这里归一化为空串，由发送方回退默认模型
+      const chatModel = /^[\w.\-:]+$/.test(mc.chat.model ?? '') ? mc.chat.model : '';
       setConfig({
         profileName: active,
         chatBaseUrl: mc.chat.baseUrl,
-        chatModel: mc.chat.model,
+        chatModel,
         imageProvider: mc.image.provider,
         videoProvider: mc.video.provider,
         chatKeyConfigured: mc.chat.keyConfigured,

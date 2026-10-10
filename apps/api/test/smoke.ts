@@ -254,16 +254,43 @@ async function main(): Promise<void> {
   check('新增我的库产品（tenantId 归属当前租户）', myCreate.status === 201 && myCreate.body.tenantId === tenantA);
   const myId = myCreate.body.id;
 
+  // 标准产品主数据：SKU/条码/SN/规格/质保 + 三级价格 + 多级返利
+  const stdCreate = await request<{ id: string }>(base, '/api/products/mine', {
+    ...auth0,
+    method: 'POST',
+    body: JSON.stringify({
+      name: '冒烟标准主数据产品', category: 'gateway', sku: 'SM-GW-01', barcode: '2100000000099',
+      snRule: 'SM-GW-', spec: '三模网关 200 子设备', warranty: 24,
+      priceRetail: 1000, priceProject: 800, priceDealer: 700,
+      rebateL1: 12, rebateL2: 6, rebateDesigner: 8,
+    }),
+  });
+  const std = stdCreate.body as Record<string, unknown>;
+  check(
+    '标准主数据字段完整落库',
+    stdCreate.status === 201 && std.sku === 'SM-GW-01' && std.barcode === '2100000000099' && std.snRule === 'SM-GW-'
+      && std.warranty === 24 && std.priceRetail === 1000 && std.priceDealer === 700 && std.rebateDesigner === 8,
+  );
+  check('三级价格同步旧参考区间（min=工程价800,max=指导价1000）', std.priceMin === 800 && std.priceMax === 1000);
+  const badRebate = await request(base, '/api/products/mine', { ...auth0, method: 'POST', body: JSON.stringify({ name: '非法返利产品', category: 'switch', rebateL1: 101 }) });
+  check('返点超过 100% 被校验拒绝', badRebate.status === 400);
+  const stdPatch = await request(base, `/api/products/${stdCreate.body.id}`, {
+    ...auth0, method: 'PATCH',
+    body: JSON.stringify({ spec: '三模网关 220 子设备（已改）', priceRetail: 1100, rebateL1: 15 }),
+  });
+  check('标准字段可 PATCH 更新且指导价同步区间上限', stdPatch.status === 200 && (stdPatch.body as Record<string, unknown>).spec === '三模网关 220 子设备（已改）' && (stdPatch.body as Record<string, unknown>).priceMax === 1100);
+
   const myDup = await request(base, '/api/products/mine', { ...auth0, method: 'POST', body: JSON.stringify({ name: '冒烟自定义产品', category: 'switch' }) });
   check('我的库重名被拒（应用层查重）', myDup.status === 400);
 
   const badCat = await request(base, '/api/products/mine', { ...auth0, method: 'POST', body: JSON.stringify({ name: '非法品类产品', category: 'not-a-cat' }) });
   check('非法品类被校验拒绝', badCat.status === 400);
 
-  // ---------- 品类字典：预置 24 类 + 自定义分类 CRUD ----------
+  // ---------- 品类字典：预置 39 类 + 自定义分类 CRUD ----------
   type CategoryRow = { id: string; key: string; label: string; tenantId: string | null };
   const cats = await request<CategoryRow[]>(base, '/api/categories', auth0);
-  check('品类字典含预置 24 类', cats.status === 200 && cats.body.filter((c) => c.tenantId === null).length >= 24);
+  check('品类字典含预置 39 类', cats.status === 200 && cats.body.filter((c) => c.tenantId === null).length >= 39);
+  check('新品类图标可用（电视/适老/能源）', cats.body.some((c) => c.key === 'tv') && cats.body.some((c) => c.key === 'elderly') && cats.body.some((c) => c.key === 'energy'));
   const newCat = await request<CategoryRow>(base, '/api/categories/mine', { ...auth0, method: 'POST', body: JSON.stringify({ label: '适老照护', icon: 'paw-print', color: '#B08A4A' }) });
   check('新增自定义分类', newCat.status === 201 && newCat.body.tenantId === tenantA && newCat.body.label === '适老照护');
   const catsAfter = await request<CategoryRow[]>(base, '/api/categories', auth0);

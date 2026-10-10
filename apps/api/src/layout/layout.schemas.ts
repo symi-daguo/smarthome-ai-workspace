@@ -1,16 +1,31 @@
 import { z } from 'zod';
 
+const priceField = z.number().int().min(0).max(10_000_000);
+const rebateField = z.number().int().min(0).max(100, '返点不能超过 100%');
+
 export const createProductSchema = z.object({
   name: z.string().min(1).max(60),
-  // 品类 key：预置 24 类或租户自定义（校验在 service 层按 CategoryDef 白名单）
+  // 品类 key：预置 39 类或租户自定义（校验在 service 层按 CategoryDef 白名单）
   category: z.string().min(1).max(30),
   brand: z.string().max(40).optional(),
   model: z.string().max(40).optional(),
   unit: z.string().max(10).optional(),
-  priceMin: z.number().int().min(0).max(1_000_000).optional(),
-  priceMax: z.number().int().min(0).max(1_000_000).optional(),
+  priceMin: priceField.optional(),
+  priceMax: priceField.optional(),
   perRoom: z.string().max(60).optional(),
   imageUrl: z.string().max(200).optional(),
+  // 标准产品主数据
+  sku: z.string().max(40).optional(),
+  barcode: z.string().max(20).optional(),
+  snRule: z.string().max(40).optional(),
+  spec: z.string().max(120).optional(),
+  warranty: z.number().int().min(0).max(600).optional(),
+  priceRetail: priceField.optional(),
+  priceDealer: priceField.optional(),
+  priceProject: priceField.optional(),
+  rebateL1: rebateField.optional(),
+  rebateL2: rebateField.optional(),
+  rebateDesigner: rebateField.optional(),
 });
 export const updateProductSchema = createProductSchema.partial();
 export type CreateProductDto = z.infer<typeof createProductSchema>;

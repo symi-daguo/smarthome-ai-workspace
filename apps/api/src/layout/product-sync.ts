@@ -78,6 +78,9 @@ export async function syncProductFromDocument(
   // 卖点/规格摘要进布置提示（限 60 字）
   const perRoom = (fields.sellingPoints ?? fields.specs ?? '').trim().slice(0, 60);
 
+  // 标准价格口径：资料里的区间价 → 工程价(min)/指导价(max)；单值 → 指导价
+  const spec = (fields.specs ?? '').trim().slice(0, 120);
+
   const existing = await prisma.product.findFirst({ where: { name, tenantId } });
   if (existing) {
     await prisma.product.update({
@@ -89,6 +92,9 @@ export async function syncProductFromDocument(
         priceMin: min || existing.priceMin,
         priceMax: max || existing.priceMax,
         perRoom: perRoom || existing.perRoom,
+        spec: spec || existing.spec,
+        ...(max ? { priceRetail: max } : {}),
+        ...(min ? { priceProject: min } : {}),
       },
     });
     return { created: false, id: existing.id };
@@ -103,6 +109,9 @@ export async function syncProductFromDocument(
       priceMin: min,
       priceMax: max,
       perRoom,
+      spec,
+      priceRetail: max,
+      priceProject: min,
     },
   });
   return { created: true, id: created.id };

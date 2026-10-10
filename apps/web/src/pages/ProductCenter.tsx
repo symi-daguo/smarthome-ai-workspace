@@ -1,12 +1,12 @@
 import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, RobotOutlined, ShopOutlined } from '@ant-design/icons';
-import { App as AntApp, AutoComplete, Button, Card, ColorPicker, Empty, Form, Image, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Typography, Upload } from 'antd';
+import { App as AntApp, AutoComplete, Button, Card, Col, ColorPicker, Divider, Empty, Form, Image, Input, InputNumber, Modal, Popconfirm, Row, Segmented, Select, Space, Table, Tag, Tooltip, Typography, Upload, theme } from 'antd';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { catMeta, categoryList, categoryOptions, loadCategoryDict, refreshCategoryDict, type CategoryDef } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
-import { categoryIconSvg, iconSvgByKey } from '../lib/product-icons';
+import { categoryIconSvg, iconSvgByKey, PRODUCT_ICON_KEYS } from '../lib/product-icons';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
@@ -23,6 +23,17 @@ interface ProductRow {
   priceMin: number;
   priceMax: number;
   perRoom: string;
+  sku: string;
+  barcode: string;
+  snRule: string;
+  spec: string;
+  warranty: number;
+  priceRetail: number;
+  priceDealer: number;
+  priceProject: number;
+  rebateL1: number;
+  rebateL2: number;
+  rebateDesigner: number;
 }
 
 interface ProductForm {
@@ -31,25 +42,33 @@ interface ProductForm {
   brand?: string;
   model?: string;
   unit?: string;
-  priceMin?: number;
-  priceMax?: number;
   perRoom?: string;
   imageUrl?: string;
+  sku?: string;
+  barcode?: string;
+  snRule?: string;
+  spec?: string;
+  warranty?: number;
+  priceRetail?: number;
+  priceDealer?: number;
+  priceProject?: number;
+  rebateL1?: number;
+  rebateL2?: number;
+  rebateDesigner?: number;
 }
 
-/** 自定义分类可选的图标（lucide kebab key，与预置字典一致） */
-const ICON_CHOICES = ['router', 'wifi', 'toggle-right', 'cable', 'radar', 'bell-ring', 'droplets', 'thermometer', 'lamp', 'blinds', 'lock', 'cctv', 'flame', 'washing-machine', 'shower-head', 'bot', 'waves', 'audio-lines', 'projector', 'air-vent', 'fan', 'flower-2', 'paw-print', 'plug'];
 const COLOR_CHOICES = ['#4FA8E0', '#5BA86B', '#D9A036', '#8E7CC3', '#D06A5A', '#5AA8A0', '#C37FB0', '#7A8CA8', '#B07A4A', '#4A90A8'];
 
 /**
  * 产品中心（公共库与我的库）：
- * 公共库=平台种子（21 款示例 + 24 预置品类），可复制到我的库、可直接传产品图；
+ * 公共库=平台种子（示例产品 + 39 预置品类），可复制到我的库、可直接传产品图；
  * 我的库=本租户 CRUD（含产品图上传、知识库产品资料自动同步）。
  * 联动规则：点位编辑器与智能报价的产品来源 = 公共库 + 我的库；
  * 产品图即点位图标（编辑器优先用产品照片，无图回退品类 lucide 图标）。
  */
 export function ProductCenter(): ReactNode {
   const { message, modal } = AntApp.useApp();
+  const { token } = theme.useToken();
   const navigate = useNavigate();
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,6 +84,7 @@ export function ProductCenter(): ReactNode {
   const [aiBusy, setAiBusy] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
   const [catBusy, setCatBusy] = useState(false);
+  const [catIconOpen, setCatIconOpen] = useState(false);
   const [form] = Form.useForm<ProductForm>();
   const [catForm] = Form.useForm<{ label: string; icon: string; color: string | { toHexString?: () => string } }>();
 
@@ -90,7 +110,7 @@ export function ProductCenter(): ReactNode {
       if (tab === 'public' ? r.tenantId !== null : r.tenantId === null) return false;
       if (catFilter && r.category !== catFilter) return false;
       if (brandFilter && r.brand !== brandFilter) return false;
-      if (kw && !`${r.name}${r.brand}${r.model}`.toLowerCase().includes(kw)) return false;
+      if (kw && !`${r.name}${r.brand}${r.model}${r.sku}${r.barcode}${r.snRule}${r.spec}`.toLowerCase().includes(kw)) return false;
       return true;
     });
   }, [rows, tab, search, catFilter, brandFilter]);
@@ -102,8 +122,17 @@ export function ProductCenter(): ReactNode {
     setEditing(row ?? null);
     form.setFieldsValue(
       row
-        ? { name: row.name, category: row.category, brand: row.brand, model: row.model, unit: row.unit, priceMin: row.priceMin, priceMax: row.priceMax, perRoom: row.perRoom, imageUrl: row.imageUrl }
-        : { category: 'gateway', unit: '台', priceMin: 0, priceMax: 0, imageUrl: '' },
+        ? {
+            name: row.name, category: row.category, brand: row.brand, model: row.model, unit: row.unit,
+            perRoom: row.perRoom, imageUrl: row.imageUrl,
+            sku: row.sku, barcode: row.barcode, snRule: row.snRule, spec: row.spec, warranty: row.warranty,
+            priceRetail: row.priceRetail, priceDealer: row.priceDealer, priceProject: row.priceProject,
+            rebateL1: row.rebateL1, rebateL2: row.rebateL2, rebateDesigner: row.rebateDesigner,
+          }
+        : {
+            category: 'gateway', unit: '台', imageUrl: '', warranty: 12,
+            priceRetail: 0, priceDealer: 0, priceProject: 0, rebateL1: 0, rebateL2: 0, rebateDesigner: 0,
+          },
     );
     setEditOpen(true);
   };
@@ -113,6 +142,17 @@ export function ProductCenter(): ReactNode {
     try {
       values = await form.validateFields();
     } catch {
+      return;
+    }
+    const dealer = values.priceDealer ?? 0;
+    const project = values.priceProject ?? 0;
+    const retail = values.priceRetail ?? 0;
+    if (dealer > project && project > 0) {
+      message.warning('经销价不应高于工程价，请核对三级价格');
+      return;
+    }
+    if (project > retail && retail > 0) {
+      message.warning('工程价不应高于官方指导价，请核对三级价格');
       return;
     }
     setSaving(true);
@@ -269,7 +309,7 @@ export function ProductCenter(): ReactNode {
     <div style={pageContainerStyle}>
       <PageHeader
         title="产品中心"
-        description="公共库与我的库：24 预置品类 + 自定义分类，上传或复制产品、维护产品图（产品图即点位图标），联动智能报价、设备点位与知识库产品资料"
+        description="标准产品主数据：SKU/条码/SN 规则/规格质保 + 三级价格（指导价/工程价/经销价）+ 多级返利（一级/二级/设计师），联动智能报价、设备点位与知识库产品资料"
         extra={
           <Space wrap>
             <Button onClick={() => navigate('/quote')}>智能报价</Button>
@@ -295,7 +335,7 @@ export function ProductCenter(): ReactNode {
               { label: `我的产品库 ${mineCount}`, value: 'mine' },
             ]}
           />
-          <Input.Search placeholder="搜索名称 / 品牌 / 型号" allowClear style={{ width: 220 }} onChange={(e) => setSearch(e.target.value)} />
+          <Input.Search placeholder="搜索名称 / 品牌 / 型号 / SKU / 条码 / SN" allowClear style={{ width: 260 }} onChange={(e) => setSearch(e.target.value)} />
           <Select placeholder="全部分类" allowClear style={{ width: 150 }} value={catFilter} onChange={setCatFilter} options={catOptions} />
           <Select placeholder="全部品牌" allowClear showSearch style={{ width: 150 }} value={brandFilter} onChange={setBrandFilter} options={brandOptions} />
         </Space>
@@ -310,21 +350,58 @@ export function ProductCenter(): ReactNode {
           }}
           pagination={{ pageSize: 12, hideOnSinglePage: true, showSizeChanger: false }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={tab === 'mine' ? '我的库暂无产品：从公共库「复制到我的库」、点右上角新增，或在「内容提取」上传产品资料自动入库' : '无匹配产品'} /> }}
+          scroll={{ x: 1680 }}
           columns={[
-            { title: '', dataIndex: 'imageUrl', width: 56, render: (_, r) => thumb(r) },
-            { title: '产品名称', dataIndex: 'name', render: (v: string, r) => (
-              <Space size={6}>
-                <Text strong>{v}</Text>
-                {r.tenantId ? <Tag color="green">我的</Tag> : null}
-              </Space>
-            ) },
-            { title: '分类', dataIndex: 'category', width: 120, render: (v: string) => <Tag color={catMeta(v).color}>{catMeta(v).label}</Tag> },
-            { title: '品牌/型号', width: 160, render: (_, r) => <Text type="secondary" style={{ fontSize: 12 }}>{[r.brand, r.model].filter(Boolean).join(' · ') || '-'}</Text> },
-            { title: '参考价', width: 140, render: (_, r) => `¥${r.priceMin}-${r.priceMax}/${r.unit || '台'}` },
-            { title: '布置提示', dataIndex: 'perRoom', ellipsis: true, render: (v: string) => <Text type="secondary" style={{ fontSize: 12 }}>{v || '-'}</Text> },
+            {
+              title: '产品',
+              width: 210,
+              render: (_, r) => (
+                <Space size={10}>
+                  {thumb(r)}
+                  <div style={{ minWidth: 0 }}>
+                    <Space size={4}>
+                      <Text strong ellipsis style={{ maxWidth: 140 }}>{r.name}</Text>
+                      {r.tenantId ? <Tag color="green" style={{ marginInlineEnd: 0 }}>我的</Tag> : null}
+                    </Space>
+                    <div><Text type="secondary" style={{ fontSize: 11 }}>SKU {r.sku || '—'}</Text></div>
+                  </div>
+                </Space>
+              ),
+            },
+            { title: '分类', dataIndex: 'category', width: 96, render: (v: string) => <Tag color={catMeta(v).color} style={{ marginInlineEnd: 0 }}>{catMeta(v).label}</Tag> },
+            { title: '品牌/型号', width: 140, render: (_, r) => <Text type="secondary" style={{ fontSize: 12 }}>{[r.brand, r.model].filter(Boolean).join(' · ') || '-'}</Text> },
+            { title: '商品条码', dataIndex: 'barcode', width: 132, render: (v: string) => (v ? <Text copyable={{ text: v, tooltips: false }} style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary">—</Text>) },
+            { title: 'SN 码规则', dataIndex: 'snRule', width: 110, render: (v: string) => v ? <Text code style={{ fontSize: 11 }}>{v}****</Text> : <Text type="secondary">—</Text> },
+            { title: '规格参数', dataIndex: 'spec', width: 200, ellipsis: true, render: (v: string) => <Tooltip title={v}><Text type="secondary" style={{ fontSize: 12 }}>{v || '-'}</Text></Tooltip> },
+            { title: '质保', dataIndex: 'warranty', width: 64, align: 'center', render: (m: number) => (m >= 12 && m % 12 === 0 ? `${m / 12} 年` : `${m} 月`) },
+            {
+              title: '指导价 / 工程价 / 经销价',
+              width: 182,
+              sorter: (a, b) => a.priceRetail - b.priceRetail,
+              render: (_, r) => (
+                <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                  <div><Text type="secondary">指导</Text> <Text strong>¥{r.priceRetail || 0}</Text></div>
+                  <div><Text type="secondary">工程</Text> <Text>¥{r.priceProject || r.priceMin || 0}</Text></div>
+                  <div><Text type="secondary">经销</Text> <Text type="success">¥{r.priceDealer || 0}</Text></div>
+                </div>
+              ),
+            },
+            {
+              title: '多级返利（一级/二级/设计师）',
+              width: 168,
+              render: (_, r) => (
+                <Space size={3} wrap>
+                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>{r.rebateL1}%</Tag>
+                  <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>{r.rebateL2}%</Tag>
+                  <Tag color="purple" style={{ marginInlineEnd: 0 }}>{r.rebateDesigner}%</Tag>
+                </Space>
+              ),
+            },
+            { title: '布置提示', dataIndex: 'perRoom', width: 150, ellipsis: true, render: (v: string) => <Tooltip title={v}><Text type="secondary" style={{ fontSize: 12 }}>{v || '-'}</Text></Tooltip> },
             {
               title: '操作',
-              width: 210,
+              width: 168,
+              fixed: 'right' as const,
               render: (_, r) =>
                 r.tenantId === null ? (
                   <Space size={4}>
@@ -349,37 +426,109 @@ export function ProductCenter(): ReactNode {
         </Text>
       </Card>
 
-      <Modal title={editing ? `编辑「${editing.name}」` : '新增我的产品'} open={editOpen} onCancel={() => setEditOpen(false)} onOk={() => void saveProduct()} okText="保存" confirmLoading={saving} destroyOnHidden width={520}>
-        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
-          <Space.Compact block>
-            <Form.Item name="name" label="产品名称" rules={[{ required: true, message: '必填' }, { max: 60 }]} style={{ flex: 1, marginRight: 8 }}>
-              <Input placeholder="如：智能中控屏 Pro" />
-            </Form.Item>
-            <Form.Item name="category" label="分类" rules={[{ required: true }]} style={{ width: 150 }}>
-              <Select options={catOptions} showSearch optionFilterProp="label" />
-            </Form.Item>
-          </Space.Compact>
-          <Space.Compact block>
-            <Form.Item name="brand" label="品牌" style={{ flex: 1, marginRight: 8 }}>
-              <AutoComplete options={brandOptions} placeholder="选择已有或输入新品牌" maxLength={40} filterOption={(i, o) => (o?.value ?? '').toLowerCase().includes(i.toLowerCase())} />
-            </Form.Item>
-            <Form.Item name="model" label="型号" style={{ flex: 1 }}><Input maxLength={40} /></Form.Item>
-          </Space.Compact>
-          <Space.Compact block>
-            <Form.Item name="priceMin" label="参考价下限(元)" style={{ flex: 1, marginRight: 8 }}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
-            <Form.Item name="priceMax" label="上限(元)" style={{ flex: 1, marginRight: 8 }}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
-            <Form.Item name="unit" label="单位" style={{ width: 90 }}><Input maxLength={10} /></Form.Item>
-          </Space.Compact>
-          <Form.Item name="perRoom" label="布置提示"><Input placeholder="如：每个窗帘位 1 台" maxLength={60} /></Form.Item>
-          <Form.Item name="imageUrl" label="产品图（即点位图标）">
+      <Modal title={editing ? `编辑「${editing.name}」` : '新增我的产品'} open={editOpen} onCancel={() => setEditOpen(false)} onOk={() => void saveProduct()} okText="保存" confirmLoading={saving} destroyOnHidden width={720}>
+        <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
+          <Divider titlePlacement="left" style={{ fontSize: 13, margin: '4px 0 12px' }}>基本信息</Divider>
+          <Row gutter={12}>
+            <Col span={15}>
+              <Form.Item name="name" label="产品名称" rules={[{ required: true, message: '必填' }, { max: 60 }]}>
+                <Input placeholder="如：智能中控屏 Pro" />
+              </Form.Item>
+            </Col>
+            <Col span={9}>
+              <Form.Item name="category" label="分类" rules={[{ required: true }]}>
+                <Select options={catOptions} showSearch optionFilterProp="label" />
+              </Form.Item>
+            </Col>
+            <Col span={9}>
+              <Form.Item name="brand" label="品牌">
+                <AutoComplete options={brandOptions} placeholder="选择已有或输入新品牌" maxLength={40} filterOption={(i, o) => (o?.value ?? '').toLowerCase().includes(i.toLowerCase())} />
+              </Form.Item>
+            </Col>
+            <Col span={9}>
+              <Form.Item name="model" label="型号"><Input maxLength={40} placeholder="如 X1-Pro" /></Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="unit" label="计量单位"><Input maxLength={10} placeholder="台/套/个" /></Form.Item>
+            </Col>
+            <Col span={24}>
+              <Form.Item name="spec" label="规格参数" extra="协议/尺寸/供电等一行摘要，报价单与点位清单引用">
+                <Input maxLength={120} placeholder="如：Zigbee 3.0 · 86 型暗装 · 单路 600W" />
+              </Form.Item>
+            </Col>
+            <Col span={15}>
+              <Form.Item name="perRoom" label="布置提示"><Input maxLength={60} placeholder="如：每个窗帘位 1 台" /></Form.Item>
+            </Col>
+            <Col span={9}>
+              <Form.Item name="warranty" label="质保期（月）">
+                <InputNumber min={0} max={600} step={12} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider titlePlacement="left" style={{ fontSize: 13, margin: '4px 0 12px' }}>编码标识</Divider>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="sku" label="商品编码 SKU" extra="门店内部订货号">
+                <Input maxLength={40} placeholder="如 GW-1001" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="barcode" label="商品条码" extra="EAN-13/UPC，无则留空">
+                <Input maxLength={20} placeholder="13 位数字" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="snRule" label="SN 码规则" extra="交付设备序列号前缀">
+                <Input maxLength={40} placeholder="如 SJ-GW-" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider titlePlacement="left" style={{ fontSize: 13, margin: '4px 0 12px' }}>价格体系与多级返利</Divider>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="priceRetail" label="官方指导价（元）" extra="零售挂牌价/对外报价">
+                <InputNumber min={0} max={10_000_000} style={{ width: '100%' }} prefix="¥" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="priceProject" label="工程价（元）" extra="批量/渠道成交价">
+                <InputNumber min={0} max={10_000_000} style={{ width: '100%' }} prefix="¥" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="priceDealer" label="经销价（元）" extra="门店进货成本">
+                <InputNumber min={0} max={10_000_000} style={{ width: '100%' }} prefix="¥" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rebateL1" label="一级经销返点" extra="总代/一级渠道返点比例">
+                <InputNumber min={0} max={100} style={{ width: '100%' }} addonAfter="%" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rebateL2" label="二级分销返点" extra="门店/分销层级返点比例">
+                <InputNumber min={0} max={100} style={{ width: '100%' }} addonAfter="%" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rebateDesigner" label="设计师返点" extra="设计师/介绍人返点比例">
+                <InputNumber min={0} max={100} style={{ width: '100%' }} addonAfter="%" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider titlePlacement="left" style={{ fontSize: 13, margin: '4px 0 12px' }}>产品图</Divider>
+          <Form.Item name="imageUrl">
             <Space direction="vertical" style={{ width: '100%' }}>
               <Upload accept="image/jpeg,image/png,image/webp" showUploadList={false} beforeUpload={(f) => void uploadImage(f)}>
-                <Button icon={<PlusOutlined />}>上传产品图（自动压缩）</Button>
+                <Button icon={<PlusOutlined />}>上传产品图（自动压缩，1:1 方形）</Button>
               </Upload>
               <Form.Item noStyle shouldUpdate>
                 {() => {
                   const u = form.getFieldValue('imageUrl');
-                  return u ? <Text type="secondary" style={{ fontSize: 12 }}>已上传：{u.split('/').pop()}，重新上传可替换</Text> : <Text type="secondary" style={{ fontSize: 12 }}>不上传则点位显示品类图标</Text>;
+                  return u ? <Text type="secondary" style={{ fontSize: 12 }}>已上传：{u.split('/').pop()}，重新上传可替换；产品图即点位图标</Text> : <Text type="secondary" style={{ fontSize: 12 }}>不上传则点位显示品类图标</Text>;
                 }}
               </Form.Item>
             </Space>
@@ -394,10 +543,40 @@ export function ProductCenter(): ReactNode {
             <Form.Item name="label" label="新增分类名称" rules={[{ required: true, message: '必填' }, { max: 20 }]} style={{ flex: 1, marginRight: 8 }}>
               <Input placeholder="如：适老照护" />
             </Form.Item>
-            <Form.Item name="icon" label="图标" style={{ width: 130, marginRight: 8 }}>
+            <Form.Item name="icon" label="图标（57 款）" style={{ width: 130, marginRight: 8 }}>
               <Select
-                options={ICON_CHOICES.map((k) => ({ value: k, label: <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} dangerouslySetInnerHTML={{ __html: iconSvgByKey(k, 16, '#555') }} /> }))}
-                labelRender={({ value }) => <span style={{ display: 'inline-flex' }} dangerouslySetInnerHTML={{ __html: iconSvgByKey(String(value), 16, '#555') }} />}
+                open={catIconOpen}
+                onDropdownVisibleChange={setCatIconOpen}
+                options={PRODUCT_ICON_KEYS.map((k) => ({ value: k, label: k }))}
+                popupMatchSelectWidth={false}
+                dropdownStyle={{ width: 348, padding: 8 }}
+                labelRender={({ value }) => (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span dangerouslySetInnerHTML={{ __html: iconSvgByKey(String(value), 16, '#555') }} />
+                    <Text type="secondary" style={{ fontSize: 11 }}>{String(value)}</Text>
+                  </span>
+                )}
+                dropdownRender={() => (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 2, maxHeight: 248, overflowY: 'auto' }}>
+                    {PRODUCT_ICON_KEYS.map((k) => {
+                      const selected = catForm.getFieldValue('icon') === k;
+                      return (
+                        <span
+                          key={k}
+                          title={k}
+                          onClick={() => { catForm.setFieldValue('icon', k); setCatIconOpen(false); }}
+                          style={{
+                            display: 'inline-flex', width: 32, height: 32, borderRadius: 8,
+                            alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                            background: selected ? token.colorPrimaryBg : 'transparent',
+                            boxShadow: selected ? `inset 0 0 0 1px ${token.colorPrimary}` : 'none',
+                          }}
+                          dangerouslySetInnerHTML={{ __html: iconSvgByKey(k, 17, selected ? token.colorPrimary : '#555') }}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               />
             </Form.Item>
             <Form.Item name="color" label="颜色" style={{ width: 100 }}>

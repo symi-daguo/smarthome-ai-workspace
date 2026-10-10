@@ -4,6 +4,7 @@ import { LlmService } from '../llm/llm.service.js';
 import { MediaService } from '../media/media.service.js';
 import { TokenService } from '../billing/token.service.js';
 import { CATEGORY_META } from './category-meta.js';
+import type { CreateProductDto, UpdateProductDto } from './layout.schemas.js';
 
 /** 产品目录（公共库+我的库）+ 点位布局图纸 CRUD */
 @Injectable()
@@ -63,33 +64,62 @@ export class LayoutService {
     if (!ok) throw new BadRequestException({ code: 'CATEGORY_INVALID', message: `未知品类「${category}」，请先创建自定义分类` });
   }
 
-  async createProduct(tenantId: string, dto: { name: string; category: string; brand?: string; model?: string; unit?: string; priceMin?: number; priceMax?: number; perRoom?: string; imageUrl?: string }) {
+  /** 三级价格写回时同步旧参考价区间（min=工程价,max=指导价），兼容点位清单/旧报价 */
+  private syncLegacyPriceRange(data: Record<string, unknown>, dto: Record<string, unknown>, cur?: { priceProject: number; priceRetail: number; priceMin: number; priceMax: number }): void {
+    if (dto.priceRetail === undefined && dto.priceProject === undefined) return;
+    const project = (dto.priceProject as number | undefined) ?? cur?.priceProject ?? 0;
+    const retail = (dto.priceRetail as number | undefined) ?? cur?.priceRetail ?? 0;
+    if (dto.priceMin === undefined) data.priceMin = project || cur?.priceMin || 0;
+    if (dto.priceMax === undefined) data.priceMax = retail || cur?.priceMax || 0;
+  }
+
+  async createProduct(tenantId: string, dto: CreateProductDto) {
     const name = dto.name.trim();
     if (!name) throw new BadRequestException('PRODUCT_NAME_REQUIRED');
     await this.assertCategoryKey(tenantId, dto.category);
     const dup = await this.prisma.product.findFirst({ where: { name, tenantId } });
     if (dup) throw new BadRequestException({ code: 'PRODUCT_DUPLICATE', message: `我的库已有「${name}」` });
-    return this.prisma.product.create({
-      data: {
-        tenantId,
-        name,
-        category: dto.category,
-        brand: dto.brand?.trim() ?? '',
-        model: dto.model?.trim() ?? '',
-        unit: dto.unit?.trim() || '台',
-        priceMin: dto.priceMin ?? 0,
-        priceMax: dto.priceMax ?? 0,
-        perRoom: dto.perRoom ?? '',
-        imageUrl: dto.imageUrl ?? '',
-      },
-    });
+    const data: Record<string, unknown> = {
+      tenantId,
+      name,
+      category: dto.category,
+      brand: dto.brand?.trim() ?? '',
+      model: dto.model?.trim() ?? '',
+      unit: dto.unit?.trim() || '台',
+      priceMin: dto.priceMin ?? 0,
+      priceMax: dto.priceMax ?? 0,
+      perRoom: dto.perRoom ?? '',
+      imageUrl: dto.imageUrl ?? '',
+      sku: dto.sku?.trim() ?? '',
+      barcode: dto.barcode?.trim() ?? '',
+      snRule: dto.snRule?.trim() ?? '',
+      spec: dto.spec?.trim() ?? '',
+      warranty: dto.warranty ?? 12,
+      priceRetail: dto.priceRetail ?? 0,
+      priceDealer: dto.priceDealer ?? 0,
+      priceProject: dto.priceProject ?? 0,
+      rebateL1: dto.rebateL1 ?? 0,
+      rebateL2: dto.rebateL2 ?? 0,
+      rebateDesigner: dto.rebateDesigner ?? 0,
+    };
+    this.syncLegacyPriceRange(data, dto as Record<string, unknown>);
+    return this.prisma.product.create({ data: data as never });
   }
 
-  async updateProduct(tenantId: string, id: string, dto: Partial<{ name: string; category: string; brand: string; model: string; unit: string; priceMin: number; priceMax: number; perRoom: string; imageUrl: string }>) {
+  async updateProduct(tenantId: string, id: string, dto: UpdateProductDto) {
     const row = await this.prisma.product.findFirst({ where: { id, tenantId } });
     if (row) {
       if (dto.category) await this.assertCategoryKey(tenantId, dto.category);
-      return this.prisma.product.update({ where: { id }, data: dto });
+      const data: Record<string, unknown> = { ...dto };
+      if (dto.name !== undefined) data.name = dto.name.trim();
+      if (dto.brand !== undefined) data.brand = dto.brand.trim();
+      if (dto.model !== undefined) data.model = dto.model.trim();
+      if (dto.sku !== undefined) data.sku = dto.sku.trim();
+      if (dto.barcode !== undefined) data.barcode = dto.barcode.trim();
+      if (dto.snRule !== undefined) data.snRule = dto.snRule.trim();
+      if (dto.spec !== undefined) data.spec = dto.spec.trim();
+      this.syncLegacyPriceRange(data, dto as Record<string, unknown>, row);
+      return this.prisma.product.update({ where: { id }, data: data as never });
     }
     // 公共库行：仅允许更换产品图（每个部署者都是平台方，上传/AI 生成产品图完善公共种子）
     const pub = await this.prisma.product.findFirst({ where: { id, tenantId: null } });
@@ -111,7 +141,13 @@ export class LayoutService {
     const dup = await this.prisma.product.findFirst({ where: { name: src.name, tenantId } });
     if (dup) throw new BadRequestException({ code: 'PRODUCT_DUPLICATE', message: `我的库已有「${src.name}」` });
     return this.prisma.product.create({
-      data: { tenantId, name: src.name, category: src.category, brand: src.brand, model: src.model, unit: src.unit, priceMin: src.priceMin, priceMax: src.priceMax, perRoom: src.perRoom, imageUrl: src.imageUrl },
+      data: {
+        tenantId, name: src.name, category: src.category, brand: src.brand, model: src.model, unit: src.unit,
+        priceMin: src.priceMin, priceMax: src.priceMax, perRoom: src.perRoom, imageUrl: src.imageUrl,
+        sku: src.sku, barcode: src.barcode, snRule: src.snRule, spec: src.spec, warranty: src.warranty,
+        priceRetail: src.priceRetail, priceDealer: src.priceDealer, priceProject: src.priceProject,
+        rebateL1: src.rebateL1, rebateL2: src.rebateL2, rebateDesigner: src.rebateDesigner,
+      },
     });
   }
 
