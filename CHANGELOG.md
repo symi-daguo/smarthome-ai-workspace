@@ -2,6 +2,25 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.38] - 2026-10-12
+
+### Chore（技术栈 patch/minor 跟进，确保 2026-10 以来最新稳定版）
+
+按 §42 版本审计结论（[.ref-site/采集记录.md](file:///Volumes/hasskit/codex/aisaas/.ref-site/采集记录.md) §42），3 个低风险文档解析依赖跟进最新稳定版：
+
+- **jsdom** `^30.1.1 → ^30.1.2`（npm 30.1.2，2026-10-06 发布的 patch）
+- **mammoth** `^1.12.3 → ^1.13.0`（npm 1.13.0，2026-09-28 发布的 minor，API 无 breaking：仅新增"hyperlinked wp:anchor/wp:inline 处理" 等增量）
+- **pdfjs-dist** `^6.3.289 → ^6.4.299`（npm 6.4.299，2026-10-04 发布的 minor，修复 PDF 解析兼容性）
+
+**未改动项（major bump 不追）**：Prisma 7.10.0（8.x 是 RC）、TypeScript 5.9.3（6.x/7.x 是 major）、React Router 7.18.4（v8 是 major）；其他 patch 跟进项（@nestjs/throttler 6.7.1 / pg 8.23.1 / @vitejs/plugin-react 6.1.2）保持当前锁定，下次维护迭代一并评估（无紧急）。
+
+### Verified
+
+- `pnpm install --no-frozen-lockfile` ✓（自动同步 pnpm-lock.yaml）
+- 门禁：`pnpm typecheck` ✓ / `pnpm build` ✓（api + web 双侧通过）
+- `pnpm smoke` ✓ **120/120**（含新增精装修 404 断言）
+- `docker compose up -d --build api web` ✓（api/web 镜像重建 + 启动）
+
 ## [0.1.37] - 2026-10-12
 
 ### Fixed（PPT 底部间距 + 上传平面图入口 + 精装修效果图生成）
