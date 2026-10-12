@@ -61,3 +61,8 @@ WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.
 token 事务扣减+余额不足拒绝,billing,must,yes,yes,
 管理员发放额度,billing,must,yes,yes,
 在线充值支付通道,billing,should,no,no,双方均待接(对方为联系助理)
+
+工作台-输入区 chip 与模型下拉真实化,dashboard,must,yes,yes,0.1.30 重做 4 个 div chip (上传附件→/content、图生图/生视频/生方案 跳对应能力页)、Sender header 加模型方案 Dropdown 跳 /model-config、附件上传 +4MB 白名单 + 缩略带 + 应用内大图 Modal 预览、能力状态条 6 个标签全部可点击导航、共享 ConfigStore 替代 send() 硬编码 chatModel
+产品中心-标准产品主数据与报价联动,dashboard,must,yes,yes,0.1.31 Product 新增 sku/barcode/snRule/spec/warranty + 三级价格(指导/工程/经销) + 三级返利(一级/二级/设计师)共 11 字段；产品中心 11 列固定宽表(SKU/条码/SN/规格/质保/三价三返)；编辑表单分 4 段(基本信息/编码标识/价格体系与多级返利/产品图)720px 双列；智能报价切换官方指导价/工程价口径，6 卡汇总成本毛利与多级返利；smoke 101/101+4
+
+安全-改密即作废旧JWT(tokenVersion),security,must,yes,yes,0.1.32 User.tokenVersion+migration；JWT 带 tv 每请求比对 DB，改密自增版本号，旧 token 401 且无法 refresh，前端改密自动登出；iOS PWA 补 viewport-fit=cover/apple meta/safe-area/maskable；ComfyUI 模板移入 apps/api 修复容器内缺失；smoke 106/106+5

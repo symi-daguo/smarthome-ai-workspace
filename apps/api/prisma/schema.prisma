@@ -67,6 +67,8 @@ model User {
   displayName  String
   // 侧栏头像底色（个人设置可改）
   avatarColor  String?
+  // 令牌版本：改密/登出全部设备时自增，旧 JWT 内 tv 不匹配即失效
+  tokenVersion Int      @default(0)
   status       Status   @default(ACTIVE)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

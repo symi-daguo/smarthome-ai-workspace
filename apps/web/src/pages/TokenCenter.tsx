@@ -163,8 +163,10 @@ export function TokenCenter(): ReactNode {
         method: 'POST',
         body: JSON.stringify({ oldPassword: values.oldPassword, newPassword: values.newPassword }),
       });
-      message.success('密码已更新，下次登录请使用新密码');
+      // 后端已自增 tokenVersion，当前 JWT 即刻失效：主动登出，引导用新密码重新登录
+      message.success('密码已更新，需使用新密码重新登录');
       pwdForm.resetFields();
+      setTimeout(() => logout(), 800);
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : String(err);
       message.error(raw === 'INVALID_CREDENTIALS' ? '原密码不正确' : raw);

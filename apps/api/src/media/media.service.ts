@@ -7,8 +7,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
 import { ModelConfigService } from '../llm/model-config.service.js';
@@ -143,15 +145,40 @@ export class MediaService {
     return { id: asset.id, url: `/api/media/assets/${asset.id}/file`, status: 'ready' };
   }
 
-  /** 读取用户导出的 ComfyUI API 格式工作流 JSON */
+  /**
+   * 解析 ComfyUI 工作流文件绝对路径（兼容三种运行形态）：
+   * ① 用户显式配置（绝对路径或相对进程 CWD）；
+   * ② 容器镜像：CWD=/repo，模板随 apps/api 拷贝在 /repo/apps/api/；
+   * ③ 本地 dev：pnpm --filter @app/api 的 CWD=apps/api，模板就在 CWD 下；
+   * 另兜底编译产物 dist/src/media（../../..）与源码 src/media（../../..）两个模块相对位置。
+   */
+  private resolveComfyWorkflowPath(configured: string): string | null {
+    const base = basename(configured);
+    const here = dirname(fileURLToPath(import.meta.url));
+    const candidates = [
+      resolve(configured),
+      join(process.cwd(), base),
+      join(process.cwd(), 'apps', 'api', base),
+      join(here, '..', '..', '..', base),
+    ];
+    return candidates.find((p) => existsSync(p)) ?? null;
+  }
+
   private async loadComfyWorkflow(path: string): Promise<Record<string, unknown>> {
+    const resolved = this.resolveComfyWorkflowPath(path);
+    if (!resolved) {
+      throw new ServiceUnavailableException({
+        code: 'COMFYUI_WORKFLOW_MISSING',
+        message: `未找到 ComfyUI 工作流文件（COMFYUI_WORKFLOW_PATH=${path}）。内置模板位于 apps/api/comfyui-workflow.json，或在 ComfyUI 中「Workflow → Export(API)」导出后放到该路径`,
+      });
+    }
     try {
-      const raw = await readFile(path, 'utf8');
+      const raw = await readFile(resolved, 'utf8');
       return JSON.parse(raw) as Record<string, unknown>;
     } catch {
       throw new ServiceUnavailableException({
-        code: 'COMFYUI_WORKFLOW_MISSING',
-        message: `未找到 ComfyUI 工作流文件（COMFYUI_WORKFLOW_PATH=${path}）。请在 ComfyUI 中「Workflow → Export(API)」导出后放到该路径`,
+        code: 'COMFYUI_WORKFLOW_INVALID',
+        message: `ComfyUI 工作流文件不是合法 JSON：${resolved}`,
       });
     }
   }

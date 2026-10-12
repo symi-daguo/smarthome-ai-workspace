@@ -49,7 +49,7 @@ export class AuthService {
       return created;
     });
 
-    return { token: await this.sign(user.id, user.phone), user: await this.profile(user.id) };
+    return { token: await this.sign(user.id, user.phone, user.tokenVersion), user: await this.profile(user.id) };
   }
 
   async login(dto: LoginDto): Promise<{ token: string; user: AuthProfile }> {
@@ -57,7 +57,7 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('INVALID_CREDENTIALS');
     const ok = await argon2.verify(user.passwordHash, dto.password).catch(() => false);
     if (!ok) throw new UnauthorizedException('INVALID_CREDENTIALS');
-    return { token: await this.sign(user.id, user.phone), user: await this.profile(user.id) };
+    return { token: await this.sign(user.id, user.phone, user.tokenVersion), user: await this.profile(user.id) };
   }
 
   async profile(userId: string): Promise<AuthProfile> {
@@ -92,13 +92,12 @@ export class AuthService {
 
   /**
    * 刷新 JWT：携带有效旧 token 换新 token（延长有效期），避免过期后被迫重新登录。
-   * 已改密用户旧 token 仍在有效期内可刷新——本系统 token 只承载 userId，权限每请求实时加载，
-   * 刷新不放大任何权限面。
+   * 新 token 始终携带数据库当前 tokenVersion；改密后旧 token 在 JwtStrategy 即被拒，无法刷新。
    */
   async refresh(userId: string): Promise<{ token: string; user: AuthProfile }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('USER_NOT_FOUND');
-    return { token: await this.sign(user.id, user.phone), user: await this.profile(user.id) };
+    return { token: await this.sign(user.id, user.phone, user.tokenVersion), user: await this.profile(user.id) };
   }
 
   async changePassword(userId: string, dto: { oldPassword: string; newPassword: string }): Promise<{ ok: true }> {
@@ -106,9 +105,10 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('USER_NOT_FOUND');
     const ok = await argon2.verify(user.passwordHash, dto.oldPassword).catch(() => false);
     if (!ok) throw new UnauthorizedException('INVALID_CREDENTIALS');
+    // 自增 tokenVersion：所有已签发的旧 JWT（含其他设备）在 JwtStrategy 比对时即刻失效
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash: await argon2.hash(dto.newPassword) },
+      data: { passwordHash: await argon2.hash(dto.newPassword), tokenVersion: { increment: 1 } },
     });
     return { ok: true };
   }
@@ -125,9 +125,9 @@ export class AuthService {
     return this.profile(userId);
   }
 
-  // JwtModule.registerAsync 已注入 secret/expiresIn, signAsync 无需重复传参
-  private sign(userId: string, phone: string): Promise<string> {
-    return this.jwt.signAsync({ sub: userId, phone });
+  // JwtModule.registerAsync 已注入 secret/expiresIn, signAsync 无需重复传参；tv=令牌版本
+  private sign(userId: string, phone: string, tokenVersion: number): Promise<string> {
+    return this.jwt.signAsync({ sub: userId, phone, tv: tokenVersion });
   }
 }
 

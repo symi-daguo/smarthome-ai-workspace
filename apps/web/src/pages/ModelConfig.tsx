@@ -503,14 +503,14 @@ export function ModelConfig(): ReactNode {
             title={<Space><DesktopOutlined style={{ color: '#5B5BF0' }} />ComfyUI 本地生图（工作流配置）</Space>}
             styles={{ body: { padding: 18 } }}
           >
-            <Text type="secondary">本机启动 ComfyUI 后，在此填写地址与工作流；把上方「生图服务」Provider 选为 ComfyUI 即启用。项目已内置 SD1.5 模板 comfyui-workflow.json，可直接用。</Text>
+            <Text type="secondary">本机启动 ComfyUI 后，在此填写地址与工作流；把上方「生图服务」Provider 选为 ComfyUI 即启用。镜像已内置 SD1.5 模板（apps/api/comfyui-workflow.json），留空即用；也可填自定义导出文件路径。</Text>
             <Divider style={{ margin: '12px 0' }} />
             <Form form={comfyForm} layout={isWide ? 'horizontal' : 'vertical'} labelCol={isWide ? { span: 4 } : undefined} wrapperCol={isWide ? { span: 20 } : undefined}>
               <Form.Item name="comfyBaseUrl" label="ComfyUI 地址" rules={[{ pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]} extra="本机默认 http://127.0.0.1:8188">
                 <Input placeholder="http://127.0.0.1:8188" allowClear />
               </Form.Item>
-              <Form.Item name="workflowPath" label="工作流 JSON" extra="ComfyUI「Workflow → Export (API)」导出的文件路径（相对 api 进程工作目录）">
-                <Input placeholder="./comfyui-workflow.json" allowClear />
+              <Form.Item name="workflowPath" label="工作流 JSON" extra="留空用镜像内置模板；自定义填 ComfyUI「Workflow → Export (API)」导出的文件路径">
+                <Input placeholder="留空 = 内置 apps/api/comfyui-workflow.json" allowClear />
               </Form.Item>
               <Row gutter={12}>
                 {(['promptNode', 'negativeNode', 'latentNode', 'seedNode'] as const).map((node, i) => (

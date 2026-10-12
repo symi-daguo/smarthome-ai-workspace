@@ -410,7 +410,7 @@ async function main(): Promise<void> {
   check('模型配置端点存在且 viewer 被拒（403）', modelConfigForbidden.status === 403);
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: superRole.id } });
   // jwt.strategy 每请求实时加载 profile，提权立即生效
-  const authA = { headers: { Authorization: `Bearer ${regA.body.token}` } };
+  let authA = { headers: { Authorization: `Bearer ${regA.body.token}` } };
 
   const cfgOk = await request<{ chat: { source: string } }>(base, '/api/admin/model-config', authA);
   check('超管读取模型配置 200', cfgOk.status === 200 && typeof cfgOk.body.chat.source === 'string');
@@ -480,6 +480,28 @@ async function main(): Promise<void> {
   const refreshed = await request<{ token: string }>(base, '/api/auth/refresh', { ...authA, method: 'POST' });
   const meWithNew = await request<{ id: string }>(base, '/api/auth/me', { headers: { Authorization: `Bearer ${refreshed.body.token}` } });
   check('刷新令牌可用（新 token 通过鉴权）', refreshed.status === 201 && meWithNew.status === 200 && meWithNew.body.id === me.body.id);
+
+  // ---------- 改密即作废旧 JWT（tokenVersion 机制） ----------
+  const beforePwdToken = refreshed.body.token;
+  const changedPwd = await request(base, '/api/auth/change-password', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ oldPassword: 'Test@12345', newPassword: 'Test@123456' }),
+  });
+  check('修改密码成功', changedPwd.status === 201);
+  const oldTokenAfterPwd = await request(base, '/api/auth/me', { headers: { Authorization: `Bearer ${beforePwdToken}` } });
+  check('改密后旧 token 立即失效（401 TOKEN_REVOKED）', oldTokenAfterPwd.status === 401);
+  const oldTokenRefresh = await request<{ token: string }>(base, '/api/auth/refresh', { headers: { Authorization: `Bearer ${beforePwdToken}` }, method: 'POST' });
+  check('改密后旧 token 不能刷新（401）', oldTokenRefresh.status === 401);
+  const relogin = await request<{ token: string }>(base, '/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ phone: phoneA, password: 'Test@123456' }),
+  });
+  check('新密码登录拿到新 token', relogin.status === 201 && Boolean(relogin.body.token));
+  const meAfterPwd = await request<{ id: string }>(base, '/api/auth/me', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
+  check('新 token 鉴权恢复', meAfterPwd.status === 200 && meAfterPwd.body.id === me.body.id);
+  // 后续用例统一换用新密码签发的 token
+  authA = { headers: { Authorization: `Bearer ${relogin.body.token}` } };
   await request(base, '/api/admin/model-config/chat', { ...authA, method: 'DELETE' });
 
   // 生视频 provider 可切换（不再写死 MiniMax）+ ComfyUI 独立配置持久化
@@ -605,17 +627,17 @@ async function main(): Promise<void> {
 
   // viewer 角色不可访问接单（RBAC 隔离）
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: viewerRole.id } });
-  const viewerOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+  const viewerOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
   check('viewer 访问接单被拒（403）', viewerOrders.status === 403);
 
   // tenant_admin 默认可访问接单（order:manage）
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: (await prisma.role.findUniqueOrThrow({ where: { key: 'tenant_admin' } })).id } });
-  const taOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+  const taOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
   check('tenant_admin 可访问接单（200）', taOrders.status === 200);
 
   // viewer 角色不可访问备份/存储（RBAC 隔离）
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: viewerRole.id } });
-  const backupForbidden = await request(base, '/api/admin/backup', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+  const backupForbidden = await request(base, '/api/admin/backup', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
   check('viewer 访问备份被拒（403）', backupForbidden.status === 403);
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: originalRoleId } });
 

@@ -200,6 +200,7 @@ curl -X POST ${origin}/api/auth/login \\
 | 内容提取 | POST /api/content/extractions/upload | multipart file+docType | 产品资料→结构化入库并同步产品库 |
 | 素材库 | GET /api/media/assets | - | 我的资料库全部图片/视频产物 |
 | 文件上传 | POST /api/media/uploads | multipart file | 图片落盘并返回 {id,url} |
+| 额度查询 | GET /api/tenants/current/tokens | - | 调计费能力前自查余额（响应 402=额度不足），账本 GET /api/tenants/current/tokens/ledger |
 
 ## 3. 模型方案切换（不同任务用不同模型）
 

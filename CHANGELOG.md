@@ -2,6 +2,32 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.32] - 2026-10-12
+
+### Added（全站马尾辫审查：token 安全 / iOS PWA / 部署一致性 / 版本同步）
+
+按马尾辫 7 级决策阶梯做全站审查（联网核对官方最新版本 → 安全 → 板块闭环 → 多租户 → agent → 多端 → 仓库卫生），只修真实问题、不造重复轮子。
+
+- **改密即作废旧 JWT（tokenVersion）**：`User.tokenVersion` + migration `20261012030000_user_token_version`；JWT payload 携带 `tv`，[jwt.strategy.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/auth/jwt.strategy.ts) 每请求与数据库实时比对，不匹配返回 401 TOKEN_REVOKED；改密自增版本号，旧 token **连 /auth/refresh 也无法换新**；前端个人中心改密成功后 800ms 自动登出引导重登；图片 ?token= 链接同步失效
+- **iOS Safari PWA 兼容**：[index.html](file:///Volumes/hasskit/codex/aisaas/apps/web/index.html) 加 `viewport-fit=cover` + apple-mobile-web-app-capable/status-bar-style/title + mobile-web-app-capable；manifest 补 scope/orientation 与 `purpose: any maskable`（SVG 满幅底+居中 logo 天然满足 80% 安全区）；[styles.css](file:///Volumes/hasskit/codex/aisaas/apps/web/src/styles.css) 仅 standalone 模式应用 env(safe-area-inset-*) 顶栏/侧栏/底部安全区
+- **ComfyUI 模板部署一致性修复**：`comfyui-workflow.json` 从仓库根 git mv 到 `apps/api/`（此前 Dockerfile 只 COPY apps/api，容器内模板 ENOENT，与模型配置页"内置模板可直接用"承诺不符）；[media.service.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.service.ts) 新增多候选路径解析（显式配置/CWD/apps/api/模块相对），容器与本地 dev 两形态均命中；JSON 非法时给 COMFYUI_WORKFLOW_INVALID 明确报错；前端文案同步
+- **Agent 技能包补额度自查**：skillpack 端点表新增 `GET /api/tenants/current/tokens` 与账本端点，agent 调计费能力前可自查余额（402 闭环）
+- **仓库卫生**：git rm `.codex-review/`（2 个含本机绝对路径的陈旧 skill 笔记，内容已并入 AGENTS.md 马尾辫规则）
+- **依赖同步官方稳定版**（npm registry 核对）：@nestjs/core·common·platform-express 12.1.0→12.1.2、vite 8.3.0→8.3.4、lucide 1.53.0→1.55.0；react 19.3.0 / antd 6.6.5 / prisma 7.10 / @ant-design/x 2.9 保持最新；prisma 8 与 typescript 7 为 RC/大版本跳跃，按 YAGNI 不追（5.9.3 稳定无安全压力，TS7 升级独立评估）
+
+### 审查通过项（无需改动）
+
+- 安全：argon2 密码哈希+统一 INVALID_CREDENTIALS 防用户枚举；生产 fail-fast（JWT_SECRET/SEED_ADMIN_PASSWORD）；Swagger 生产关闭；CORS env 限定；trust proxy 1；全局限流 300/min + 认证 10/min；CASL RBAC 权限每请求实时加载；TenantGuard 校验 X-Tenant-Id 成员归属；业务表（产品/方案/图纸/订单/内容/素材）删除全部有租户归属前置校验
+- 多租户：业务数据 tenantId 隔离完整；ModelSetting/ModelProfile 为 0.1.19 既定的平台级自部署架构（注册即部署者持 platform:billing:manage），SaaS 化运营时再租户化（0.2.0 演进项，本轮不擅自改架构）
+- 板块闭环：17 路由 ↔ 57 条前端 API 调用 ↔ 11 controller 全部对应；百宝箱 16 张工具卡真实跳转；无 TODO/FIXME/console.log/原生 alert 死码
+- 多端：PWA manifest/icon 经 nginx 200 + 正确 MIME；768/1440/1920/2560 响应式前轮实测无横向溢出
+
+### Verified
+
+- 门禁：typecheck ✓ / build ✓ / **smoke 106/106**（新增 5 条：改密成功/旧 token 立即 401/旧 token 不能刷新/新密码登录/新 token 恢复，RBAC 用例同步改用改密后新 token）
+- 浏览器实测：PWA 6 个 apple/viewport meta 与 manifest maskable 就位；产品中心 11 列标准表头正确；模型配置 ComfyUI 新文案渲染；console 无 JS error/warn（仅 2 条 antd 表单 a11y issue 级框架提示）
+- 部署核验：容器内 `/repo/apps/api/comfyui-workflow.json` 存在；api 日志 0 error；内存 api ~230MB / web 18MB / db 91MB / redis 76MB
+
 ## [0.1.31] - 2026-10-10
 
 ### Added（产品中心标准主数据 + 智能报价标准口径）
