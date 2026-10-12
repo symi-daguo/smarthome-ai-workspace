@@ -1,24 +1,33 @@
-/** 自建智能体（localStorage 持久化；后端 agents 表 0.2.0 接入后替换为 API） */
+import { api } from '../lib/api';
+
+/**
+ * 自建智能体：落库持久化（CustomAgent 表）。
+ * 早期版本存 localStorage，换设备/清缓存即丢；现在是真正的租户级数据，团队成员可见。
+ */
+
 export interface CustomAgent {
   id: string;
   name: string;
   description: string;
   /** 自定义 system prompt（人设），对话时注入 */
   systemPrompt: string;
-  createdAt: number;
+  avatarColor: string;
+  enabled: boolean;
+  createdAt: string;
 }
 
-const STORAGE_KEY = 'ai_custom_agents';
-
-export function loadCustomAgents(): CustomAgent[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as CustomAgent[]) : [];
-  } catch {
-    return [];
-  }
+export async function listCustomAgents(): Promise<CustomAgent[]> {
+  return api<CustomAgent[]>('/api/agents');
 }
 
-export function saveCustomAgents(list: CustomAgent[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+export async function createCustomAgent(input: { name: string; description?: string; systemPrompt: string; avatarColor?: string }): Promise<CustomAgent> {
+  return api<CustomAgent>('/api/agents', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function updateCustomAgent(id: string, patch: Partial<Pick<CustomAgent, 'name' | 'description' | 'systemPrompt' | 'avatarColor' | 'enabled'>>): Promise<CustomAgent> {
+  return api<CustomAgent>(`/api/agents/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export async function deleteCustomAgent(id: string): Promise<void> {
+  await api(`/api/agents/${id}`, { method: 'DELETE' });
 }

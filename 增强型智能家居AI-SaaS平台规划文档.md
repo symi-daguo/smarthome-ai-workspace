@@ -300,6 +300,7 @@ Agent：`agents, tools, conversations, messages, agent_runs, tool_calls`
 | 0.1.37 | 10-12 | PPT 底部间距修复（13 处 Frame/PointCard/Footer/NeedsSlide）；PlanStudio 上传平面图入口拓宽（工具栏始终可见）；精装修效果图端到端（renderedFloorplan_asset_id + renderFloorplan 端点 + PublicPlansController 免登录文件流）；smoke +1 → 120 条 |
 | 0.1.38 | 10-12 | 文档解析依赖 patch/minor 跟进（jsdom 30.1.2 / mammoth 1.13.0 / pdfjs-dist 6.4.299） |
 | **0.1.39** | **10-12** | **全站审查修复**：smoke 幂等（命名方案用例跨轮失败）、套餐标签改为对齐 Prisma `Plan` 枚举（"永久会员" 恒不显示）、模型配置菜单变量更名 `canManageModels`；文档与代码对齐（品类 39、备份 22 表、百宝箱 19 卡、目录树、env 清单、版本表、BullMQ/RLS 如实标注未落地）；smoke **120/120 且可重复运行** |
+| **0.1.40** | **10-12** | **补齐复刻缺口**：智能灯光场景演示（灯具编排 + 手工时间轴 + 出片）、生图 4 类业务子工作流（毛坯房/视频封面/节假日海报/平面图转彩平图）、问题反馈（提交 + 处理进度跟踪）、定制智能体落库、会员与额度页；修未知路由空白页与反馈状态机静默吞流转；反馈权限改 `cs:manage` 并开给全部角色；新增 `CustomAgent`/`FeedbackTicket`/`LightingScene` 三表与迁移；smoke **150/150** |
 
 ### 7.5 质量与测试策略
 

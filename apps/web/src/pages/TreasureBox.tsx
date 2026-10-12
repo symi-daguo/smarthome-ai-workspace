@@ -37,7 +37,7 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
       { key: 'wifi-heat', name: 'WiFi 热力图', desc: '拖拽设备，生成信号覆盖', to: '/device-layout?mode=wifi' },
       { key: 'device-layout', name: '智能设备点位布局', desc: '拖拽布点，导出图纸与设备清单', to: '/device-layout' },
       { key: 'light-plan', name: '灯光点位效果图', desc: '编辑灯带，导出高清灯光平面图', to: '/device-layout?mode=light' },
-      { key: 'light-scene', name: '智能灯光场景演示', desc: '编排每盏灯时间轴，生成视频', to: '/video' },
+      { key: 'light-scene', name: '智能灯光场景演示', desc: '上传效果图，手工编排每盏灯的时间轴并生成视频', to: '/lighting' },
     ],
   },
   {
@@ -52,8 +52,8 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
     tools: [
       { key: 'geo', name: 'GEO 品宣代发', desc: '本地搜索品宣，人工运营', manual: true, badge: '人工服务' },
       { key: 'video-edit', name: '视频代剪', desc: '贴链接交剪辑师成片', manual: true, badge: '人工服务' },
-      { key: 'custom-agent', name: '定制智能体', desc: '围绕你的业务专属打造', manual: true, badge: '人工服务', to: '/agents' },
-      { key: 'feedback', name: '问题反馈', desc: '功能建议与故障申报', manual: true, badge: '人工服务' },
+      { key: 'custom-agent', name: '定制智能体', desc: '打造你专属的 AI 智能体', to: '/agents' },
+      { key: 'feedback', name: '问题反馈', desc: '用着遇到问题？提交反馈，我们尽快排查处理', to: '/feedback' },
     ],
   },
 ];

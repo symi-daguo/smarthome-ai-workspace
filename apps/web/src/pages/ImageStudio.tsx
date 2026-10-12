@@ -5,23 +5,35 @@ import {
   PlusOutlined,
   RightOutlined,
   ThunderboltFilled,
+  WarningOutlined,
 } from '@ant-design/icons';
-import { App as AntApp, Button, Grid, Select, Spin, Typography, Upload, theme } from 'antd';
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { Alert, App as AntApp, Button, Grid, Input, Segmented, Select, Spin, Typography, Upload, theme } from 'antd';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  IMAGE_WORKFLOWS,
+  emptyDraft,
+  getWorkflow,
+  missingItems,
+  parseCoverCopy,
+  recommendedSize,
+  type WorkflowDraft,
+  type WorkflowKey,
+} from '../data/imageWorkflows';
 import { api, fileUrl } from '../lib/api';
 import { compressImage } from '../lib/compress';
+import { useActiveConfig } from '../lib/configStore';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 
-/** 智能场景（17 个常用场景）；点击即把完整画面描述写入提示词输入框 */
+/** 智能场景（17 个常用场景）；自由生图模式下点击即把完整画面描述写入提示词输入框 */
 const SCENES = [
   '观影模式', '会客模式', '就餐模式', '起夜模式', '阅读模式', '浪漫模式',
   '派对模式', '晨起模式', '工作模式', '节日模式', '淡彩光', '归家模式',
   '离家模式', '烹饪模式', '午休模式', '健身模式', '电竞模式',
 ];
 
-/** 场景 -> 完整出图描述（点击 chip 直接追加到 textarea，可见、可删、可改，复刻「chip 自动填描述」） */
+/** 场景 -> 完整出图描述（自由生图模式点击 chip 直接追加到 textarea，可见、可删、可改，复刻「chip 自动填描述」） */
 const SCENE_PROMPTS: Record<string, string> = {
   观影模式: '现代家庭影院客厅，电动窗帘缓缓关闭，壁挂电视亮起冷色画面光，主灯熄灭、吊顶灯带与地脚灯渐暗至 20% 暖光，沙发区保留柔和微光，真实室内摄影质感，电影感色调，广角镜头',
   会客模式: '明亮通透的现代客厅，主灯与吊顶灯带渐亮至会客亮度 4000K 暖白光，茶几区域光线均匀，空间整洁温馨，真实室内摄影质感，平视广角',
@@ -71,13 +83,25 @@ interface RefImage {
   url: string;
 }
 
+/** 换行文本 <-> 字符串数组：封面标签与卖点用数组存，用多行文本编辑 */
+function linesToArr(text: string): string[] {
+  return text.split('\n').map((s) => s.trim()).filter(Boolean);
+}
+function arrToLines(list: string[]): string {
+  return list.join('\n');
+}
+
 export function ImageStudio(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
   const isWide = screens.xl ?? false;
-  // 提示词输入框是唯一事实源：chip/案例/反推都写入它，用户可见可编辑
+  // 当前激活的对话模型方案（ConfigProvider 注入），供封面文案一键生成用
+  const { config } = useActiveConfig();
+
+  // 提示词输入框是唯一事实源：chip/案例/反推/工作流组装都写入它，用户可见可编辑
   const [prompt, setPrompt] = useState('');
+  /** 自由生图的场景集合（以〔场景：…〕标记直接写 textarea）；毛坯房模式的场景存在 draft 里 */
   const [activeScenes, setActiveScenes] = useState<Set<string>>(new Set());
   const [model, setModel] = useState('pro');
   const [size, setSize] = useState('1536x1024');
@@ -89,10 +113,56 @@ export function ImageStudio(): ReactNode {
   const [histIdx, setHistIdx] = useState(0);
   const preview = history[histIdx] ?? null;
 
+  // 工作流状态：切模式只重置本模式的专属字段，参考图与模型保留
+  const [wfKey, setWfKey] = useState<WorkflowKey>('free');
+  const [draft, setDraft] = useState<WorkflowDraft>(emptyDraft);
+  /** 提示词已被手工改过：之后改选项不覆盖用户输入，只提示可重新组装 */
+  const [promptDirty, setPromptDirty] = useState(false);
+  const [copying, setCopying] = useState(false);
+
+  const wf = getWorkflow(wfKey);
+  const isFree = wfKey === 'free';
+  const ratio = wf.sizes.find((s) => s.value === size)?.ratio ?? '';
+  const missing = useMemo(
+    () => (isFree ? [] : missingItems(wf, draft, refImage !== null)),
+    [isFree, wf, draft, refImage],
+  );
+
+  /** 按当前草稿与尺寸重算提示词；用户手改过就不覆盖，只在 force 时才强制写回 */
+  const syncPrompt = (next: WorkflowDraft, nextSize: string, force: boolean): void => {
+    // 自由生图的提示词完全由用户/scene chip/反推维护，组装函数对它返回空串，不能覆盖
+    if (isFree) return;
+    const r = wf.sizes.find((s) => s.value === nextSize)?.ratio ?? '';
+    const text = wf.buildPrompt(next, SCENE_PROMPTS, r);
+    if (force || !promptDirty) {
+      setPrompt(text);
+      setPromptDirty(false);
+    }
+  };
+
+  /** 更新草稿：比例随风格联动的工作流会顺带切到推荐尺寸 */
+  const updateDraft = (next: WorkflowDraft): void => {
+    const nextSize = recommendedSize(wf, next.choice) ?? size;
+    setSize(nextSize);
+    setDraft(next);
+    syncPrompt(next, nextSize, false);
+  };
+
+  const switchWorkflow = (key: WorkflowKey): void => {
+    const next = getWorkflow(key);
+    setWfKey(key);
+    setDraft(emptyDraft());
+    setActiveScenes(new Set());
+    setPromptDirty(false);
+    setPrompt('');
+    setSize(next.defaultSize);
+  };
+
   /** 场景描述以〔场景：…〕标记写入 textarea，切换时精确增删，不污染用户手写内容 */
   const sceneTag = (s: string): string => `〔场景：${SCENE_PROMPTS[s]}〕`;
 
-  const toggleScene = (s: string): void => {
+  /** 自由生图模式：场景直接以标记写进 textarea（保持原行为） */
+  const toggleSceneFree = (s: string): void => {
     const tag = sceneTag(s);
     if (activeScenes.has(s)) {
       const next = new Set(activeScenes);
@@ -107,6 +177,19 @@ export function ImageStudio(): ReactNode {
     }
     setActiveScenes(new Set(activeScenes).add(s));
     setPrompt((prev) => (prev.trim() ? `${prev.trim()} ${tag}` : tag));
+  };
+
+  /** 毛坯房模式：场景存在 draft 里，由提示词组装函数统一拼装 */
+  const toggleSceneDraft = (s: string): void => {
+    if (draft.scenes.includes(s)) {
+      updateDraft({ ...draft, scenes: draft.scenes.filter((x) => x !== s) });
+      return;
+    }
+    if (draft.scenes.length >= 3) {
+      message.warning('最多同时叠加 3 个灯光场景，可先取消一个');
+      return;
+    }
+    updateDraft({ ...draft, scenes: [...draft.scenes, s] });
   };
 
   /** 参考图真实上传（复用压缩管线），上传后可一键反推提示词 */
@@ -142,6 +225,7 @@ export function ImageStudio(): ReactNode {
         body: JSON.stringify({ assetId: refImage.assetId }),
       });
       setPrompt((prev) => (prev.trim() ? `${r.prompt}\n${prev}` : r.prompt));
+      setPromptDirty(true);
       message.success('已按参考图反推出画面描述，可直接生成或继续修改');
     } catch (e) {
       message.error((e as Error).message);
@@ -150,7 +234,44 @@ export function ImageStudio(): ReactNode {
     }
   };
 
+  /** 封面模式：一键让对话模型产出大标题、侧边标签与 3 条卖点，结果可继续编辑 */
+  const genCoverCopy = async (): Promise<void> => {
+    const topic = (draft.text.topic ?? '').trim();
+    if (!topic) {
+      message.warning('请先填写视频主题');
+      return;
+    }
+    const req = getWorkflow('cover').copyPrompt?.(topic);
+    if (!req) return;
+    setCopying(true);
+    try {
+      const r = await api<{ reply: string }>('/api/llm/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: config.chatModel || 'MiniMax-M3',
+          systemPrompt: req.systemPrompt,
+          prompt: req.prompt,
+        }),
+      });
+      const copy = parseCoverCopy(r.reply);
+      if (!copy.title) {
+        message.warning('模型没给出可用文案，可再点一次或直接手写');
+        return;
+      }
+      updateDraft({ ...draft, copy });
+      message.success('标题、标签与卖点已生成，可直接编辑或改写');
+    } catch (e) {
+      message.error((e as Error).message || '文案生成失败');
+    } finally {
+      setCopying(false);
+    }
+  };
+
   const generate = async (): Promise<void> => {
+    if (missing.length > 0) {
+      message.warning(`还有必填项没完成：${missing.join('、')}`);
+      return;
+    }
     const full = prompt.trim();
     if (full.length < 4) {
       message.warning('请先填写提示词，或点击下方场景/案例自动填入');
@@ -158,9 +279,11 @@ export function ImageStudio(): ReactNode {
     }
     setGenerating(true);
     try {
+      // 自由生图沿用原后缀；各业务工作流的组装文案自带质感与免文字要求，不再重复追加
+      const body = isFree ? `${full}，真实室内摄影质感，高清细节，无多余文字水印` : full;
       const r = await api<{ url: string }>('/api/media/images', {
         method: 'POST',
-        body: JSON.stringify({ prompt: `${full}，真实室内摄影质感，高清细节，无多余文字水印`, size, model }),
+        body: JSON.stringify({ prompt: body, size, model }),
       });
       const url = fileUrl(`${r.url}?t=${Date.now()}`);
       setHistory((prev) => [url, ...prev]);
@@ -174,18 +297,157 @@ export function ImageStudio(): ReactNode {
   };
 
   const labelStyle: CSSProperties = { fontSize: 13, color: token.colorTextSecondary, marginBottom: 6, display: 'block' };
+  const inputStyle: CSSProperties = { fontFamily: 'inherit' };
+  /** 选项 chip 的统一样式：选中态走主题色，未选中走浅灰 */
+  const chipStyle = (active: boolean): CSSProperties => ({
+    padding: '7px 16px', borderRadius: 9999, fontSize: 14, fontWeight: 600,
+    cursor: 'pointer', userSelect: 'none',
+    background: active ? token.colorPrimaryBg : token.colorFillQuaternary,
+    color: active ? token.colorPrimary : token.colorTextSecondary,
+    border: `1px solid ${active ? token.colorPrimaryBorder : token.colorBorderSecondary}`,
+  });
+
+  /** 单选/多选组渲染；free 模式无选项组，bare 的场景组由调用方单独处理 */
+  const renderGroup = (groupId: string): ReactNode => {
+    const group = wf.optionGroups.find((g) => g.id === groupId);
+    if (!group) return null;
+    return (
+      <div style={{ marginBottom: 18 }}>
+        <SectionLabel>{group.label}</SectionLabel>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -4, marginBottom: 10 }}>{group.hint}</Text>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {group.options.map((o) => {
+            const active = draft.choice === o.value;
+            return (
+              <span
+                key={o.value}
+                role="button"
+                tabIndex={0}
+                title={o.prompt}
+                onClick={() => updateDraft({ ...draft, choice: active ? '' : o.value })}
+                onKeyDown={(e) => e.key === 'Enter' && updateDraft({ ...draft, choice: active ? '' : o.value })}
+                style={chipStyle(active)}
+              >
+                {o.label}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const textFieldArea = (fieldId: string): ReactNode => {
+    const field = wf.textFields.find((f) => f.id === fieldId);
+    if (!field) return null;
+    const value = draft.text[field.id] ?? '';
+    return (
+      <div style={{ marginBottom: 18 }}>
+        <SectionLabel>{field.label}</SectionLabel>
+        {field.hint ? (
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -4, marginBottom: 8 }}>{field.hint}</Text>
+        ) : null}
+        {field.multiline ? (
+          <Input.TextArea
+            value={value}
+            onChange={(e) => updateDraft({ ...draft, text: { ...draft.text, [field.id]: e.target.value } })}
+            placeholder={field.placeholder}
+            autoSize={{ minRows: 3, maxRows: 6 }}
+            style={inputStyle}
+          />
+        ) : (
+          <Input
+            value={value}
+            onChange={(e) => updateDraft({ ...draft, text: { ...draft.text, [field.id]: e.target.value } })}
+            placeholder={field.placeholder}
+            onPressEnter={(e) => e.currentTarget.blur()}
+            style={inputStyle}
+          />
+        )}
+      </div>
+    );
+  };
+
+  /** 封面模式的可编辑文案区：生成后直接改，改完自动重新组装提示词 */
+  const coverCopyArea = (): ReactNode => (
+    <div style={{ marginBottom: 18 }}>
+      <SectionLabel>封面文案（可编辑）</SectionLabel>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <Button size="small" icon={<BulbOutlined />} loading={copying} onClick={() => void genCoverCopy()}>
+          一键生成标题与卖点
+        </Button>
+        <Text type="secondary" style={{ fontSize: 12 }}>由对话模型按主题产出大标题、3-4 个侧边标签与 3 条卖点</Text>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <span style={labelStyle}>大标题（8 字内）</span>
+        <Input
+          value={draft.copy.title}
+          placeholder="例如：全屋智能交付"
+          onChange={(e) => updateDraft({ ...draft, copy: { ...draft.copy, title: e.target.value } })}
+          style={inputStyle}
+        />
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <span style={labelStyle}>左侧标签（一行一个，3-4 个）</span>
+        <Input.TextArea
+          value={arrToLines(draft.copy.tags)}
+          placeholder={'全屋方案\n免费设计\n本地售后'}
+          autoSize={{ minRows: 2, maxRows: 5 }}
+          onChange={(e) => updateDraft({ ...draft, copy: { ...draft.copy, tags: linesToArr(e.target.value) } })}
+          style={inputStyle}
+        />
+      </div>
+      <div>
+        <span style={labelStyle}>右侧卖点（一行一个，3 条）</span>
+        <Input.TextArea
+          value={arrToLines(draft.copy.sellingPoints)}
+          placeholder={'当天调试当天用\n老房不砸墙改造\n三年上门维护'}
+          autoSize={{ minRows: 2, maxRows: 5 }}
+          onChange={(e) => updateDraft({ ...draft, copy: { ...draft.copy, sellingPoints: linesToArr(e.target.value) } })}
+          style={inputStyle}
+        />
+      </div>
+    </div>
+  );
+
+  const sizeOptions = isFree
+    ? SIZES
+    : wf.sizes.map((s) => ({ value: s.value, label: s.label }));
+
+  /** 序号由页面统一给出，数据文件只管字段名，避免两处各写一套圈号导致编号错乱 */
+  const stepRef = '①';
+  const stepPrompt = isFree ? '②' : '④';
+  const stepScene = '③';
+  const stepModel = isFree ? '④' : '⑤';
 
   return (
     <div style={pageContainerStyle}>
       <Title level={3} style={{ marginBottom: 4 }}>AI 图片生成</Title>
-      <Text type="secondary">点场景/案例自动填入完整提示词，或上传参考图一键反推画面描述，生成同风格空间效果图；结果自动存入「我的资料库」</Text>
+      <Text type="secondary">
+        {isFree
+          ? '点场景/案例自动填入完整提示词，或上传参考图一键反推画面描述，生成同风格空间效果图；结果自动存入「我的资料库」'
+          : `${wf.description}；提示词可自由修改，结果自动存入「我的资料库」`}
+      </Text>
 
-      <div style={{ display: 'flex', gap: 20, marginTop: 20, alignItems: 'flex-start', flexWrap: isWide ? 'nowrap' : 'wrap' }}>
+      {/* 工作流分段控件 */}
+      <div style={{ marginTop: 18, marginBottom: 4, overflowX: 'auto' }}>
+        <Segmented
+          value={wfKey}
+          onChange={(v) => switchWorkflow(v as WorkflowKey)}
+          options={IMAGE_WORKFLOWS.map((w) => ({ value: w.key, label: w.name }))}
+          size="large"
+        />
+      </div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 16 }}>
+        当前流程：{wf.name} · {wf.description}
+      </Text>
+
+      <div style={{ display: 'flex', gap: 20, marginTop: 4, alignItems: 'flex-start', flexWrap: isWide ? 'nowrap' : 'wrap' }}>
         {/* 左：表单 */}
         <div style={{ flex: '1 1 46%', minWidth: 320 }}>
           {/* ① 参考图：真实上传 + 反推提示词 */}
-          <div style={{ background: token.colorBgContainer, border: `1.5px solid ${token.colorPrimary}`, borderRadius: 14, padding: '16px 18px', marginBottom: 16 }}>
-            <SectionLabel>① 参考图（可选）：上传客户现场图，一键反推同风格提示词</SectionLabel>
+          <div style={{ background: token.colorBgContainer, border: `1.5px solid ${wf.requiresRef && !refImage ? token.colorError : token.colorPrimary}`, borderRadius: 14, padding: '16px 18px', marginBottom: 16 }}>
+            <SectionLabel>{`${stepRef} ${wf.refLabel}`}</SectionLabel>
             {refImage ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <img src={refImage.url} alt="参考图" style={{ width: 108, height: 72, objectFit: 'cover', borderRadius: 8, border: `1px solid ${token.colorBorderSecondary}` }} />
@@ -193,23 +455,55 @@ export function ImageStudio(): ReactNode {
                   <Button type="primary" ghost size="small" icon={<BulbOutlined />} loading={reversing} onClick={() => void reversePrompt()} style={{ marginBottom: 6 }}>
                     反推提示词
                   </Button>
-                  <div><Text type="secondary" style={{ fontSize: 12 }}>由视觉模型读出风格/色调/构图，自动写入下方描述</Text></div>
+                  <div><Text type="secondary" style={{ fontSize: 12 }}>{wf.refHint}</Text></div>
                 </div>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setRefImage(null)}>移除</Button>
               </div>
             ) : (
-              <Upload accept="image/jpeg,image/png,image/webp" maxCount={1} showUploadList={false} beforeUpload={(f) => void onUpload(f)}>
-                <Button icon={<PlusOutlined />} loading={uploading}>选择参考图</Button>
-              </Upload>
+              <>
+                <Upload accept="image/jpeg,image/png,image/webp" maxCount={1} showUploadList={false} beforeUpload={(f) => void onUpload(f)}>
+                  <Button icon={<PlusOutlined />} loading={uploading}>选择参考图</Button>
+                </Upload>
+                <div style={{ marginTop: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>{wf.refHint}</Text></div>
+              </>
             )}
           </div>
 
-          {/* 提示词（唯一事实源） */}
+          {/* 工作流专属字段：风格 / 节日 / 文案输入 */}
+          {wf.key === 'bare' && renderGroup('style')}
+          {wf.key === 'poster' && renderGroup('festival')}
+          {wf.key === 'colorplan' && renderGroup('style')}
+          {wf.key === 'cover' && textFieldArea('topic')}
+          {wf.key === 'cover' && coverCopyArea()}
+
+          {/* 必填项未完成提示：不让用户点了生成才报一堆错 */}
+          {missing.length > 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              icon={<WarningOutlined />}
+              style={{ marginBottom: 16 }}
+              message="必填项还没填完"
+              description={`还差：${missing.join('、')}`}
+            />
+          ) : null}
+
+          {/* 画面描述（唯一事实源，工作流模式由选项自动组装） */}
           <div style={{ marginBottom: 16 }}>
-            <SectionLabel>② 画面描述（点场景/案例自动填入，可直接编辑）</SectionLabel>
+            <SectionLabel>
+              {`${stepPrompt} 画面描述（${isFree ? '点场景/案例自动填入' : '按上面的选项自动组装'}，可直接编辑）`}
+            </SectionLabel>
+            {isFree ? null : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: -4, marginBottom: 8, flexWrap: 'wrap' }}>
+                <Button size="small" onClick={() => syncPrompt(draft, size, true)}>按当前选项重新组装</Button>
+                {promptDirty ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>你已手动改过描述，改选项不会覆盖，点上面按钮可重新组装</Text>
+                ) : null}
+              </div>
+            )}
             <textarea
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => { setPrompt(e.target.value); setPromptDirty(true); }}
               placeholder="点下方任意场景，或上传参考图点「反推提示词」，这里会自动出现完整画面描述。也可以手写，例如：现代客厅，暖色灯带渐亮，观影氛围，真实室内摄影质感，16:9"
               style={{
                 width: '100%', minHeight: 128, padding: '12px 14px', borderRadius: 12,
@@ -219,27 +513,24 @@ export function ImageStudio(): ReactNode {
             />
           </div>
 
-          {/* 场景 chip：点击即写 textarea */}
+          {/* 场景 chip：自由生图写 textarea；毛坯房模式进草稿由组装函数拼装 */}
           <div style={{ marginBottom: 8 }}>
-            <SectionLabel>③ 智能场景（选 1～3 个，点击自动填入画面描述）</SectionLabel>
+            <SectionLabel>
+              {`${stepScene} ${wf.key === 'bare' ? '叠加智能灯光场景（选 1～3 个，点击自动并入描述）' : '智能场景（选 1～3 个，点击自动填入画面描述）'}`}
+            </SectionLabel>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {SCENES.map((s) => {
-                const active = activeScenes.has(s);
+                const active = wf.key === 'bare' ? draft.scenes.includes(s) : activeScenes.has(s);
+                const toggle = wf.key === 'bare' ? toggleSceneDraft : toggleSceneFree;
                 return (
                   <span
                     key={s}
                     role="button"
                     tabIndex={0}
-                    onClick={() => toggleScene(s)}
-                    onKeyDown={(e) => e.key === 'Enter' && toggleScene(s)}
+                    onClick={() => toggle(s)}
+                    onKeyDown={(e) => e.key === 'Enter' && toggle(s)}
                     title={SCENE_PROMPTS[s]}
-                    style={{
-                      padding: '7px 16px', borderRadius: 9999, fontSize: 14, fontWeight: 600,
-                      cursor: 'pointer', userSelect: 'none',
-                      background: active ? token.colorPrimaryBg : token.colorFillQuaternary,
-                      color: active ? token.colorPrimary : token.colorTextSecondary,
-                      border: `1px solid ${active ? token.colorPrimaryBorder : token.colorBorderSecondary}`,
-                    }}
+                    style={chipStyle(active)}
                   >
                     {s}
                   </span>
@@ -250,13 +541,16 @@ export function ImageStudio(): ReactNode {
 
           {/* 模型 */}
           <div style={{ margin: '18px 0 12px' }}>
-            <SectionLabel>④ 模型</SectionLabel>
+            <SectionLabel>{`${stepModel} 模型`}</SectionLabel>
             <Select value={model} onChange={setModel} options={MODELS} style={{ width: '100%' }} size="large" />
           </div>
 
           {/* 参数 */}
           <div style={{ display: 'grid', gridTemplateColumns: isWide ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)', gap: 12, marginBottom: 20 }}>
-            <div><span style={labelStyle}>尺寸</span><Select value={size} onChange={setSize} options={SIZES} style={{ width: '100%' }} /></div>
+            <div>
+              <span style={labelStyle}>{isFree ? '尺寸' : wf.sizes.length > 1 ? '尺寸' : '尺寸（本流程固定）'}</span>
+              <Select value={size} onChange={setSize} options={sizeOptions} style={{ width: '100%' }} disabled={!isFree && wf.sizes.length === 1} />
+            </div>
             <div><span style={labelStyle}>质量</span><Select value="medium" options={[{ value: 'medium', label: '标准' }]} style={{ width: '100%' }} disabled /></div>
             <div><span style={labelStyle}>格式</span><Select value="png" options={[{ value: 'png', label: 'PNG' }]} style={{ width: '100%' }} disabled /></div>
             <div><span style={labelStyle}>背景</span><Select value="auto" options={[{ value: 'auto', label: '自动' }]} style={{ width: '100%' }} disabled /></div>
@@ -269,7 +563,11 @@ export function ImageStudio(): ReactNode {
             >
               {generating ? '生成中（约 15 秒）' : '生成图片'}
             </Button>
-            <Text type="secondary" style={{ fontSize: 13 }}>每张按额度扣费，生成结果自动保存到「我的资料库」并可直接用作生视频首帧</Text>
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              {isFree
+                ? '每张按额度扣费，生成结果自动保存到「我的资料库」并可直接用作生视频首帧'
+                : `本次输出比例：${ratio || '跟随尺寸'}；每张按额度扣费，结果自动存入「我的资料库」`}
+            </Text>
           </div>
         </div>
 
@@ -304,29 +602,31 @@ export function ImageStudio(): ReactNode {
         </div>
       </div>
 
-      {/* 案例库横滚：点击填入完整描述 */}
-      <div style={{ marginTop: 28 }}>
-        <SectionLabel>案例库（点击把完整画面描述写入输入框）</SectionLabel>
-        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
-          {CASES.map((c) => (
-            <div
-              key={c.key}
-              role="button"
-              tabIndex={0}
-              onClick={() => { setPrompt(c.prompt); message.info(`已填入「${c.title}」画面描述，可直接生成`); }}
-              onKeyDown={(e) => e.key === 'Enter' && setPrompt(c.prompt)}
-              style={{
-                width: 220, flex: 'none', height: 130, borderRadius: 12,
-                background: `url(${c.img}) center/cover no-repeat`,
-                border: `1px solid ${token.colorBorderSecondary}`,
-                display: 'flex', alignItems: 'flex-end', padding: 12, cursor: 'pointer',
-              }}
-            >
-              <Text style={{ fontSize: 13, fontWeight: 600, color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,.6)' }}>{c.title}</Text>
-            </div>
-          ))}
+      {/* 案例库横滚：点击填入完整描述（自由生图模式专属，结构化流程不混入通用案例） */}
+      {isFree ? (
+        <div style={{ marginTop: 28 }}>
+          <SectionLabel>案例库（点击把完整画面描述写入输入框）</SectionLabel>
+          <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
+            {CASES.map((c) => (
+              <div
+                key={c.key}
+                role="button"
+                tabIndex={0}
+                onClick={() => { setPrompt(c.prompt); setPromptDirty(true); message.info(`已填入「${c.title}」画面描述，可直接生成`); }}
+                onKeyDown={(e) => e.key === 'Enter' && setPrompt(c.prompt)}
+                style={{
+                  width: 220, flex: 'none', height: 130, borderRadius: 12,
+                  background: `url(${c.img}) center/cover no-repeat`,
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  display: 'flex', alignItems: 'flex-end', padding: 12, cursor: 'pointer',
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: 600, color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,.6)' }}>{c.title}</Text>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

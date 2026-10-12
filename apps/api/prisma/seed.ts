@@ -43,7 +43,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     key: 'designer',
     name: '设计师',
     scope: 'TENANT',
-    permissions: ['content:generate', 'content:extract', 'knowledge:manage', 'knowledge:read'],
+    permissions: ['content:generate', 'content:extract', 'knowledge:manage', 'knowledge:read', 'cs:manage'],
   },
   {
     key: 'operator',
@@ -51,7 +51,8 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     scope: 'TENANT',
     permissions: ['order:manage', 'quote:manage', 'publish:manage', 'cs:manage', 'content:extract', 'knowledge:read'],
   },
-  { key: 'viewer', name: '只读成员', scope: 'TENANT', permissions: ['knowledge:read'] },
+  // 只读成员也要能提反馈：遇到问题的人恰恰常常是权限最低的人，反馈入口不能因角色低而关闭
+  { key: 'viewer', name: '只读成员', scope: 'TENANT', permissions: ['knowledge:read', 'cs:manage'] },
 ];
 
 async function main(): Promise<void> {

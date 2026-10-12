@@ -452,3 +452,67 @@ model FloorplanLayout {
 
   @@index([tenantId, createdAt])
 }
+
+// ---------- 定制智能体（用户自建，落库替代仅存 localStorage 的方案） ----------
+
+model CustomAgent {
+  id       String @id @default(uuid())
+  tenantId String
+  userId   String
+  name     String
+  description String @default("")
+  // 人设/系统提示词：决定智能体的身份、语气、输出格式与注意事项
+  systemPrompt String @default("")
+  avatarColor  String @default("#5B5BF0")
+  enabled      Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+}
+
+// ---------- 问题反馈（用户提交 + 处理进度跟踪） ----------
+
+model FeedbackTicket {
+  id       String @id @default(uuid())
+  tenantId String
+  userId   String
+  // bug | feature | other
+  category String
+  title    String
+  detail   String @default("")
+  // open（待处理）| processing（处理中）| resolved（已解决）| closed（已关闭）
+  status   String @default("open")
+  reply    String @default("")
+  repliedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+}
+
+// ---------- 智能灯光场景演示（灯具编排 + 手工时间轴 + 出片） ----------
+
+model LightingScene {
+  id     String @id @default(uuid())
+  tenantId String
+  userId   String
+  title   String
+  // 参考效果图的 MediaAsset id（第一步上传）
+  sourceAssetId String?
+  // 画幅比例，如 16:9 / 9:16 / 1:1
+  ratio          String @default("16:9")
+  // 灯具数组 [{id,type,name,x,y,brightness,colorTemp,alwaysDim,order}]（x/y 归一化 0-1）
+  fixtures       Json
+  // 时间轴 {durationMs,tracks:[{fixtureId,keyframes:[{t,brightness,colorTemp}]}]}
+  timeline       Json
+  // 出片产物 MediaAsset id
+  videoAssetId   String?
+  // draft（编排中）| ready（已出片）
+  status         String @default("draft")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+}

@@ -1,9 +1,9 @@
 import { DeleteOutlined, FireFilled, PlusOutlined } from '@ant-design/icons';
 import { App as AntApp, Button, Dropdown, Empty, Form, Grid, Input, Modal, Popconfirm, Switch, Typography, theme } from 'antd';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AGENT_CATEGORIES, SEED_AGENTS, type AgentDef } from '../data/agents';
-import { loadCustomAgents, saveCustomAgents, type CustomAgent } from '../data/customAgents';
+import { listCustomAgents, createCustomAgent, deleteCustomAgent, type CustomAgent } from '../data/customAgents';
 
 const { Text, Title } = Typography;
 
@@ -30,9 +30,24 @@ export function AgentMarket(): ReactNode {
   const [category, setCategory] = useState('全部');
   const [sort, setSort] = useState('default' as SortKey);
   const [agents, setAgents] = useState<AgentDef[]>(SEED_AGENTS);
-  const [custom, setCustom] = useState<CustomAgent[]>(() => loadCustomAgents());
+  const [custom, setCustom] = useState<CustomAgent[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm<CreateForm>();
+
+  // 自建智能体已落库，进入页面拉取当前租户的列表
+  useEffect(() => {
+    let alive = true;
+    void listCustomAgents()
+      .then((list) => {
+        if (alive) setCustom(list);
+      })
+      .catch(() => {
+        /* 拉取失败保持空列表，不打断预置智能体浏览 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const openAgent = (a: AgentDef): void => {
     if (!a.enabled) {
@@ -72,25 +87,28 @@ export function AgentMarket(): ReactNode {
     } catch {
       return; // 校验失败由 antd 字段红字提示，无需额外处理
     }
-    const agent: CustomAgent = {
-      id: `ca${Date.now().toString(36)}`,
-      name: v.name.trim(),
-      description: v.description?.trim() ?? '',
-      systemPrompt: v.systemPrompt.trim(),
-      createdAt: Date.now(),
-    };
-    const next = [agent, ...custom];
-    setCustom(next);
-    saveCustomAgents(next);
-    setCreateOpen(false);
-    form.resetFields();
-    message.success('智能体已创建，点击卡片即可对话');
+    try {
+      const agent = await createCustomAgent({
+        name: v.name.trim(),
+        description: v.description?.trim() ?? '',
+        systemPrompt: v.systemPrompt.trim(),
+      });
+      setCustom((prev) => [agent, ...prev]);
+      setCreateOpen(false);
+      form.resetFields();
+      message.success('智能体已创建，点击卡片即可对话');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '创建失败');
+    }
   };
 
-  const removeCustom = (id: string): void => {
-    const next = custom.filter((c) => c.id !== id);
-    setCustom(next);
-    saveCustomAgents(next);
+  const removeCustom = async (id: string): Promise<void> => {
+    try {
+      await deleteCustomAgent(id);
+      setCustom((prev) => prev.filter((c) => c.id !== id));
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '删除失败');
+    }
   };
 
   return (

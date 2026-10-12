@@ -36,7 +36,7 @@ AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,partial,0.1.16 �
 智能设备点位布局(上传户型图+布点+导出图纸/清单),treasure,must,yes,yes,0.1.24 升级：布点携带产品主图→点位显示产品照片(圆裁白底)，无图回退 0.1.23 品类 SVG 徽章(预览/PNG/PPTX/分享四端一致)+一键美化图纸(白底增强保持户型)+挂接方案空间动线页
 产品中心-公共库与我的库双 tab,treasure,must,yes,yes,0.1.26 完善：39 预置品类字典(CategoryDef 表)+自定义分类(图标/颜色可选/在用拒绝删除)；品牌筛选+AutoComplete；lucide(ISC) 线条图标库；上传 canvas 压缩至 1024px；知识库产品资料确认入库自动同步到我的库(价格解析+品类推断)；修 nginx 1m 默认体限制致传图 413 + api() 空 body JSON 解析报错
 全站流式布局无留白,shell,must,yes,yes,0.1.25 重做：pageContainerStyle 去一切 maxWidth 封顶，卡片随视口拉宽铺满(2560 档实测主卡片占内容区约 97%)；生图/生视频双列改 flex 百分比；四档视口无横向溢出
-- **个人中心-统一承载设置(资料偏好+备份治理)**：0.1.24 迁入个人中心页(/tokens)统一承载，0.1.29 新增「刷新登录令牌」+JWT 自动续期(6h 巡检,<2 天续期),保证会话不丢数据
+个人中心-统一承载设置(资料偏好+备份治理),profile,should,yes,yes,0.1.24 迁入个人中心页(/tokens)统一承载；0.1.29 新增「刷新登录令牌」+JWT 自动续期(6h 巡检，<2 天续期)，保证会话不丢数据
 WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.1.14 真实化：additive 径向光斑红强绿弱+图例，复用点位编辑器 ?mode=wifi
 灯光点位效果图(灯具布点+暖光光晕),treasure,should,yes,yes,0.1.14 真实化：暖光晕+徽章标签，复用点位编辑器 ?mode=light
 智能报价(选品配单+区间算价+报价单导出),treasure,must,yes,yes,0.1.14 真实化：QuoteStudio /quote 产品库选品+数量步进+区间合计+CSV(BOM)含合规说明
@@ -52,7 +52,7 @@ WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.
 个人设置(昵称/头像色/主题/改密/备份/存储治理),profile,must,yes,yes,0.1.20 新增弹窗承载；0.1.24 迁入个人中心页(/tokens)统一承载，PATCH /api/auth/profile 持久化头像色，管理员含全库备份导出+产物占用清理
 数据备份与磁盘治理,system,must,yes,yes,0.1.20 新增：GET /api/admin/backup 全库 JSON 快照；storage 占用统计+30 天未引用产物清理；compose 日志轮转；nginx index.html 禁缓存根治发版报错
 个人中心-退出登录,profile,must,yes,yes,
-- **模型配置中心(对话/生图/ComfyUI/生视频四卡在线编辑+持久化+脱敏+连通测试)**：0.1.19 升级生视频 provider 可选(MiniMax Director/OpenAI Sora)不再写死，ComfyUI 配置提升为独立常驻卡，四卡均可编辑保存即生效、Key 只进不出、恢复默认回退 env；0.1.29 新增多套命名方案 CRUD+一键切换(ModelProfile 表，零回归切换)、Agent 集成技能包(Markdown 一键复制给外部智能体)、JWT 刷新端点(避免过期丢会话)
+模型配置中心(对话/生图/ComfyUI/生视频四卡在线编辑+持久化+脱敏+连通测试),profile,must,yes,yes,0.1.19 升级生视频 provider 可选(MiniMax Director/OpenAI Sora)不再写死；ComfyUI 配置提升为独立常驻卡；四卡均可编辑保存即生效、Key 只进不出、恢复默认回退 env；0.1.29 新增多套命名方案 CRUD+一键切换(ModelProfile 表，零回归切换)、Agent 集成技能包(Markdown 一键复制给外部智能体)、JWT 刷新端点(避免过期丢会话)
 开始接单-5 步向导整页替换,order,must,yes,yes,0.1.21 完整开发：AI 解析建档+状态机(new→qualified→proposed→quoted→won/lost)+跟进记录+AI 跟进建议+产品库匹配+方案挂接
 开始接单-历史方案,order,should,yes,yes,0.1.21 接待列表按状态分组持久化（OrderRequest 表），点击直达向导
 短视频工作台-IP 档案(传记+4×4)新建/导入,biography,should,yes,partial,页面框架已有，档案逻辑 0.3.0+
@@ -67,3 +67,12 @@ token 事务扣减+余额不足拒绝,billing,must,yes,yes,
 
 安全-改密即作废旧JWT(tokenVersion),security,must,yes,yes,0.1.32 User.tokenVersion+migration；JWT 带 tv 每请求比对 DB，改密自增版本号，旧 token 401 且无法 refresh，前端改密自动登出；iOS PWA 补 viewport-fit=cover/apple meta/safe-area/maskable；ComfyUI 模板移入 apps/api 修复容器内缺失；smoke 106/106+5
 三板块点击即匹配完整提示词,agents,must,yes,yes,0.1.33 生图 17 场景 chip 点击把完整画面描述写入 textarea(可删可改)+案例卡整段描述+参考图真实上传与视觉模型反推提示词(/api/media/images/reverse-prompt)保证同风格出图；生视频 8 场景完整分镜+3 视频案例联动首帧 I2V；12 种子智能体 starterPrompt 点卡片带入工作台；smoke 108/108+2
+智能灯光场景演示(上传效果图+编排灯具+手工时间轴+出片),treasure,must,yes,yes,0.1.40 独立页面 /lighting：5 类灯具(吸顶/射灯/灯带/落地/台)可拖动移位、改类型、上下调序、增删、设常暗；每盏灯一条轨道、关键帧调亮度(0-100%)与色温(2200-6500K)、可播放实时预览；编排落 LightingScene 表可复用；预览与出片共用同一份 fixtures+timeline；色温按插值映射暖冷光晕
+生图-毛坯房效果图专用流程,AIimage,must,yes,yes,0.1.40 独立工作流：照片(必传)+8 种装修风格(单选再点取消)+可叠加≤3 灯光场景；强约束「承重墙与隔墙走向/门窗洞口/阳台飘窗/层高/机位透视全部与原图一致，只做装修不改格局」；4:3/3:4/1:1
+生图-视频封面专用流程,AIimage,must,yes,yes,0.1.40 照片+主题必传，一键经 /api/llm/chat 生成大标题+左侧标签+右侧 3 卖点（生成结果可编辑，解析失败不阻断）；固定竖版 3:4；提示词含版式与配色描述
+生图-节假日海报专用流程,AIimage,must,yes,yes,0.1.40 12 个节日+门店名必填、特色标签≤5；固定竖版 2:3；提示词含节日主色与门店名文字排版要求
+生图-平面图转彩平图专用流程,AIimage,must,yes,yes,0.1.40 户型图必传+5 种配色风格；比例随风格自动适配(北欧/现代/中古→横版，轻奢/工业→方版)；强约束墙体结构与开门方向弧线与原图一致
+问题反馈(提交+处理进度跟踪),treasure,must,yes,yes,0.1.40 独立页面 /feedback：任意角色(含只读成员)可提交故障/建议/其他；管理员同页回复并按 待处理→处理中→已解决→已关闭 单向流转，非法流转返回 400；处理进度对提交者可见；仅提交者本人可删除；权限用既有 cs:manage（此前全站未被消费）
+定制智能体落库持久化,agents,must,yes,yes,0.1.40 CustomAgent 表替代 localStorage：租户内重名 409、跨租户 404；头像色 #RRGGBB 校验；换设备/清缓存不丢，团队成员可见
+会员与额度页,profile,should,yes,yes,0.1.40 独立页 /vip：如实说明「开源免费自部署、注册即解锁全部能力、无需开通套餐」+ 已解锁能力清单 + 需联系官方的三种情形(代运维/定制开发/发票合同)；顶栏「开通会员」入口改为「会员与额度」
+未知路由兜底,shell,must,yes,yes,0.1.40 内层 Routes 补 path="*" 回首页：此前旧收藏/手输错字会渲染整页空白

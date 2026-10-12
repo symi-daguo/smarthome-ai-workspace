@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
 import { TokenService } from '../src/billing/token.service.js';
@@ -11,6 +12,19 @@ function check(name: string, ok: boolean): void {
 }
 
 const randomPhone = (): string => `13${Math.floor(Math.random() * 1e9).toString().padStart(9, '0')}`;
+
+/**
+ * 稳定序列化（对象键按字典序排序后再拼接）。
+ * Postgres jsonb 不保证对象键顺序，直接 JSON.stringify 比较会假失败，故用它做深比较。
+ */
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
 
 async function request<T>(base: string, path: string, init?: RequestInit): Promise<{ status: number; body: T }> {
   const res = await fetch(`${base}${path}`, {
@@ -703,6 +717,221 @@ async function main(): Promise<void> {
   const backupForbidden = await request(base, '/api/admin/backup', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
   check('viewer 访问备份被拒（403）', backupForbidden.status === 403);
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: originalRoleId } });
+
+  // ---------- 定制智能体：租户内 CRUD + 重名 409 + 头像色校验 ----------
+  // 名字带随机后缀：不依赖「库是空的」假设
+  const agentName = `冒烟智能体-${randomPhone().slice(-6)}`;
+  const agentCreate = await request<{ id: string; name: string; avatarColor: string; enabled: boolean }>(base, '/api/agents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ name: agentName, description: '门店接待人设', systemPrompt: '你是一名智能家居门店接待顾问，语气亲切，先问需求再推荐方案。' }),
+  });
+  check(
+    '创建定制智能体 201（默认头像色 #5B5BF0 与启用态）',
+    agentCreate.status === 201 && agentCreate.body.avatarColor === '#5B5BF0' && agentCreate.body.enabled === true,
+  );
+  const agentId = agentCreate.body.id;
+
+  const agentDup = await request(base, '/api/agents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ name: agentName, systemPrompt: '租户内重名的另一个智能体' }),
+  });
+  check('租户内重名创建被拒（409）', agentDup.status === 409);
+
+  const agentList = await request<{ id: string }[]>(base, '/api/agents', authA);
+  check('智能体列表按创建时间倒序且含刚建的', agentList.status === 200 && agentList.body[0]?.id === agentId);
+
+  const agentBadColor = await request(base, '/api/agents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ name: `坏色-${randomPhone().slice(-6)}`, systemPrompt: '人设', avatarColor: 'red' }),
+  });
+  check('智能体非法头像色被校验拒绝（400）', agentBadColor.status === 400);
+
+  const agentNoPrompt = await request(base, '/api/agents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ name: `缺提示词-${randomPhone().slice(-6)}` }),
+  });
+  check('缺 systemPrompt 创建智能体被校验拒绝（400）', agentNoPrompt.status === 400);
+
+  const agentPatch = await request<{ name: string; enabled: boolean }>(base, `/api/agents/${agentId}`, {
+    ...authA,
+    method: 'PATCH',
+    body: JSON.stringify({ name: `${agentName}-改`, enabled: false }),
+  });
+  check(
+    '定制智能体 PATCH 可改名与停用',
+    agentPatch.status === 200 && agentPatch.body.name === `${agentName}-改` && agentPatch.body.enabled === false,
+  );
+
+  await request(base, `/api/agents/${agentId}`, { ...authA, method: 'DELETE' });
+  const agentAfterDel = await request(base, `/api/agents/${agentId}`, { ...authA, method: 'PATCH', body: JSON.stringify({ enabled: true }) });
+  check('删除定制智能体后再次修改返回 404', agentAfterDel.status === 404);
+
+  // ---------- 问题反馈：成员提交/查看，管理员处理，删除限提交者 ----------
+  // 复用已注册的 B 账号：拉进 A 的租户并降级为 designer（有 content:generate、无 platform:billing:manage），
+  // 用于验证「同租户非管理员」与「非提交者」两条越权路径（不额外注册，避免触发注册接口的独立限流）
+  const userBId = (await prisma.user.findUniqueOrThrow({ where: { phone: phoneB } })).id;
+  const designerRole = await prisma.role.findUniqueOrThrow({ where: { key: 'designer' } });
+  const membershipB = await prisma.membership.create({ data: { userId: userBId, tenantId: tenantA, roleId: designerRole.id } });
+  const authDesigner = { headers: { Authorization: `Bearer ${regB.body.token}`, 'X-Tenant-Id': tenantA } };
+
+  const fbCreate = await request<{ id: string; status: string; category: string; userId: string }>(base, '/api/feedback', {
+    ...authA,
+    method: 'POST',
+    // body 里的 userId 必须被忽略：提交者只取当前登录用户
+    body: JSON.stringify({ category: 'bug', title: '导出按钮点不动', detail: 'Chrome 上点击无反应', userId: userBId }),
+  });
+  check(
+    '提交反馈工单 201（status 默认 open 且 userId 取当前用户而非请求体）',
+    fbCreate.status === 201 && fbCreate.body.status === 'open' && fbCreate.body.category === 'bug' && fbCreate.body.userId === me.body.id,
+  );
+  const fbId = fbCreate.body.id;
+
+  const fbBadCategory = await request(base, '/api/feedback', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ category: 'not-a-category', title: '非法分类' }),
+  });
+  check('非法反馈分类被校验拒绝（400）', fbBadCategory.status === 400);
+
+  const fbList = await request<{ id: string }[]>(base, '/api/feedback', authA);
+  check('反馈列表按创建时间倒序且含刚提交的', fbList.status === 200 && fbList.body[0]?.id === fbId);
+
+  const fbDetail = await request<{ id: string; reply: string }>(base, `/api/feedback/${fbId}`, authA);
+  check('反馈详情可查（未回复时 reply 为空串）', fbDetail.status === 200 && fbDetail.body.id === fbId && fbDetail.body.reply === '');
+
+  const fb404 = await request(base, '/api/feedback/00000000-0000-0000-0000-000000000000', authA);
+  check('反馈工单不存在返回 404', fb404.status === 404);
+
+  const fbForbidden = await request(base, `/api/feedback/${fbId}`, {
+    ...authDesigner,
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'resolved' }),
+  });
+  check('同租户非管理员（designer）推进状态被拒（403）', fbForbidden.status === 403);
+
+  const fbResolved = await request<{ status: string; reply: string; repliedBy: string | null }>(base, `/api/feedback/${fbId}`, {
+    ...authA,
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'resolved', reply: '已修复，下个版本随灯光编排上线' }),
+  });
+  check(
+    '管理员推进 open→resolved 并写入回复与处理人',
+    fbResolved.status === 200 && fbResolved.body.status === 'resolved'
+      && fbResolved.body.reply.startsWith('已修复') && fbResolved.body.repliedBy === me.body.id,
+  );
+
+  const fbClosed = await request<{ status: string }>(base, `/api/feedback/${fbId}`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ status: 'closed' }),
+  });
+  check('合法流转 resolved→closed', fbClosed.status === 200 && fbClosed.body.status === 'closed');
+
+  const fbRollback = await request<{ status: string }>(base, `/api/feedback/${fbId}`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ status: 'resolved' }),
+  });
+  check('状态机拒绝回退（closed→resolved 返回 400）', fbRollback.status === 400);
+
+  const fbSkip = await request<{ status: string }>(base, `/api/feedback/${fbId}`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ status: 'open' }),
+  });
+  check('状态机拒绝跳级（closed→open 返回 400）', fbSkip.status === 400);
+
+  const fbStillClosed = await request<{ status: string }>(base, `/api/feedback/${fbId}`, authA);
+  check('非法流转未改动状态（仍为 closed）', fbStillClosed.status === 200 && fbStillClosed.body.status === 'closed');
+
+  const fbIdem = await request<{ status: string }>(base, `/api/feedback/${fbId}`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ status: 'closed' }),
+  });
+  check('重复置同一状态幂等', fbIdem.status === 200 && fbIdem.body.status === 'closed');
+
+  const fbDeleteOther = await request(base, `/api/feedback/${fbId}`, { ...authDesigner, method: 'DELETE' });
+  check('同租户非提交者删除工单被拒（403）', fbDeleteOther.status === 403);
+
+  const fbDelete = await request(base, `/api/feedback/${fbId}`, { ...authA, method: 'DELETE' });
+  check('提交者本人可删除工单', fbDelete.status === 200 || fbDelete.status === 204);
+
+  const fbAfterDel = await request(base, `/api/feedback/${fbId}`, authA);
+  check('删除后工单详情返回 404', fbAfterDel.status === 404);
+
+  await prisma.membership.delete({ where: { id: membershipB.id } });
+
+  // ---------- 智能灯光场景：灯具/时间轴 CRUD + 存取往返一致 ----------
+  const lightFixtures = [
+    { id: 'f1', type: 'downlight', name: '客厅主灯', x: 0.5, y: 0.25, brightness: 80, colorTemp: 3000, alwaysDim: true, order: 0 },
+    { id: 'f2', type: 'strip', name: '灯带', x: 0.25, y: 0.75, brightness: 60, colorTemp: 2700, alwaysDim: false, order: 1 },
+  ];
+  const lightTimeline = {
+    durationMs: 8000,
+    tracks: [
+      { fixtureId: 'f1', keyframes: [{ t: 0, brightness: 10, colorTemp: 2700 }, { t: 4000, brightness: 90, colorTemp: 4000 }] },
+    ],
+  };
+  const videoAssetId = randomUUID();
+
+  const sceneCreate = await request<{ id: string; ratio: string; status: string }>(base, '/api/lighting', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ title: '客厅灯光演示', ratio: '9:16', fixtures: lightFixtures, timeline: lightTimeline }),
+  });
+  check('创建灯光场景 201（status 默认 draft）', sceneCreate.status === 201 && sceneCreate.body.status === 'draft' && sceneCreate.body.ratio === '9:16');
+  const sceneId = sceneCreate.body.id;
+
+  const sceneDetail = await request<{ fixtures: unknown; timeline: unknown }>(base, `/api/lighting/${sceneId}`, authA);
+  check(
+    '灯具与时间轴存取往返一致（深比较）',
+    stable(sceneDetail.body.fixtures) === stable(lightFixtures) && stable(sceneDetail.body.timeline) === stable(lightTimeline),
+  );
+
+  type SceneListRow = { id: string; title: string; ratio: string; status: string; createdAt: string; videoAssetId: string | null };
+  const sceneList = await request<SceneListRow[]>(base, '/api/lighting', authA);
+  const sceneRow = sceneList.body.find((s) => s.id === sceneId);
+  check(
+    '灯光场景列表含刚建的且不回传 fixtures/timeline 大字段',
+    sceneList.status === 200 && sceneRow !== undefined && sceneRow.ratio === '9:16'
+      && sceneRow.videoAssetId === null && !('fixtures' in sceneRow) && !('timeline' in sceneRow),
+  );
+
+  const scenePatch = await request<{ title: string; videoAssetId: string | null }>(base, `/api/lighting/${sceneId}`, {
+    ...authA,
+    method: 'PATCH',
+    body: JSON.stringify({ title: '客厅灯光演示（已出片）', videoAssetId }),
+  });
+  check(
+    '灯光场景 PATCH 可改标题并回填出片资产 videoAssetId',
+    scenePatch.status === 200 && scenePatch.body.title === '客厅灯光演示（已出片）' && scenePatch.body.videoAssetId === videoAssetId,
+  );
+
+  const patchedFixtures = [{ ...lightFixtures[0], brightness: 20 }, lightFixtures[1]];
+  const scenePatch2 = await request<{ title: string; fixtures: unknown }>(base, `/api/lighting/${sceneId}`, {
+    ...authA,
+    method: 'PATCH',
+    body: JSON.stringify({ fixtures: patchedFixtures }),
+  });
+  check(
+    '灯光场景 PATCH 部分更新只改灯具不影响标题',
+    scenePatch2.status === 200 && stable(scenePatch2.body.fixtures) === stable(patchedFixtures) && scenePatch2.body.title === '客厅灯光演示（已出片）',
+  );
+
+  const sceneBadFixtures = await request(base, '/api/lighting', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ title: '坏灯具', fixtures: { id: 'f1' }, timeline: lightTimeline }),
+  });
+  check('fixtures 非数组被校验拒绝（400）', sceneBadFixtures.status === 400);
+
+  const sceneBadTimeline = await request(base, '/api/lighting', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ title: '坏时间轴', fixtures: lightFixtures, timeline: [] }),
+  });
+  check('timeline 非对象被校验拒绝（400）', sceneBadTimeline.status === 400);
+
+  await request(base, `/api/lighting/${sceneId}`, { ...authA, method: 'DELETE' });
+  const sceneAfterDel = await request(base, `/api/lighting/${sceneId}`, authA);
+  check('删除灯光场景后详情返回 404', sceneAfterDel.status === 404);
 
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;

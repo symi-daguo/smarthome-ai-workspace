@@ -17,6 +17,9 @@ import { VideoStudio } from './pages/VideoStudio';
 import { PlanStudio } from './pages/PlanStudio';
 import { TreasureBox } from './pages/TreasureBox';
 import { DeviceLayout } from './pages/DeviceLayout';
+import { LightingStudio } from './pages/LightingStudio';
+import { Feedback } from './pages/Feedback';
+import { Vip } from './pages/Vip';
 import { QuoteStudio } from './pages/QuoteStudio';
 import { ProductCenter } from './pages/ProductCenter';
 import { KnowledgeBase } from './pages/KnowledgeBase';
@@ -45,6 +48,9 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="materials" element={<MaterialLibrary />} />
             <Route path="treasure" element={<TreasureBox />} />
             <Route path="device-layout" element={<DeviceLayout />} />
+            <Route path="lighting" element={<LightingStudio />} />
+            <Route path="feedback" element={<Feedback />} />
+            <Route path="vip" element={<Vip />} />
             <Route path="quote" element={<QuoteStudio />} />
             <Route path="products" element={<ProductCenter />} />
             <Route path="knowledge" element={<KnowledgeBase />} />
@@ -52,6 +58,8 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="content" element={<ContentExtract />} />
             <Route path="tokens" element={<TokenCenter />} />
             <Route path="model-config" element={<ModelConfig />} />
+            {/* 未知路径兜底回首页：没有它的话，旧收藏/手输错字会渲染出整页空白 */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </ChatStoreProvider>

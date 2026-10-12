@@ -233,7 +233,7 @@ export function MainLayout(): ReactNode {
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
-    for (const k of ['/agents', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/tokens', '/model-config']) {
+    for (const k of ['/agents', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/tokens', '/model-config', '/lighting', '/feedback', '/vip']) {
       if (p.startsWith(k)) return k;
     }
     return '/';
@@ -651,7 +651,7 @@ export function MainLayout(): ReactNode {
           </Modal>
           <Button
             size="small"
-            onClick={() => navigate('/tokens')}
+            onClick={() => navigate('/vip')}
             style={{
               borderRadius: 16,
               background: BRAND_GRADIENT,
@@ -660,7 +660,7 @@ export function MainLayout(): ReactNode {
               display: isDesktop ? 'inline-flex' : 'none',
             }}
           >
-            开通会员
+            会员与额度
           </Button>
 
           <Dropdown menu={userMenu} trigger={['click']} placement="bottomRight">

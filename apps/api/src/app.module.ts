@@ -16,6 +16,9 @@ import { PlansModule } from './plans/plans.module.js';
 import { OrdersModule } from './orders/orders.module.js';
 import { KnowledgeModule } from './knowledge/knowledge.module.js';
 import { LayoutModule } from './layout/layout.module.js';
+import { AgentsModule } from './agents/agents.module.js';
+import { FeedbackModule } from './feedback/feedback.module.js';
+import { LightingModule } from './lighting/lighting.module.js';
 
 @Module({
   imports: [
@@ -41,6 +44,9 @@ import { LayoutModule } from './layout/layout.module.js';
     OrdersModule,
     KnowledgeModule,
     LayoutModule,
+    AgentsModule,
+    FeedbackModule,
+    LightingModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
