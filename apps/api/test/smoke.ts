@@ -351,6 +351,12 @@ async function main(): Promise<void> {
   check('挂接公共产品后 B 跨租户可读产品图（200）', bAfter.status === 200);
   await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ imageUrl: '' }) });
 
+  // 参考图反推提示词端点：参数校验 + 真实资产返回 200(视觉模型可用) 或 503(未配/不支持，诚实降级)
+  const reverseBad = await request(base, '/api/media/images/reverse-prompt', { ...auth0, method: 'POST', body: JSON.stringify({ assetId: 'not-a-uuid' }) });
+  check('反推提示词 assetId 非法被校验拒绝（400）', reverseBad.status === 400);
+  const reverseOk = await request(base, '/api/media/images/reverse-prompt', { ...auth0, method: 'POST', body: JSON.stringify({ assetId: upAsset.id }) });
+  check('反推提示词端点可达（200 出提示词 或 503 诚实提示视觉模型不可用）', reverseOk.status === 200 || reverseOk.status === 503);
+
   const layoutBadAsset = await request<{ message?: unknown }>(base, '/api/layouts', {
     method: 'POST',
     headers: { Authorization: `Bearer ${regA.body.token}` },

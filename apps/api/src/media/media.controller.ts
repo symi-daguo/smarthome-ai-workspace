@@ -15,9 +15,11 @@ import {
   generateImageSchema,
   generateVideoSchema,
   purchaseMaterialSchema,
+  reverseImagePromptSchema,
   type GenerateImageDto,
   type GenerateVideoDto,
   type PurchaseMaterialDto,
+  type ReverseImagePromptDto,
 } from './media.schemas.js';
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
@@ -38,6 +40,16 @@ export class MediaController {
       size: dto.size,
       title: dto.title,
     });
+  }
+
+  /** 上传参考图反推提示词（视觉模型），返回详细描述供前端回填后文生图，保证成图风格一致 */
+  @RequirePermissions('content:generate')
+  @Post('images/reverse-prompt')
+  reverseImagePrompt(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(reverseImagePromptSchema)) dto: ReverseImagePromptDto,
+  ) {
+    return this.media.reverseImagePrompt(user.activeTenantId as string, user.id, dto.assetId);
   }
 
   @RequirePermissions('content:generate')

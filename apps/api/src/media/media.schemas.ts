@@ -8,6 +8,12 @@ export const generateImageSchema = z.object({
 });
 export type GenerateImageDto = z.infer<typeof generateImageSchema>;
 
+/** 图片反推提示词：上传资产 id（先经 /api/media/uploads 上传），视觉模型输出可直接用于文生图的描述 */
+export const reverseImagePromptSchema = z.object({
+  assetId: z.string().uuid('缺少已上传的参考图'),
+});
+export type ReverseImagePromptDto = z.infer<typeof reverseImagePromptSchema>;
+
 export const generateVideoSchema = z.object({
   prompt: z.string().min(4, '请填写视频描述').max(2000),
   duration: z.union([z.literal(5), z.literal(10)]).default(5),

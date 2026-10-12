@@ -39,11 +39,18 @@ export function AgentMarket(): ReactNode {
       message.warning(`「${a.name}」未启用，先打开卡片右下角开关`);
       return;
     }
-    navigate('/', { state: { agent: a.name } });
+    // 带入该智能体专属的首条任务提示词，进入工作台即可直接发送（用户也可改后再发）
+    navigate('/', { state: { agent: a.name, prompt: a.starterPrompt } });
   };
 
   const openCustom = (a: CustomAgent): void => {
-    navigate('/', { state: { agent: a.name, systemPrompt: a.systemPrompt } });
+    navigate('/', {
+      state: {
+        agent: a.name,
+        systemPrompt: a.systemPrompt,
+        prompt: `你好，我想让你以「${a.name}」的身份帮我完成第一个任务：请先用一句话确认你的职责，然后问我需要你处理的具体事项。`,
+      },
+    });
   };
 
   const visible = useMemo(() => {

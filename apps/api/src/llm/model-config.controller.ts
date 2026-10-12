@@ -184,7 +184,8 @@ curl -X POST ${origin}/api/auth/login \\
 |---|---|---|---|
 | AI 对话 | POST /api/llm/chat | {prompt, systemPrompt?} | 走当前激活模型方案（对话：${chat.baseUrl}） |
 | AI 生图 | POST /api/media/images | {prompt, size?} | size=1024x1024/1536x1024/1024x1536（生图：${image.provider}） |
-| AI 生视频 | POST /api/media/videos | {prompt, duration?, resolution?, ratio?, firstFrameAssetId?} | 生视频：${video.provider} |
+| 参考图反推提示词 | POST /api/media/images/reverse-prompt | {assetId} | 需多模态对话模型；读出参考图风格/色调/构图，输出可直接生图的中文描述，保证同风格出图 |
+| AI 生视频 | POST /api/media/videos | {prompt, duration?, resolution?, ratio?, firstFrameAssetId?} | 生视频：${video.provider}；先用反推/生图拿首帧再传 firstFrameAssetId 即图生视频 |
 | 智能方案 | POST /api/plans | {title, customer, ...资料字段} | 产出 9 页可编辑 PPT 方案 |
 | 方案列表 | GET /api/plans | - | 历史方案（侧栏「历史对话」同款数据源） |
 | 接单解析 | POST /api/orders/intake | {rawInput} | 客户原话→结构化建档+产品推荐 |

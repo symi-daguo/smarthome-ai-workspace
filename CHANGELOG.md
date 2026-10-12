@@ -2,6 +2,25 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.33] - 2026-10-12
+
+### Added（AI 智能体/生图/生视频：点击即匹配完整提示词，复刻交互闭环）
+
+用户指出三个板块不能只有界面、点图片只给几个字；对照复刻项目 recon（S05 智能体卡片开聊、S06 场景 chip 填提示词、F03「场景 chip 自动填描述」）逐一核对后重做交互逻辑：点什么就自动出现可直接生成的完整提示词。
+
+- **AI 生图 · 场景 chip 点击即写提示词** [ImageStudio.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/ImageStudio.tsx)：17 个场景 chip 不再只在提交时偷偷拼接，点击即把完整画面描述（空间/风格/光色/构图/材质/真实感，40-80 字）以〔场景：…〕标记写进 textarea，可见、可删、可二次编辑，再点取消精确移除该句不污染手写内容，最多 3 个
+- **AI 生图 · 案例库点击填完整描述**：5 张案例卡点击写入整段可直接生成的海报/场景提示词（原来只有半句「参考…风格：」占位）
+- **AI 生图 · 参考图真实上传 + 一键反推提示词**：参考图上传此前被拦截提示「0.2.0 开放」是假入口，现走 /api/media/uploads 真实落盘+压缩+缩略预览；新增 [POST /api/media/images/reverse-prompt](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.controller.ts)：视觉模型读取参考图输出 120-260 字覆盖空间/风格/色调/构图/材质/灯光的中文描述并回填——这是 image-01 等纯文生图 provider 下保证「同一张参考图 100% 同风格出图」的行业标准做法（先反推再文生）；模型不支持视觉时 503 诚实提示，不假装成功
+- **AI 生视频 · 8 场景完整分镜 + 案例联动** [VideoStudio.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/VideoStudio.tsx)：场景从 5 个扩到 8 个（新增归家动线/晨起唤醒/窗帘开合），每条 hint 升级为含机位/动作/光色/时长的完整分镜描述；新增 3 张视频案例卡点写入分镜文本框并提示「先在 AI 生图出图再作首帧」，与首帧图生视频（I2V-01-Director）串成 F03 闭环
+- **AI 智能体 · 12 个种子智能体配专属首条任务** [agents.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/data/agents.ts)：每个智能体新增 starterPrompt（具体到门店真实任务，如朋友圈「128㎡交工 3 条风格文案+九宫格建议」、投流「武汉光谷 3 条钩子文案」），点卡片即带入工作台输入框可直接发送；自建智能体生成开场确认任务；点击未启用卡片仍先提示开开关
+- **Agent 技能包同步**：skillpack 增加反推提示词端点与图生视频首帧串联说明，agent 可自主完成「上传参考图→反推→生图→作首帧→生视频」全链路
+
+### Verified
+
+- 门禁：typecheck ✓ / build ✓ / **smoke 108/108**（+2：反推 assetId 非法 400、真实资产 200/503 诚实可达）
+- 浏览器逐点击实测：生图 chip 多选→textarea 实时出现 2 段〔场景：〕完整描述、再点取消精确移除、案例卡写入海报整段；生视频 8 chip 与归家动线描述回填、3 视频案例在位；智能体朋友圈卡片→跳工作台且输入框已带完整首条任务
+- console 无 JS error（仅 1 条 antd 表单 a11y issue 级框架提示）；api 日志 0 error；内存 api 127MB / web 14MB / db 32MB / redis 76MB
+
 ## [0.1.32] - 2026-10-12
 
 ### Added（全站马尾辫审查：token 安全 / iOS PWA / 部署一致性 / 版本同步）

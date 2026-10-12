@@ -296,6 +296,65 @@ export class MediaService {
     return asset;
   }
 
+  /**
+   * 图片反推提示词：参考图 → 视觉模型 → 可直接喂给文生图的详细中文描述。
+   * image-01 等纯文生图 provider 不支持图像输入，行业通用做法是先用视觉模型把画面的
+   * 空间/风格/色调/构图/材质/灯光反推成提示词，再文生图，保证成图风格一致。
+   */
+  async reverseImagePrompt(tenantId: string, userId: string, assetId: string): Promise<{ prompt: string; model: string }> {
+    const asset = await this.resolveReadable(tenantId, assetId);
+    if (!asset.mimeType?.startsWith('image/')) throw new BadRequestException('ASSET_NOT_IMAGE');
+    const buf = await readFile(this.resolveSafe(asset.filePath));
+    if (buf.length > 8 * 1024 * 1024) throw new BadRequestException('IMAGE_TOO_LARGE');
+
+    const cfg = await this.modelConfig.chatConfig();
+    if (!cfg.apiKey) {
+      throw new ServiceUnavailableException({
+        code: 'LLM_KEY_MISSING',
+        message: '对话模型（需支持图片理解的多模态模型）API Key 未配置，无法反推提示词',
+      });
+    }
+    const model = cfg.model || 'multimodal-model';
+    const system = [
+      '你是资深 AI 绘画提示词工程师，擅长从一张室内参考图反推文生图提示词。',
+      '输出一段 120-260 字的中文画面描述，必须覆盖：空间类型与布局、整体风格、主色调与色温、',
+      '构图与镜头视角、主要材质、灯光氛围（智能灯具要点出灯具形态/亮度/光色）、画面真实感要求。',
+      '只输出描述本身，不要标题、不要分点、不要解释。',
+    ].join('');
+    const dataUri = `data:${asset.mimeType};base64,${buf.toString('base64')}`;
+
+    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: [
+            { type: 'text', text: '请反推这张图的 AI 绘画提示词，用于生成相同风格的智能家居空间效果图。' },
+            { type: 'image_url', image_url: { url: dataUri } },
+          ] },
+        ],
+        temperature: 0.4,
+        max_tokens: 600,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      this.logger.warn(`反推提示词失败 ${res.status}: ${body.slice(0, 200)}`);
+      throw new ServiceUnavailableException({
+        code: 'VISION_UNSUPPORTED',
+        message: `当前对话模型不支持图片理解或调用失败（HTTP ${res.status}），请在模型配置中换成多模态视觉模型；也可以直接手写提示词`,
+        upstream: body.slice(0, 200),
+      });
+    }
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[]; model?: string };
+    const prompt = (data.choices?.[0]?.message?.content ?? '').replace(/[\s\S]*?<\/think>\s*/g, '').trim();
+    if (prompt.length < 10) throw new ServiceUnavailableException({ code: 'VISION_EMPTY', message: '模型未返回有效描述，请重试或手写提示词' });
+    await this.tokens.consume(tenantId, 10, 'CONSUME', { kind: 'image-reverse-prompt' }, userId).catch(() => undefined);
+    return { prompt, model: data.model ?? model };
+  }
+
   /** 素材库购买：扣 ¥1（100 token），写入产物库（kind=material）作为已购买凭证 */
   async purchaseMaterial(tenantId: string, userId: string, key: string): Promise<{ url: string }> {
     const allowed = new Set(['m1', 'm2']);

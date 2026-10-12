@@ -11,15 +11,25 @@ import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 
-const SCENES = ['观影模式', '会客模式', '就餐模式', '起夜模式', '灯光调节'];
+const SCENES = ['观影模式', '会客模式', '就餐模式', '起夜模式', '灯光调节', '归家动线', '晨起唤醒', '窗帘开合'];
 
 const SCENE_HINTS: Record<string, string> = {
-  观影模式: '固定机位，窗帘缓缓关闭，电视打开，灯光逐渐变暗，持续到片尾。',
-  会客模式: '镜头缓推，客厅主灯与灯带渐亮至会客亮度，氛围温暖明亮。',
-  就餐模式: '餐桌上方吊灯渐亮，餐边灯带同步亮起，色调暖白。',
-  起夜模式: '夜晚走廊与床底感应灯带以 10% 低亮度缓缓亮起，不刺眼。',
-  灯光调节: '同一空间内灯光从冷白渐变到暖黄，展示色温调节效果。',
+  观影模式: '固定中景机位，电动窗帘缓缓关闭，壁挂电视打开投出冷色画面光，客厅主灯熄灭、吊顶灯带与地脚灯在 3 秒内渐变暗至 20% 暖光，沙发区保留柔和微光，镜头缓慢推进，电影感氛围持续到片尾。',
+  会客模式: '镜头从玄关缓慢推向客厅，主灯与吊顶灯带渐亮至 4000K 会客亮度，茶几区域光线均匀变暖，人物落座后灯光稳定在明亮温馨状态，画面平稳。',
+  就餐模式: '餐厅固定机位略带环绕，餐桌上方三头吊灯由暗渐亮聚焦餐桌，餐边柜灯带同步亮起至 3000K 暖白，餐具与花艺在暖光下清晰，氛围温馨。',
+  起夜模式: '夜间低照度画面，人物脚落地触发感应，床底灯带先以 10% 微光缓缓亮起，镜头跟随脚步沿走廊移动，地脚灯逐点点亮、2700K 柔光不刺眼，回到床上后灯光渐隐。',
+  灯光调节: '同一空间固定机位，全屋灯光在 5 秒内从 5000K 冷白平滑渐变到 2700K 暖黄，墙面洗墙光颜色同步过渡，直观展示色温无级调节。',
+  归家动线: '第一视角入户动线，开门瞬间玄关感应灯亮起，镜头向前移动，客厅灯光由近及远依次点亮，窗帘缓缓合拢，最终落到客厅全景暖光欢迎状态。',
+  晨起唤醒: '清晨卧室延时感画面，窗帘缓缓向两侧打开透入自然光，室内灯光模拟日出由 2700K 暖黄渐亮至 5000K 冷白，人物伸腰起床，画面明亮柔和。',
+  窗帘开合: '窗边侧向固定机位，电动窗帘电机启动，窗帘沿轨道匀速开合，室外自然光随帘布移动在地板上拉出移动光斑，镜头微微横移展示开合全过程。',
 };
+
+/** 视频案例（点击把完整分镜描述写入文本框），图取自本地案例素材 */
+const VIDEO_CASES: { key: string; title: string; img: string; prompt: string }[] = [
+  { key: 'v1', title: '客厅观影短片', img: '/images/cases/c2.jpg', prompt: SCENE_HINTS['观影模式'] },
+  { key: 'v2', title: '归家第一视角', img: '/images/cases/c3.jpg', prompt: SCENE_HINTS['归家动线'] },
+  { key: 'v3', title: '主卧起夜跟拍', img: '/images/cases/c4.jpg', prompt: SCENE_HINTS['起夜模式'] },
+];
 
 const DURATIONS = [
   { value: '5', label: '5 秒' },
@@ -299,6 +309,30 @@ export function VideoStudio(): ReactNode {
               <Text type="secondary">暂无视频</Text>
             </>
           )}
+        </div>
+      </div>
+
+      {/* 视频案例：点击填入完整分镜描述 */}
+      <div style={{ marginTop: 28 }}>
+        <Text strong style={{ display: 'block', fontSize: 15, marginBottom: 10 }}>视频案例（点击把分镜描述写入文本框，建议先在「AI 生图」出图再作首帧）</Text>
+        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
+          {VIDEO_CASES.map((c) => (
+            <div
+              key={c.key}
+              role="button"
+              tabIndex={0}
+              onClick={() => { setDesc(c.prompt); setScene(null); message.info(`已填入「${c.title}」分镜描述，可直接生成`); }}
+              onKeyDown={(e) => e.key === 'Enter' && setDesc(c.prompt)}
+              style={{
+                width: 220, flex: 'none', height: 130, borderRadius: 12,
+                background: `url(${c.img}) center/cover no-repeat`,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                display: 'flex', alignItems: 'flex-end', padding: 12, cursor: 'pointer',
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: 600, color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,.6)' }}>{c.title}</Text>
+            </div>
+          ))}
         </div>
       </div>
 
