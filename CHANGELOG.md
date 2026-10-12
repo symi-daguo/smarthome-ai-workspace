@@ -2,6 +2,22 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.34] - 2026-10-12
+
+### Added（AI 智能体显式人设：点击即调用该角色，不再靠名字猜测）
+
+0.1.33 给 12 个种子智能体配了首条任务 starterPrompt，但 role 人设仍由 ChatStore 按名字 `include('朋友圈'|'脚本'|'直播'...)` 模糊匹配——6 个名字不带关键词的角色（直播逐字稿/开头优化/vlog/第一视角/活动策划/GEO）启用后会落到通用兜底「你是「X」智能体」，不专业。本版让智能体"自带人设"，点击=直接调用该角色。
+
+- **12 个智能体每个配显式 systemPrompt** [agents.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/data/agents.ts)：每个 AgentDef 新增 `systemPrompt` 字段，80-150 字中文明确"服务谁/输出格式/口吻"，例如短视频脚本 =「按镜头序号、画面内容、运镜、口播、时长的分镜表格，口语化有节奏」、直播逐字稿 =「按开场/套餐/互动/逼单四段可直接照读」、朋友圈 =「200 字内有现场感、配九宫格与定位、不用违规极限词」
+- **点击显式传递人设** [AgentMarket.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/AgentMarket.tsx)：`openAgent` 用 `navigate('/', { state: { agent, systemPrompt, prompt } })` 同时携带 systemPrompt 与 starterPrompt；自建智能体走同样的 state 通道
+- **ChatStore 优先用传入 systemPrompt，保留名字兜底** [ChatStore.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/store/ChatStore.tsx)：`effPrompt ?? systemPromptFor(effAgent)`——有显式人设走显式，没传（如旧的持久化会话）才回退到名字猜测，向后兼容
+- **仓库卫生 · .gitignore 补 `replica/diffs/`**：避免后续差异图误入索引（clone-screens/diffs 是 0.1.15 历史遗留，本版不清理历史索引避免改写提交记录）
+
+### Verified
+
+- 门禁：typecheck ✓ / build ✓ / smoke 108/108
+- 浏览器实测：朋友圈文案卡片→跳工作台→输入框已带"今天交工了一套 128㎡ 的三室两厅全屋智能..."完整首条任务，输入框上方显示智能体名（确认生效链路：state.systemPrompt → Dashboard.promptRef → ChatStore.send → WorkbenchConversation.systemPrompt）
+
 ## [0.1.33] - 2026-10-12
 
 ### Added（AI 智能体/生图/生视频：点击即匹配完整提示词，复刻交互闭环）
