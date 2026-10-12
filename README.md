@@ -81,6 +81,29 @@ pnpm build && pnpm smoke      # 冒烟基于编译产物
 docker compose up -d --build  # web 5173、api 3080
 ```
 
+### 构建期网络配置
+
+项目 `.npmrc` **刻意不固定 registry**，默认走官方源 `registry.npmjs.org`——这是 CI 与海外部署的正确选择。
+国内网络构建慢或偶发抖动时，用构建参数切到镜像源，**不需要改仓库任何文件**：
+
+```bash
+NPM_REGISTRY=https://registry.npmmirror.com/ docker compose up -d --build
+```
+
+该变量由 compose 的 `build.args` 透传给 Dockerfile 的 `ARG NPM_REGISTRY`，仅作用于构建期，不进镜像、不影响运行时。
+
+除此之外已内置三层防护，无需额外配置：
+
+| 防护 | 作用 | 实测依据 |
+|---|---|---|
+| 网络退避重试 | registry 抖动（`error 23` / `ECONNRESET`）时自动重试 5 次，退避 20s→120s | 原故障即此类，重跑即恢复 |
+| BuildKit pnpm store 缓存 | 依赖持久保留，重建时命中缓存不必全量重下 | 二次构建 258 个包**全部复用、零下载**，26.9s vs 冷构建约 2min |
+| 供应链发布窗口 `minimumReleaseAge: 1440` | 新发布版本需满 24 小时才可安装，压缩投毒窗口 | 784 个条目全部通过校验 |
+
+> `minimumReleaseAge` 取 24 小时而非 7 天是实测结论：本项目 Vite 8 / Rolldown 迭代极快，
+> 7 天窗口会拒掉 `@rolldown/binding-*` 1.2.13、`@napi-rs/canvas` 1.0.11 等近 7 天发布的包并**直接打断构建**。
+> 未设 `minimumReleaseAgeExclude`，即没有无效豁免；日后安装刚发布的版本会被明确拦下并提示。
+
 ## 模型与计费配置
 
 登录后侧栏「系统管理 → 模型配置」页可**在线完成全部模型配置**：对话 / 生图 / ComfyUI / 生视频四张可编辑卡片（Base URL、API Key、模型、provider 选择、ComfyUI 地址与工作流节点映射），保存即生效、持久化到数据库（无需重启）；「选用」按钮一键填入 DeepSeek / 通义千问 / 智谱 / Kimi / OpenAI / MiniMax / Ollama / LM Studio / vLLM 的推荐地址与模型；每卡带连通性测试与「恢复 .env 默认」。API Key 保存后只回显末四位，绝不外传明文。

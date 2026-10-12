@@ -8,7 +8,10 @@ allowBuilds:
   esbuild: true
   prisma: true
 
-# 仅在启用 minimumReleaseAge（本机 pnpm 当前为 undefined，此列表暂不生效）时用于豁免新发布的 lucide。
-# 版本号必须与 apps/web/package.json 的实际依赖一致，否则豁免静默失效。
-minimumReleaseAgeExclude:
-  - lucide@1.55.0
+# 供应链防护：新发布版本需满 24 小时（1440 分钟）才可安装，降低 npm 投毒窗口。
+# 选 24h 而非 7 天的实测依据：本项目 Vite 8 / Rolldown 工具链迭代极快，
+# 7 天（10080）会把 @rolldown/binding-* 1.2.13、@napi-rs/canvas 1.0.11 等
+# 近 7 天发布的包全部拒掉，直接打断构建；24 小时既能挡住投毒（攻击通常数小时内被发现下架），
+# 又不误伤正常跟进。当前 lockfile 784 个条目全部通过校验。
+# 不设 minimumReleaseAgeExclude：没有无效豁免，日后装到刚发布的版本会被明确拦下并提示。
+minimumReleaseAge: 1440

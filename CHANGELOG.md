@@ -2,6 +2,49 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.42] - 2026-10-12
+
+### Fix（构建可靠性：registry 未固定导致容器构建偶发失败）
+
+根因：项目 `.npmrc` 未声明 registry，容器内走官方源 `registry.npmjs.org`；本机全局
+`~/.npmrc` 配的国内镜像**不进镜像**，导致 `pnpm install --frozen-lockfile` 在容器里偶发
+`error (23)` 失败、重跑即恢复。硬编码国内镜像会连累 CI 与海外部署者，故改为可配置 + 多层加固。
+
+- **registry 改为构建参数**：两个 Dockerfile 加 `ARG NPM_REGISTRY`，compose 通过
+  `${NPM_REGISTRY:-}` 透传。默认留空=官方源（CI/海外正确选择）；国内网络用
+  `NPM_REGISTRY=https://registry.npmmirror.com/ docker compose build`，无需改仓库文件。
+- **网络退避重试**：`.npmrc` 补 `fetch-retries=5`、`fetch-retry-mintimeout=20000`、
+  `fetch-retry-maxtimeout=120000`、`network-timeout=300000`。纯重试参数，不改变解析结果。
+- **BuildKit store 缓存**：两个 Dockerfile 的 install 层挂
+  `--mount=type=cache,id=pnpm-store-{api,web},target=/pnpm/store,sharing=locked`，
+  配合 `package-import-method=copy`（否则 node_modules 是指向构建期挂载的软链，运行期会失效）。
+  api/web 用独立 cache id 避免并行构建争锁。
+- **供应链防护**：`pnpm-workspace.yaml` 启用 `minimumReleaseAge: 1440`（新版本满 24 小时才可安装），
+  并删除已失效的 `minimumReleaseAgeExclude`（lucide 1.55.0 现已超过窗口，留着是无效豁免）。
+
+### Docs
+
+- README 新增「构建期网络配置」小节：参数用法、三层防护表与各自的实测依据。
+- `.env.example` 新增 `NPM_REGISTRY`（默认空=官方源）。
+
+### 关键实测结论
+
+- `minimumReleaseAge` 不能取 7 天（10080）：本项目 Vite 8 / Rolldown 迭代极快，
+  7 天窗口会拒掉 `@rolldown/binding-*` 1.2.13、`@napi-rs/canvas` 1.0.11、
+  `@oxc-project/types` 0.153.0 等近 7 天发布的包并**直接打断构建**。24 小时既能挡投毒
+  （攻击通常数小时内被发现下架）又不误伤正常跟进。
+- BuildKit 缓存命中实测：二次构建 258 个包全部复用、**零下载**，构建耗时 26.9s（冷构建约 2min）。
+- `package-import-method=copy` 运行时完整性实测：容器内 `apps/api/node_modules` 悬空软链数
+  **0**，`@prisma/client` / `argon2`（含原生二进制 prebuilds）均正常加载。
+
+### Verified
+
+- `pnpm typecheck` ✓ / `pnpm build` ✓
+- `pnpm smoke` ✓ **150/150**
+- 默认（官方源）`docker compose build` ✓ 全量通过，构建日志确认走 `使用默认 registry（官方源）`
+- `NPM_REGISTRY=https://registry.npmmirror.com/ docker compose build` ✓ 生效，构建日志确认
+- 全栈 `docker compose up -d` 后：`/api/health` 返回 ok、5173 返回 200
+
 ## [0.1.41] - 2026-10-12
 
 ### Fix（复刻一致性：百宝箱预览图与板块语义错配）

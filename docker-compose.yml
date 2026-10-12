@@ -43,6 +43,9 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      args:
+        # 留空=官方源（CI/海外）；国内网络：NPM_REGISTRY=https://registry.npmmirror.com/ docker compose build
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: '3080'
@@ -118,6 +121,9 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        # 留空=官方源（CI/海外）；国内网络：NPM_REGISTRY=https://registry.npmmirror.com/ docker compose build
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
     ports:
       - '5173:80'
     logging: *log-rotate
