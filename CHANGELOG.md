@@ -2,6 +2,28 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.36] - 2026-10-12
+
+### Verified（生图/生视频/智能方案 端到端 Agent 验证）
+
+按用户要求用 agent + token 全链路验证各核心能力（不依赖浏览器反复登录），结果全部真实通过：
+
+- **LLM 对话** [POST /api/llm/chat](file:///Volumes/hasskit/codex/aisaas/apps/api/src/llm/llm.controller.ts)：MiniMax-M3 回复"武汉4月通常15-25°C..."真实有用，扣 3 token
+- **生图** [POST /api/media/images](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.controller.ts)：image-01 返回 1024×1024 JPEG 388KB 真实图片，扣 300 token
+- **生视频** [POST /api/media/videos](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.controller.ts)：T2V-01 返回 5 秒 869KB MP4 真实视频，扣 1500 token
+- **智能方案 9 页 LLM 生成** [POST /api/plans](file:///Volumes/hasskit/codex/aisaas/apps/api/src/plans/plans.controller.ts)：封面页正文含客户姓名"张先生"、户型"三室两厅"、生态"米家+小度"、三代同堂日常语气；9 页 × 100 = 900 token
+- **公开分享免登录** [GET /api/public/plans/:token](file:///Volumes/hasskit/codex/aisaas/apps/api/src/plans/plans.controller.ts)：返回 9 页方案内容
+- **图片上传** [POST /api/media/uploads](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.controller.ts)：落盘 + MediaAsset
+- **文件流** [GET /api/media/assets/:id/file?token=](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.controller.ts)：200 + 真实二进制
+- **Agent 人设**（a3 朋友圈 systemPrompt）：注入生效，输出口语化 200 字内含九宫格建议
+- **账本对账**：SUM(TokenLedger.delta) = tenant.tokenBalance = 95797 完美一致（每次 consume/grant 均事务内同步余额与流水，0 漂移）
+
+### Verified
+
+- 门禁：typecheck ✓ / build ✓ / **smoke 119/119**
+- 容器状态：api 140MB / web 9.46MB / db 33MB / redis 14MB 正常，api 日志 0 error/warn
+- 信息安全：tenantId 隔离 + token 鉴权 + 公共产品图引用保护全部生效
+
 ## [0.1.35] - 2026-10-12
 
 ### Added（我的资料 CRUD 补齐：最基本的备份/修改/删除能力）
