@@ -31,3 +31,9 @@ export const purchaseMaterialSchema = z.object({
 });
 export type PurchaseMaterialDto = z.infer<typeof purchaseMaterialSchema>;
 
+/** 重命名我的资料（图片/视频）：本租户产物，最基本的修改能力 */
+export const renameAssetSchema = z.object({
+  title: z.string().trim().min(1, '标题不能为空').max(100),
+});
+export type RenameAssetDto = z.infer<typeof renameAssetSchema>;
+

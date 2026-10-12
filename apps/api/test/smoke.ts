@@ -170,6 +170,17 @@ async function main(): Promise<void> {
   });
   check('已入库文档列表可查', Array.isArray(docs.body) && docs.body.length >= 2);
 
+  // ---------- 内容提取 DELETE（jobId 或 documentId 都能删，级联清理） ----------
+  // 用 badJob.id 删（前面已 confirmRes 把该任务入库，jobId 仍能命中级联清掉）
+  const delByJob = await request(base, `/api/content/extractions/documents/${badJob.id}`, {
+    headers: { Authorization: `Bearer ${regA.body.token}` }, method: 'DELETE',
+  });
+  check('删除提取任务（jobId）级联清文档 200/204', delByJob.status === 200 || delByJob.status === 204);
+  const jobsAfter = await request<unknown[]>(base, '/api/content/extractions', { headers: { Authorization: `Bearer ${regA.body.token}` } });
+  check('删除后任务不在列表中', Array.isArray(jobsAfter.body) && !jobsAfter.body.some((j) => (j as Record<string, unknown>).id === badJob.id));
+  const delJobAgain = await request(base, `/api/content/extractions/documents/${badJob.id}`, { headers: { Authorization: `Bearer ${regA.body.token}` }, method: 'DELETE' });
+  check('重复删除同一提取任务 404', delJobAgain.status === 404);
+
   // 知识库产品资料确认入库 -> 自动同步产品中心（我的库 +1，品类自动推断）
   {
     const synced = await request<{ id: string; name: string; tenantId: string | null; category: string }[]>(base, '/api/products', { headers: { Authorization: `Bearer ${regA.body.token}` } });
@@ -356,6 +367,39 @@ async function main(): Promise<void> {
   check('反推提示词 assetId 非法被校验拒绝（400）', reverseBad.status === 400);
   const reverseOk = await request(base, '/api/media/images/reverse-prompt', { ...auth0, method: 'POST', body: JSON.stringify({ assetId: upAsset.id }) });
   check('反推提示词端点可达（200 出提示词 或 503 诚实提示视觉模型不可用）', reverseOk.status === 200 || reverseOk.status === 503);
+
+  // ---------- 我的资料 CRUD：重命名 + 删除（最基本的修改/删除能力） ----------
+  const renameOk = await request<{ id: string; title: string }>(base, `/api/media/assets/${upAsset.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ title: '冒烟重命名图' }) });
+  check('我的资料 PATCH 重命名 200', renameOk.status === 200 && renameOk.body.title === '冒烟重命名图');
+  const renameEmpty = await request(base, `/api/media/assets/${upAsset.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ title: '  ' }) });
+  check('重命名空标题被拒（400）', renameEmpty.status === 400);
+  // 跨租户重命名 A 的资产 → B 应 404
+  const authB = { headers: { Authorization: `Bearer ${regB.body.token}` } };
+  const renameCross = await request(base, `/api/media/assets/${upAsset.id}`, { ...authB, method: 'PATCH', body: JSON.stringify({ title: '越权' }) });
+  check('跨租户重命名被拒（404）', renameCross.status === 404);
+
+  // 公共产品图被引用时不可重命名/删除：把图挂回去，再尝试重命名应 400
+  await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ imageUrl: upAsset.url }) });
+  const renameRefused = await request(base, `/api/media/assets/${upAsset.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ title: '被引用' }) });
+  check('被公共产品图引用的资料重命名被拒（400）', renameRefused.status === 400);
+  // 解引用后再重命名 OK
+  await request(base, `/api/products/${pub?.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ imageUrl: '' }) });
+  const renameOk2 = await request(base, `/api/media/assets/${upAsset.id}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ title: '解引用后重命名' }) });
+  check('解引用后重命名恢复 200', renameOk2.status === 200);
+
+  // 删除：跨租户应 404，再补一条正常资产走完整删除
+  const delCross = await request(base, `/api/media/assets/${upAsset.id}`, { ...authB, method: 'DELETE' });
+  check('跨租户删除被拒（404）', delCross.status === 404);
+  // 再上传一张新图用于删除断言（避免影响上面后续断言需要引用 upAsset.id）
+  const fdImg2 = new FormData();
+  fdImg2.append('file', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'asset-delete.png');
+  fdImg2.append('title', '待删除图');
+  const upRes2 = await fetch(`${base}/api/media/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${regA.body.token}` }, body: fdImg2 });
+  const upAsset2 = (await upRes2.json()) as { id: string };
+  const delOk = await request<{ id: string }>(base, `/api/media/assets/${upAsset2.id}`, { ...auth0, method: 'DELETE' });
+  check('我的资料 DELETE 删除 200', delOk.status === 200 && delOk.body.id === upAsset2.id);
+  const delAgain = await request(base, `/api/media/assets/${upAsset2.id}`, { ...auth0, method: 'DELETE' });
+  check('已删资产再删 404', delAgain.status === 404);
 
   const layoutBadAsset = await request<{ message?: unknown }>(base, '/api/layouts', {
     method: 'POST',

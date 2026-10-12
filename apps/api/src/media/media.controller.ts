@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
@@ -15,10 +15,12 @@ import {
   generateImageSchema,
   generateVideoSchema,
   purchaseMaterialSchema,
+  renameAssetSchema,
   reverseImagePromptSchema,
   type GenerateImageDto,
   type GenerateVideoDto,
   type PurchaseMaterialDto,
+  type RenameAssetDto,
   type ReverseImagePromptDto,
 } from './media.schemas.js';
 
@@ -74,6 +76,27 @@ export class MediaController {
   @Get('assets')
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.media.list(user.activeTenantId as string);
+  }
+
+  /** 重命名我的资料（图片/视频）：最基本的修改能力；公共产品图不可改 */
+  @RequirePermissions('content:generate')
+  @Patch('assets/:id')
+  renameAsset(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(renameAssetSchema)) dto: RenameAssetDto,
+  ) {
+    return this.media.renameAsset(user.activeTenantId as string, id, dto.title);
+  }
+
+  /** 删除我的资料（图片/视频）：DB 行 + 本地文件；公共产品图引用保护 */
+  @RequirePermissions('content:generate')
+  @Delete('assets/:id')
+  deleteAsset(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+  ) {
+    return this.media.deleteAsset(user.activeTenantId as string, id);
   }
 
   @RequirePermissions('content:generate')

@@ -1,5 +1,13 @@
-import { PictureOutlined, PlayCircleOutlined, FileTextOutlined, FilePptOutlined } from '@ant-design/icons';
-import { Empty, Grid, Typography, theme } from 'antd';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  FilePptOutlined,
+  FileTextOutlined,
+  MoreOutlined,
+  PictureOutlined,
+  PlayCircleOutlined,
+} from '@ant-design/icons';
+import { App as AntApp, Button, Dropdown, Empty, Grid, Modal, Popconfirm, Typography, theme } from 'antd';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, fileUrl } from '../lib/api';
 import { useChatStore } from '../store/ChatStore';
@@ -60,12 +68,54 @@ export function MyAssets(): ReactNode {
       next.add(id);
       return next;
     });
+  const { message } = AntApp.useApp();
+  // 重命名 Modal 状态：资产 id + 初始标题
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [renameText, setRenameText] = useState('');
+  // 删除确认 Modal：Dropdown item 里嵌 Popconfirm 在 antd v6 下会被外层 outside click 关掉，改用 Modal 二次确认
+  const [deleting, setDeleting] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => {
     api<MediaRow[]>('/api/media/assets')
       .then(setMedia)
       .catch(() => setMedia([]));
   }, []);
+
+  // 重命名：点卡片「重命名」打开 Modal 改写标题（最基本的修改能力）
+  const openRename = (id: string, currentTitle: string): void => {
+    setRenaming({ id, title: currentTitle });
+    setRenameText(currentTitle);
+  };
+  const submitRename = async (): Promise<void> => {
+    if (!renaming) return;
+    const title = renameText.trim();
+    if (!title) {
+      message.warning('标题不能为空');
+      return;
+    }
+    if (title === renaming.title) {
+      setRenaming(null);
+      return;
+    }
+    try {
+      await api(`/api/media/assets/${renaming.id}`, { method: 'PATCH', body: JSON.stringify({ title }) });
+      setMedia((prev) => prev.map((m) => (m.id === renaming.id ? { ...m, title } : m)));
+      message.success('已重命名');
+      setRenaming(null);
+    } catch (e) {
+      message.error((e as Error).message || '重命名失败');
+    }
+  };
+  // 删除：DB 行 + 本地文件，公共产品图被引用时后端 400 ASSET_REFUSED_BY_PRODUCT
+  const removeAsset = async (id: string, title: string): Promise<void> => {
+    try {
+      await api(`/api/media/assets/${id}`, { method: 'DELETE' });
+      setMedia((prev) => prev.filter((m) => m.id !== id));
+      message.success(`已删除「${title}」`);
+    } catch (e) {
+      message.error((e as Error).message || '删除失败');
+    }
+  };
 
   // 图片/视频来自后端产物库；文案仍从本地对话派生
   const assets = useMemo<Asset[]>(() => {
@@ -197,9 +247,36 @@ export function MyAssets(): ReactNode {
                     </Text>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <Text type="secondary" style={{ fontSize: 11 }}>{KIND_LABEL[a.kind]}</Text>
-                      {a.url ? (
-                        <a href={a.url} download={a.title} style={{ fontSize: 11 }}>下载</a>
-                      ) : null}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {a.url ? (
+                          <a href={a.url} download={a.title} style={{ fontSize: 11 }}>下载</a>
+                        ) : null}
+                        {a.kind === 'image' || a.kind === 'video' ? (
+                          <Dropdown
+                            trigger={['click']}
+                            menu={{
+                              items: [
+                                {
+                                  key: 'rename',
+                                  icon: <EditOutlined />,
+                                  label: '重命名',
+                                  onClick: () => openRename(a.id, a.title),
+                                },
+                                { type: 'divider' },
+                                {
+                                  key: 'delete',
+                                  icon: <DeleteOutlined />,
+                                  danger: true,
+                                  label: '删除',
+                                  onClick: () => setDeleting({ id: a.id, title: a.title }),
+                                },
+                              ],
+                            }}
+                          >
+                            <Button type="text" size="small" icon={<MoreOutlined />} aria-label="更多操作" />
+                          </Dropdown>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -208,6 +285,42 @@ export function MyAssets(): ReactNode {
           </div>
         ))
       )}
+
+      <Modal
+        title="重命名"
+        open={renaming !== null}
+        onCancel={() => setRenaming(null)}
+        onOk={() => void submitRename()}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <input
+          autoFocus
+          value={renameText}
+          onChange={(e) => setRenameText(e.target.value)}
+          maxLength={100}
+          style={{ width: '100%', padding: '6px 10px', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 14 }}
+          placeholder="给这张图片起个名字"
+        />
+      </Modal>
+
+      <Modal
+        title="删除资料"
+        open={deleting !== null}
+        onCancel={() => setDeleting(null)}
+        onOk={async () => {
+          if (!deleting) return;
+          await removeAsset(deleting.id, deleting.title);
+          setDeleting(null);
+        }}
+        okText="删除"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        destroyOnClose
+      >
+        确定删除「{deleting?.title}」？文件会一并清理，方案/产品引用中时会被服务端 400 拒绝。
+      </Modal>
     </div>
   );
 }

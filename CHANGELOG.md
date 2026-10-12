@@ -2,6 +2,32 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.35] - 2026-10-12
+
+### Added（我的资料 CRUD 补齐：最基本的备份/修改/删除能力）
+
+用户审查指出"新建和上传的资料要支持备份、修改和删除这种最基本的功能目前都没有处理好"。按马尾辫 7 级阶梯核查：
+
+- **存量 CRUD**：Product（我的库）/Category/Layout/Plan/Order 都有完整 Post/Patch/Delete + 前端按钮，OK
+- **缺失**：`MediaAsset`（图片/视频上传/生成的产物）后端只有 POST + GET，**完全没有 PATCH/DELETE**；前端 [MyAssets.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/MyAssets.tsx) 只有"下载"链接，没有重命名/删除按钮
+- **缺失**：[ContentExtract](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/ContentExtract.tsx) 的"提取任务"与"已入库文档"两个表都**没有删除列**（后端 DELETE 端点原本就在 content.controller 路由下）
+
+**补齐（不造轮子，复用现有 storage/cleanup 的引用保护思路）：**
+
+- **后端 [MediaService](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.service.ts)** 加 `renameAsset` + `deleteAsset`：本租户 findFirst（404 越权），公共产品图 imageUrl 引用保护（同 storage/cleanup 的引用解析，400 ASSET_REFUSED_BY_PRODUCT），删除后异步 unlink 本地文件并 try/catch（文件不在照常删行）；[MediaController](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.controller.ts) 加 `PATCH /api/media/assets/:id` + `DELETE /api/media/assets/:id`；[media.schemas.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/media/media.schemas.ts) 加 `renameAssetSchema`（trim+min 1+max 100）
+- **后端 [ContentService.removeDocument](file:///Volumes/hasskit/codex/aisaas/apps/api/src/content/content.service.ts)** 同时支持 `documentId` 与 `jobId` 两种入参：jobs 表 JobRow 用 jobId、已入库文档用 documentId，前后端共用一个 DELETE 端点
+- **前端 [MyAssets](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/MyAssets.tsx)**：每张图片/视频卡片加"更多操作"Dropdown 菜单，含"重命名"+"删除"。Dropdown item 内嵌 Popconfirm 在 antd v6 + Dropdown 下被外层 outside-click 关掉（实测 bug），改用 antd Modal 二次确认——更稳，禁用文案统一："确定删除「X」？文件会一并清理，方案/产品引用中时会被服务端 400 拒绝"
+- **前端 [ContentExtract](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/ContentExtract.tsx)**：两个 Table 的"操作"列加 antd Popconfirm 删除按钮，jobs 行删（jobId）+ docs 行删（documentId）都走 `DELETE /api/content/extractions/documents/:id`
+- **路径 bug 修复**：原 controller `@Controller('content/extractions')` 前缀下，`Delete('documents/:id')` 实际为 `/api/content/extractions/documents/:id`，原 smoke 测过 list 但没测过 delete → 本版补齐 DELETE 断言覆盖此路径
+- **smoke +11 断言**：media PATCH 重命名 200 / 空标题 400 / 跨租户 404 / 公共产品图引用保护 400 / 解引用后 200 / DELETE 跨租户 404 / DELETE 200 / 已删再删 404；content DELETE jobId 200/204 / 删除后列表不见 / 重复删 404
+
+### Verified
+
+- 门禁：typecheck ✓ / build ✓ / **smoke 119/119**（+11 资料 CRUD 断言）
+- 浏览器实测 MyAssets：上传一张图→点"更多操作"→"重命名"弹 Modal 改"big-photo-重命名后"→保存→列表更新；点"更多操作"→"删除"弹 Modal 二次确认→确定→列表去掉该卡
+- 浏览器实测 ContentExtract：jobs 表"删除"按钮→Popconfirm→"删除"→任务 3→3 行（之前 4 行）
+- 运行：api 133MB / web 9.78MB / db 32MB / redis 14MB 正常，api 日志 0 error/warn
+
 ## [0.1.34] - 2026-10-12
 
 ### Added（AI 智能体显式人设：点击即调用该角色，不再靠名字猜测）

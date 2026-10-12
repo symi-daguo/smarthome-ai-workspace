@@ -248,10 +248,18 @@ export class ContentService {
     return this.detail(tenantId, jobId);
   }
 
-  /** 删除已入库文档（连带提取任务级联删除） */
-  async removeDocument(tenantId: string, documentId: string): Promise<void> {
-    const doc = await this.prisma.extractedDocument.findFirst({ where: { id: documentId, tenantId } });
-    if (!doc) throw new NotFoundException('DOCUMENT_NOT_FOUND');
-    await this.prisma.extractionJob.delete({ where: { id: doc.jobId } });
+  /** 删除提取任务/已入库文档（id 可为 documentId 或 jobId，自动识别；级联清理） */
+  async removeDocument(tenantId: string, id: string): Promise<void> {
+    const doc = await this.prisma.extractedDocument.findFirst({ where: { id, tenantId } });
+    if (doc) {
+      await this.prisma.extractionJob.delete({ where: { id: doc.jobId } });
+      return;
+    }
+    const job = await this.prisma.extractionJob.findFirst({ where: { id, tenantId } });
+    if (job) {
+      await this.prisma.extractionJob.delete({ where: { id: job.id } });
+      return;
+    }
+    throw new NotFoundException('DOCUMENT_NOT_FOUND');
   }
 }

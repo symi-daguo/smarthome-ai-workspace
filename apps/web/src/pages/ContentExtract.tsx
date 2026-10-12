@@ -1,6 +1,7 @@
 import {
   CheckCircleFilled,
   CloudUploadOutlined,
+  DeleteOutlined,
   FileSearchOutlined,
   LinkOutlined,
   MessageOutlined,
@@ -16,6 +17,7 @@ import {
   Empty,
   Form,
   Input,
+  Popconfirm,
   Progress,
   Radio,
   Row,
@@ -166,6 +168,18 @@ export function ContentExtract(): ReactNode {
     }
   };
 
+  // 删除资料（提取任务/已入库文档共用入口）：后端按 docId/jobId 走 extractionJob.delete 级联
+  const removeDocument = async (id: string, label: string): Promise<void> => {
+    try {
+      await api(`/api/content/extractions/documents/${id}`, { method: 'DELETE' });
+      message.success(`已删除「${label}」`);
+      if (reviewJob?.document?.id === id) setReviewJob(null);
+      await refresh();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const submitUpload = async (file: File): Promise<boolean> => {
     const docType = uploadForm.getFieldValue('docType') ?? 'product';
     setSubmitting(true);
@@ -290,11 +304,25 @@ export function ContentExtract(): ReactNode {
     },
     {
       title: '操作',
-      width: 90,
+      width: 150,
       render: (_: unknown, row: JobRow) => (
-        <Button type="link" size="small" onClick={() => void openReview(row.id)}>
-          {row.status === 'REVIEWING' ? '去确认' : '查看'}
-        </Button>
+        <Space size={4}>
+          <Button type="link" size="small" onClick={() => void openReview(row.id)}>
+            {row.status === 'REVIEWING' ? '去确认' : '查看'}
+          </Button>
+          <Popconfirm
+            title="删除该提取任务？"
+            description="DB 行会一并清理（任务→文档级联）"
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => void removeDocument(row.id, row.document?.title ?? row.sourceRef)}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -436,6 +464,24 @@ export function ContentExtract(): ReactNode {
                     },
                     { title: '质量分', width: 90, render: (_: unknown, r: DocRow) => r.job.score ?? '-' },
                     { title: '更新时间', dataIndex: 'updatedAt', width: 160, render: (v: string) => dayjs(v).format('MM-DD HH:mm') },
+                    {
+                      title: '操作',
+                      width: 90,
+                      render: (_: unknown, row: DocRow) => (
+                        <Popconfirm
+                          title="删除该已入库文档？"
+                          description="关联提取任务会一并清理"
+                          okText="删除"
+                          cancelText="取消"
+                          okButtonProps={{ danger: true }}
+                          onConfirm={() => void removeDocument(row.id, row.title)}
+                        >
+                          <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                            删除
+                          </Button>
+                        </Popconfirm>
+                      ),
+                    },
                   ]}
                 />
               ),

@@ -8,7 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaService } from '../prisma/prisma.module.js';
@@ -379,5 +379,37 @@ export class MediaService {
       });
     }
     return { url: `/images/materials/${key}.jpg` };
+  }
+
+  /**
+   * 重命名本租户的产物（最基本的修改能力）。
+   * 公共产品图不可改——被任一启用产品 imageUrl 引用的页码反而会被产品中心管理走，ponytail: 复用 StorageCleanup 的引用解析思路，
+   * 这里抛 400 ASSET_REFUSED 让前端给出明确提示。
+   */
+  async renameAsset(tenantId: string, id: string, title: string) {
+    const asset = await this.prisma.mediaAsset.findFirst({ where: { id, tenantId } });
+    if (!asset) throw new NotFoundException('ASSET_NOT_FOUND');
+    const referenced = await this.prisma.product.findFirst({ where: { active: true, imageUrl: { contains: id } } });
+    if (referenced) throw new BadRequestException('ASSET_REFUSED_BY_PRODUCT');
+    const updated = await this.prisma.mediaAsset.update({ where: { id }, data: { title } });
+    return { id: updated.id, title: updated.title };
+  }
+
+  /**
+   * 删除本租户产物：DB 行 + 本地文件一并清。
+   * 公共产品图引用保护：与 StorageCleanup 同逻辑，被任一启用产品 imageUrl 引用的产物不可删。
+   */
+  async deleteAsset(tenantId: string, id: string): Promise<{ id: string }> {
+    const asset = await this.prisma.mediaAsset.findFirst({ where: { id, tenantId } });
+    if (!asset) throw new NotFoundException('ASSET_NOT_FOUND');
+    const referenced = await this.prisma.product.findFirst({ where: { active: true, imageUrl: { contains: id } } });
+    if (referenced) throw new BadRequestException('ASSET_REFUSED_BY_PRODUCT');
+    try {
+      await unlink(this.resolveSafe(asset.filePath));
+    } catch {
+      // 文件已不存在，照常删行
+    }
+    await this.prisma.mediaAsset.delete({ where: { id } });
+    return { id };
   }
 }
