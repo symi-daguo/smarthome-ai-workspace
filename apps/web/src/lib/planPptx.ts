@@ -20,6 +20,8 @@ export interface PlanForExport {
   pages: PlanPage[];
   /** 点位编辑器挂接的户型底图（含 ?token= 的可加载 URL）与设备点位 */
   floorplanUrl?: string | null;
+  /** AI 渲染的精装修效果图（与原始户型图共存时优先用此图，覆盖点位叠加） */
+  renderedFloorplanUrl?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
 }
 
@@ -172,9 +174,17 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
   );
   const img = (page: PlanPage): string => cropMap.get(`${pageImageType(page)}|${page.type}`) ?? '';
 
-  // 空间动线页：若挂接了户型图+点位，合成"户型+设备点位"标注图（保持原比例，contain 放入竖框）
+  // 空间动线页：优先用精装修效果图 > 户型+点位合成图 > 场景实景图
   let floorplan: { data: string; ratio: number } | null = null;
-  if (plan.floorplanUrl && plan.layoutPoints?.length) {
+  if (plan.renderedFloorplanUrl) {
+    try {
+      const data = await imgData(plan.renderedFloorplanUrl);
+      floorplan = { data, ratio: await imageRatio(data) };
+    } catch {
+      floorplan = null;
+    }
+  }
+  if (!floorplan && plan.floorplanUrl && plan.layoutPoints?.length) {
     try {
       const composed = await compositePoints(plan.floorplanUrl, plan.layoutPoints, 1400);
       const ratio = await imageRatio(composed);

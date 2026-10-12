@@ -5,9 +5,15 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
 import { LlmService } from '../llm/llm.service.js';
+import { ModelConfigService } from '../llm/model-config.service.js';
+import { generateViaComfyui, generateViaMinimax, generateViaOpenai } from '../media/image-provider.js';
 
 /**
  * 方案页结构（9 页标准方案模板）：
@@ -78,7 +84,19 @@ export class PlansService {
     private readonly prisma: PrismaService,
     private readonly tokens: TokenService,
     private readonly llm: LlmService,
+    private readonly modelConfig: ModelConfigService,
+    private readonly config: ConfigService,
   ) {}
+
+  private uploadDir(): string {
+    return this.config.get<string>('UPLOAD_DIR', 'uploads');
+  }
+
+  private dayDir(): string {
+    const d = new Date();
+    const p = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+  }
 
   /** LLM 生成多页方案（9 页标准骨架，pageCount 超出部分追加空间场景页） */
   async create(input: PlanInput) {
@@ -125,6 +143,122 @@ export class PlansService {
     return this.prisma.planProject.update({
       where: { id },
       data: { floorplanAssetId: dto.floorplanAssetId, layoutPoints: (dto.layoutPoints ?? null) as never },
+    });
+  }
+
+  /**
+   * AI 渲染精装修效果图：基于已挂接的客户户型平面图，按方案风格+生态生成智能家居精装版位图，
+   * 落盘到 MediaAsset 并自动写回 PlanProject.renderedFloorplanAssetId。
+   * ponytail: 复用 MediaService 的生图 provider（minimax/openai/comfyui）+ upload 落盘逻辑，
+   * 不另开新轮子（避免重复维护 provider 适配）。代价：因服务依赖单向注入限制，
+   * 这里直接拉取 cfg 与落盘 helper；如未来 MediaService 拆为更细粒度模块可接入。
+   */
+  async renderFloorplan(tenantId: string, userId: string, id: string): Promise<{ assetId: string; floorplanAssetId: string | null }> {
+    const plan = await this.detail(tenantId, id);
+    if (!plan.floorplanAssetId) throw new BadRequestException('PLAN_FLOORPLAN_REQUIRED');
+    const original = await this.prisma.mediaAsset.findFirst({ where: { id: plan.floorplanAssetId, tenantId } });
+    if (!original) throw new NotFoundException('FLOORPLAN_ASSET_NOT_FOUND');
+
+    // 在扣费前校验：image-01 key 缺失直接拒绝，不白扣额度
+    const cfg = await this.modelConfig.imageConfig();
+    const apiKey = cfg.apiKey ?? '';
+    if (cfg.provider !== 'comfyui' && !apiKey) {
+      throw new ServiceUnavailableException({
+        code: 'IMAGE_KEY_MISSING',
+        message: cfg.provider === 'openai' ? '生图 API Key 未配置（provider=openai），请在「模型配置」页填写' : '生图 API Key 未配置，请在「模型配置」页填写 MiniMax Key',
+      });
+    }
+
+    // 费用按精装修 = 1 倍生图（300 token），与单张效果图持平
+    await this.tokens.consume(
+      tenantId,
+      300,
+      'CONSUME',
+      { kind: 'plan-render-floorplan', planId: id },
+      userId,
+    );
+
+    const styleName = STYLE_NAMES[plan.style] ?? plan.style;
+    const ecosystem = plan.ecosystem || '主流智能家居';
+    const prompt = [
+      `${styleName}风格的高端精装修顶视平面图（top-down floorplan render）`,
+      `融合${ecosystem}智能家居生态，户型参考原图的空间布局（房间分隔/门窗位置必须保持一致），`,
+      `所有窗户加智能窗帘、卧室床头加床头灯与起夜灯带、客厅加灯带与天花筒灯、玄关加感应灯、`,
+      `标注主要智能设备图标（网关/音箱/摄像头/传感器/智能开关），`,
+      `4K 渲染、暖色灯光氛围、写实质感、真实样板房摄影视角。`,
+    ].join('');
+
+    let img: { buffer: Buffer; mimeType: string; ext: string };
+    if (cfg.provider === 'comfyui') {
+      img = await generateViaComfyui({
+        baseUrl: cfg.comfyBaseUrl,
+        workflow: await this.loadComfyWorkflow(cfg.workflowPath),
+        prompt,
+        width: 1536,
+        height: 1024,
+        promptNode: cfg.promptNode,
+        negativeNode: cfg.negativeNode,
+        latentNode: cfg.latentNode,
+        seedNode: cfg.seedNode,
+      });
+    } else if (cfg.provider === 'openai') {
+      img = await generateViaOpenai({
+        baseUrl: cfg.baseUrl,
+        apiKey,
+        model: cfg.model || 'gpt-image-1',
+        prompt,
+        size: '1536x1024',
+      });
+    } else {
+      img = await generateViaMinimax({
+        baseUrl: cfg.baseUrl,
+        apiKey,
+        model: cfg.model || 'image-01',
+        prompt,
+        aspect: '16:9',
+      });
+    }
+    if (!img.buffer.length) throw new ServiceUnavailableException('ASSET_EMPTY');
+
+    const rel = `uploads/${this.dayDir()}/${randomUUID()}.${img.ext}`;
+    const abs = join(this.uploadDir(), rel);
+    await mkdir(join(abs, '..'), { recursive: true });
+    await writeFile(abs, img.buffer);
+    const asset = await this.prisma.mediaAsset.create({
+      data: {
+        tenantId,
+        userId,
+        kind: 'image',
+        title: `${plan.title} · 精装修效果图`,
+        prompt,
+        filePath: rel,
+        mimeType: img.mimeType,
+        sizeBytes: img.buffer.length,
+        status: 'ready',
+      },
+    });
+    await this.prisma.planProject.update({
+      where: { id },
+      data: { renderedFloorplanAssetId: asset.id },
+    });
+    return { assetId: asset.id, floorplanAssetId: plan.floorplanAssetId };
+  }
+
+  /** 复刻 MediaService.comfyui 工作流读取：失败抛 COMFYUI_WORKFLOW_MISSING */
+  private async loadComfyWorkflow(path: string): Promise<Record<string, unknown>> {
+    const fs = await import('node:fs/promises');
+    const tryPaths = [path, join(this.uploadDir(), '..', 'comfyui-workflow.json')];
+    for (const p of tryPaths) {
+      try {
+        const raw = await fs.readFile(p, 'utf8');
+        return JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        // 继续尝试下一个候选
+      }
+    }
+    throw new ServiceUnavailableException({
+      code: 'COMFYUI_WORKFLOW_MISSING',
+      message: `未找到 ComfyUI 工作流文件（COMFYUI_WORKFLOW_PATH=${path}）。内置模板位于 apps/api/comfyui-workflow.json，或在 ComfyUI 中「Workflow → Export(API)」导出后放到该路径`,
     });
   }
 
@@ -272,6 +406,7 @@ export class PlansService {
       updatedAt: plan.updatedAt,
       pages: plan.pages,
       floorplanAssetId: plan.floorplanAssetId,
+      renderedFloorplanAssetId: plan.renderedFloorplanAssetId,
       layoutPoints: plan.layoutPoints,
     };
   }

@@ -2,6 +2,25 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.37] - 2026-10-12
+
+### Fixed（PPT 底部间距 + 上传平面图入口 + 精装修效果图生成）
+
+用户截图反馈 "PPT 两页底部没留白，文字超出范围"+ "少了上传平面图/设备点位图功能"+"客户平面图需要生成对应精装修效果图" 三条，按 Replica+Ponytail 7 级阶梯（**先 MD 记录避免失忆**）对照 recon F02/S05/S06 后落地：
+
+- **PPT 底部间距** [PlanSlide.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/components/PlanSlide.tsx)：Frame 内 padding 底部 `3.5% → 5.5%`（5 处）、PointCard gap `1.1cqw → 1.25cqw`（4 处）、Footer marginTop `1.2cqw → 1.6cqw`（3 处）、NeedsSlide 下半部 padding `3% → 5%`；第 8 页（6 个分项预算区间条）与第 9 页（6 个阶段卡片+金句+Footer）已在浏览器实测全部完整显示
+- **上传平面图入口始终可见** [PlanStudio.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/PlanStudio.tsx)：底部工具栏从 `active.type === 'layout'` 条件改为始终显示，新增"上传平面图 · 布点"按钮（按 floorplanAssetId + layoutPoints 状态切换"已布 N 个点位 · 重新布点 / 户型图已上传 · 布点 / 上传平面图 · 布点"三种文案），跳转 `/device-layout?planId=…` 不重复造轮子
+- **精装修效果图端到端**：新增 [Prisma 字段 renderedFloorplan_asset_id](file:///Volumes/hasskit/codex/aisaas/apps/api/prisma/schema.prisma) + [migration](file:///Volumes/hasskit/codex/aisaas/apps/api/prisma/migrations/20261012050000_plan_rendered_floorplan/migration.sql)；[PlansService.renderFloorplan](file:///Volumes/hasskit/codex/aisaas/apps/api/src/plans/plans.service.ts) 校验 floorplan 必填 → 扣 300 token → 拼风格+生态 prompt → 复用 MediaService provider 适配层（comfyui/openai/minimax）→ 1536×1024 → MediaAsset 入库 → 自动挂 `PlanProject.renderedFloorplan_asset_id`；[PlansController POST :id/render-floorplan](file:///Volumes/hasskit/codex/aisaas/apps/api/src/plans/plans.controller.ts)；[PublicPlansController GET :token/rendered-floorplan](file:///Volumes/hasskit/codex/aisaas/apps/api/src/plans/plans.controller.ts) 公开分享端免登录文件输出
+- **前端联动** [PlanStudio.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/PlanStudio.tsx)：工具栏新增"生成精装修效果图"按钮（disabled 直至 floorplan 上传，loading 态）；[PlanShareView](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/PlanShareView.tsx) slidePlan 新增 renderedFloorplanUrl；[planPptx.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/planPptx.ts) LayoutSlide 优先级 精装修图 > 户型+点位合成图 > 场景实景图
+- **smoke +1 断言**：方案不存在时精装修渲染 404
+
+### Verified
+
+- 门禁：typecheck ✓ / build ✓ / **smoke 120/120**（含新增"方案不存在时精装修渲染 404"）
+- 浏览器实测：第 1 封面页 / 第 8 预算页（6 条预算条+金句）/ 第 9 落地页（6 阶段卡片+金句+Footer）均完整，底部间距充足；工具栏"上传平面图·布点"始终可见、"生成精装修效果图"未上传户型图时 disabled（符合预期）
+- 分享页 [share/plan/:token](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/PlanShareView.tsx) 同源呈现，所有卡片完整无截断
+- 关于 [ppt-master](https://github.com/hugohe3/ppt-master)：其本质是用户本地 Python + AI agent 工作流（依赖 Python 运行时与外部 agent），与本 SaaS SPA "浏览器内一键生成"场景不符，按 Ponytail 阶梯 1 (YAGNI) + 5 (已装依赖 pptxgenjs 足够) 判定**不引入**；但吸收其 slide master / 原生 shapes / 编辑性优先的设计原则
+
 ## [0.1.36] - 2026-10-12
 
 ### Verified（生图/生视频/智能方案 端到端 Agent 验证）

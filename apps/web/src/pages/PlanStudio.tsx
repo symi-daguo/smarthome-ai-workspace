@@ -55,6 +55,8 @@ interface PlanDetail {
   shareToken: string;
   updatedAt: string;
   floorplanAssetId?: string | null;
+  /** AI 渲染的精装修效果图（基于客户户型图按方案风格+生态生成） */
+  renderedFloorplanAssetId?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
 }
 
@@ -89,6 +91,7 @@ export function PlanStudio(): ReactNode {
   const [showNarration, setShowNarration] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [renderingFloorplan, setRenderingFloorplan] = useState(false);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -204,6 +207,7 @@ export function PlanStudio(): ReactNode {
       await exportPlanPptx({
         ...plan,
         floorplanUrl: plan.floorplanAssetId ? fileUrl(`/api/media/assets/${plan.floorplanAssetId}/file`) : null,
+        renderedFloorplanUrl: plan.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
         layoutPoints: plan.layoutPoints ?? null,
       });
       message.success('PPTX 已下载（16:9 原生幻灯片，可直接编辑）');
@@ -211,6 +215,25 @@ export function PlanStudio(): ReactNode {
       message.error((e as Error).message || '导出失败');
     } finally {
       setExporting(false);
+    }
+  };
+
+  // 渲染精装修效果图：基于已挂接的客户户型图，按方案风格+生态 AI 出图
+  const renderFloorplan = async (): Promise<void> => {
+    if (!plan) return;
+    if (!plan.floorplanAssetId) {
+      message.warning('请先上传客户户型平面图');
+      return;
+    }
+    setRenderingFloorplan(true);
+    try {
+      const r = await api<{ assetId: string; floorplanAssetId: string | null }>(`/api/plans/${plan.id}/render-floorplan`, { method: 'POST' });
+      setPlan({ ...plan, renderedFloorplanAssetId: r.assetId });
+      message.success(`精装修效果图已生成（${r.assetId.slice(0, 8)}…），空间动线页与分享页已自动用上`);
+    } catch (e) {
+      message.error((e as Error).message || '精装修生成失败');
+    } finally {
+      setRenderingFloorplan(false);
     }
   };
 
@@ -237,6 +260,7 @@ export function PlanStudio(): ReactNode {
   const slidePlan = {
     store: plan?.store ?? '',
     floorplanUrl: plan?.floorplanAssetId ? fileUrl(`/api/media/assets/${plan.floorplanAssetId}/file`) : null,
+    renderedFloorplanUrl: plan?.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
     layoutPoints: plan?.layoutPoints ?? null,
   };
 
@@ -473,15 +497,36 @@ export function PlanStudio(): ReactNode {
             ))}
           </div>
           <div style={{ flex: 1, minWidth: 360 }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 6 }}>
               <Text strong style={{ fontSize: 15, flex: 1 }}>
                 第 {activePage + 1} 页 · {PAGE_TYPE_LABEL[active.type]}
               </Text>
-              {active.type === 'layout' ? (
-                <Button size="small" type={plan.floorplanAssetId ? 'default' : 'primary'} ghost style={{ marginRight: 8 }} onClick={() => navigate(`/device-layout?planId=${plan.id}`)}>
-                  {plan.floorplanAssetId && plan.layoutPoints?.length ? `已布 ${plan.layoutPoints.length} 个点位 · 重新布点` : '户型图布点'}
-                </Button>
-              ) : null}
+              {/* 户型图+布点入口：始终可见（0.1.37 入口拓宽：与当前页无关，方便逐页审稿前/后随时上传） */}
+              <Button
+                size="small"
+                type={plan.floorplanAssetId ? 'default' : 'primary'}
+                ghost
+                style={{ marginRight: 8 }}
+                onClick={() => navigate(`/device-layout?planId=${plan.id}`)}
+              >
+                {plan.floorplanAssetId && plan.layoutPoints?.length
+                  ? `已布 ${plan.layoutPoints.length} 个点位 · 重新布点`
+                  : plan.floorplanAssetId
+                    ? '户型图已上传 · 布点'
+                    : '上传平面图 · 布点'}
+              </Button>
+              {/* 精装修生成：必须先有户型图，无则禁用 */}
+              <Button
+                size="small"
+                ghost
+                type={plan.renderedFloorplanAssetId ? 'default' : 'primary'}
+                disabled={!plan.floorplanAssetId || renderingFloorplan}
+                loading={renderingFloorplan}
+                style={{ marginRight: 8 }}
+                onClick={renderFloorplan}
+              >
+                {plan.renderedFloorplanAssetId ? '重新生成精装修' : '生成精装修效果图'}
+              </Button>
               <Button size="small" icon={<EditOutlined />} onClick={() => setEditing({ index: activePage, heading: active.heading, body: active.body, narration: active.narration })}>
                 修改当前页
               </Button>

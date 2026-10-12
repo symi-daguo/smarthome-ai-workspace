@@ -290,6 +290,15 @@ Agent：`agents, tools, conversations, messages, agent_runs, tool_calls`
 | 0.4.0 | 运营后台（租户/计费/审计）；暗色模式；i18n 英文 | 商用运营就绪 |
 | 1.0.0 | 全功能对齐 + 压测 + 安全审计 + 合规上架 | 对外承诺 API 稳定 |
 
+#### 0.1.x 已交付明细（迭代溯源）
+
+| 版本 | 日期 | 关键增量 |
+|---|---|---|
+| 0.1.0–0.1.34 | 09-25→10-12 | MVP 全链路、3 套资料 CRUD、Agent 显式人设、token 计费、产品主数据、风格库、ChatStore、模型配置命名方案、跨租户鉴权、9 页方案 7 类页型、点位编辑、风格反推 prompt 等（详见 CHANGELOG.md） |
+| 0.1.35 | 10-12 | MyAssets CRUD（重命名/删除）+ ContentExtract 任务/文档删除；smoke +11 |
+| 0.1.36 | 10-12 | 全链路端到端 Agent 验证（生图/生视频/9 页方案）；账本对账 SUM=95797 |
+| **0.1.37** | **10-12** | **PPT 底部间距修复（13 处 Frame/PointCard/Footer/NeedsSlide）**；**PlanStudio 上传平面图入口拓宽**（工具栏始终可见）；**精装修效果图端到端**（renderedFloorplan_asset_id + renderFloorplan 端点 + PublicPlansController 免登录文件流）；smoke +1 → 120/120 |
+
 ### 7.5 质量与测试策略
 
 - 非平凡逻辑必须有可运行检查：agent 循环、计费扣减、租户隔离（跨租户访问必须返回 404 的测试用例）、RLS 兜底。

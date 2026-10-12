@@ -284,6 +284,8 @@ model PlanProject {
   shareToken String   @unique @default(uuid())
   // 关联的户型平面图 MediaAsset id（空间动线页配图）
   floorplanAssetId String?
+  // 客户户型图精装修效果图（AI 渲染的最终展示版，用于空间动线页与分享页）
+  renderedFloorplanAssetId String?
   // 点位数组 [{productId,x,y}]（x/y 归一化 0-1，叠加渲染在户型图上）
   layoutPoints Json?
   createdAt  DateTime @default(now())

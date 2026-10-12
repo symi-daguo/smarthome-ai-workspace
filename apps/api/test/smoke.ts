@@ -422,6 +422,13 @@ async function main(): Promise<void> {
   });
   check('方案挂接户型图不存在返回 404', floorplan404.status === 404);
 
+  // ---------- 精装修渲染：先有户型图挂接才能 POST，否则 400/404 ----------
+  const renderWithoutFloorplan = await request(base, '/api/plans/00000000-0000-0000-0000-000000000000/render-floorplan', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+  });
+  check('方案不存在时精装修渲染 404', renderWithoutFloorplan.status === 404);
+
   // 视频首帧：资产无效应在扣额前拒绝（404/400），且余额不变
   const tokensBeforeVideo = await request<{ tokenBalance: number }>(base, '/api/tenants/current/tokens', {
     headers: { Authorization: `Bearer ${regA.body.token}` },

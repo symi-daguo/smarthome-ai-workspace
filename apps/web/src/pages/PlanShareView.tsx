@@ -18,6 +18,7 @@ interface SharePlan {
   updatedAt: string;
   pages: PlanPage[];
   floorplanAssetId?: string | null;
+  renderedFloorplanAssetId?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
 }
 
@@ -54,6 +55,7 @@ export function PlanShareView(): ReactNode {
   const slidePlan = {
     store: plan.store,
     floorplanUrl: plan.floorplanAssetId && token ? `/api/public/plans/${token}/floorplan` : null,
+    renderedFloorplanUrl: plan.renderedFloorplanAssetId && token ? `/api/public/plans/${token}/rendered-floorplan` : null,
     layoutPoints: plan.layoutPoints ?? null,
   };
 

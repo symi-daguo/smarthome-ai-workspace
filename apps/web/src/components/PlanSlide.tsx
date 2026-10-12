@@ -7,6 +7,8 @@ interface SlidePlan {
   store: string;
   /** 客户户型平面图（点位编辑器挂接；空间动线页优先用它+点位叠加） */
   floorplanUrl?: string | null;
+  /** AI 渲染的精装修效果图（与原始户型图共存时优先用此图，覆盖点位叠加） */
+  renderedFloorplanUrl?: string | null;
   layoutPoints?: PointLike[] | null;
 }
 
@@ -200,7 +202,7 @@ function CoverSlide({ page, plan, t }: { page: PlanPage; plan: SlidePlan; t: Pla
 /** 品牌实力：左文 + 2×2 数据卡 + 右竖图 */
 function BrandSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
   return (
-    <Frame t={t} style={{ padding: '4.5% 5% 3.5%' }}>
+    <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
       <div style={{ display: 'flex', gap: '4%', height: '100%' }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Folio page={page} index={index} t={t} />
@@ -230,9 +232,11 @@ function BrandSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
   );
 }
 
-/** 空间动线：左竖实景图 + 右编号要点卡列；挂接了户型图则左图换成"户型+点位"合成图（与 PPTX 共用 compositePoints，像素一致） */
+/** 空间动线：左竖实景图 + 右编号要点卡列；优先用精装修渲染图，无则用"户型+点位"合成图，无则用场景实景图 */
 function LayoutSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
-  const hasFloorplan = Boolean(plan.floorplanUrl && plan.layoutPoints?.length);
+  // 优先级：精装修渲染图 > 户型+点位合成图 > 场景实景图
+  const useRendered = Boolean(plan.renderedFloorplanUrl);
+  const hasFloorplan = !useRendered && Boolean(plan.floorplanUrl && plan.layoutPoints?.length);
   const [composite, setComposite] = useState<string | null>(null);
   useEffect(() => {
     if (!hasFloorplan) {
@@ -245,28 +249,43 @@ function LayoutSlide({ page, index, plan, t }: { page: PlanPage; index: number; 
       .catch(() => { if (alive) setComposite(null); });
     return () => { alive = false; };
   }, [hasFloorplan, plan.floorplanUrl, plan.layoutPoints]);
-  const src = hasFloorplan ? composite ?? (plan.floorplanUrl as string) : pageImage(page);
+  let src: string;
+  let label: string;
+  let fit: 'cover' | 'contain' = 'cover';
+  if (useRendered) {
+    src = plan.renderedFloorplanUrl as string;
+    label = 'AI 精装修效果图';
+    fit = 'cover';
+  } else if (hasFloorplan) {
+    src = composite ?? (plan.floorplanUrl as string);
+    label = '客户户型 · 设备点位图';
+    fit = 'contain';
+  } else {
+    src = pageImage(page);
+    label = '空间动线实景';
+    fit = 'cover';
+  }
   return (
-    <Frame t={t} style={{ padding: '4.5% 5% 3.5%' }}>
+    <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
       <div style={{ display: 'flex', gap: '4%', height: '100%' }}>
         <ImagePanel
           src={src}
           t={t}
-          label={hasFloorplan ? '客户户型 · 设备点位图' : '空间动线实景'}
-          fit={hasFloorplan ? 'contain' : 'cover'}
+          label={label}
+          fit={fit}
           style={{ width: '32%', flex: 'none' }}
         />
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Folio page={page} index={index} t={t} />
           <Claim page={page} t={t} />
           <div style={{ fontSize: 'clamp(6px,1.35cqw,11.5px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw', marginBottom: '1.6cqw' }}>{page.body}</div>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.1cqw' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw' }}>
             {page.bullets.slice(0, 6).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
           </div>
           <div style={{ marginTop: '1.4cqw', display: 'flex', alignItems: 'center', gap: '2cqw' }}>
             <QuoteBar quote={page.quote} t={t} />
           </div>
-          <div style={{ marginTop: '1.2cqw' }}><Footer plan={plan} t={t} /></div>
+          <div style={{ marginTop: '1.6cqw' }}><Footer plan={plan} t={t} /></div>
         </div>
       </div>
     </Frame>
@@ -285,13 +304,13 @@ function NeedsSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
           <div style={{ fontSize: 'clamp(9px,2.7cqw,21px)', fontWeight: 800, color: '#fff', lineHeight: 1.3, marginTop: '0.6cqw' }}>{page.heading}</div>
         </div>
       </div>
-      <div style={{ padding: '2.6cqw 5% 3%', display: 'flex', gap: '3.5%', height: '64%' }}>
+      <div style={{ padding: '2.6cqw 5% 5%', display: 'flex', gap: '3.5%', height: '64%' }}>
         <div style={{ width: '34%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ fontSize: 'clamp(6px,1.35cqw,11.5px)', color: t.sub, lineHeight: 1.8 }}>{page.body}</div>
           <div style={{ marginTop: 'auto' }}><QuoteBar quote={page.quote} t={t} /></div>
-          <div style={{ marginTop: '1.2cqw' }}><Footer plan={plan} t={t} /></div>
+          <div style={{ marginTop: '1.6cqw' }}><Footer plan={plan} t={t} /></div>
         </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.1cqw' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.3cqw' }}>
           {page.bullets.slice(0, 5).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
         </div>
       </div>
@@ -302,7 +321,7 @@ function NeedsSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
 /** 生态规划：右图 + 左文 + 底部生态卡横排 */
 function EcosystemSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
   return (
-    <Frame t={t} style={{ padding: '4.5% 5% 3.5%' }}>
+    <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <div style={{ display: 'flex', gap: '4%', flex: 1, minHeight: 0 }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
@@ -349,11 +368,11 @@ function SceneSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
       <div style={{ position: 'absolute', left: '36%', top: 0, right: 0, bottom: 0, padding: '5% 5% 3.5%', display: 'flex', flexDirection: 'column' }}>
         <Folio page={page} index={index} t={t} />
         <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw', marginBottom: '1.8cqw' }}>{page.body}</div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.1cqw' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw' }}>
           {page.bullets.slice(0, 5).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
         </div>
         <div style={{ marginTop: '1.6cqw' }}><QuoteBar quote={page.quote} t={t} /></div>
-        <div style={{ marginTop: '1.2cqw' }}><Footer plan={plan} t={t} /></div>
+        <div style={{ marginTop: '1.6cqw' }}><Footer plan={plan} t={t} /></div>
       </div>
     </Frame>
   );
@@ -364,7 +383,7 @@ function BudgetSlide({ page, index, plan, t }: { page: PlanPage; index: number; 
   const items = parseBudget(page.bullets)?.slice(0, 6);
   const maxVal = items ? Math.max(...items.map((it) => it.max)) : 0;
   return (
-    <Frame t={t} style={{ padding: '4.5% 5% 3.5%' }}>
+    <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
       <div style={{ display: 'flex', gap: '4%', height: '100%' }}>
         <div style={{ width: '32%', display: 'flex', flexDirection: 'column' }}>
           <Folio page={page} index={index} t={t} />
@@ -372,7 +391,7 @@ function BudgetSlide({ page, index, plan, t }: { page: PlanPage; index: number; 
           <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw' }}>{page.body}</div>
           <div style={{ marginTop: 'auto' }}>
             <QuoteBar quote={page.quote} t={t} />
-            <div style={{ marginTop: '1.2cqw' }}><Footer plan={plan} t={t} /></div>
+            <div style={{ marginTop: '1.6cqw' }}><Footer plan={plan} t={t} /></div>
           </div>
         </div>
         <div style={{ flex: 1, background: t.surface, borderRadius: '1.8cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a`, padding: '2.6cqw 3cqw', display: 'flex', flexDirection: 'column' }}>
@@ -397,7 +416,7 @@ function BudgetSlide({ page, index, plan, t }: { page: PlanPage; index: number; 
               </div>
             </>
           ) : (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.1cqw', justifyContent: 'center' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw', justifyContent: 'center' }}>
               {page.bullets.slice(0, 6).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
             </div>
           )}
@@ -411,7 +430,7 @@ function BudgetSlide({ page, index, plan, t }: { page: PlanPage; index: number; 
 function DeliverySlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
   const stages = parseStages(page.bullets);
   return (
-    <Frame t={t} style={{ padding: '4.5% 5% 3.5%' }}>
+    <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
       <div style={{ display: 'flex', height: '100%', flexDirection: 'column' }}>
         <div style={{ display: 'flex', gap: '3%', alignItems: 'flex-start' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -436,7 +455,7 @@ function DeliverySlide({ page, index, plan, t }: { page: PlanPage; index: number
             ))}
           </div>
         ) : (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.1cqw', marginTop: '2cqw' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw', marginTop: '2cqw' }}>
             {page.bullets.slice(0, 5).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
           </div>
         )}

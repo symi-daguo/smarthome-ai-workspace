@@ -79,6 +79,16 @@ export class PlansController {
     return this.plans.attachFloorplan(user.activeTenantId as string, id, { floorplanAssetId: dto.floorplanAssetId, layoutPoints: dto.layoutPoints });
   }
 
+  /** AI 渲染精装修效果图（基于已挂接的客户户型平面图） */
+  @RequirePermissions('content:generate')
+  @Post(':id/render-floorplan')
+  renderFloorplan(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+  ) {
+    return this.plans.renderFloorplan(user.activeTenantId as string, user.id, id);
+  }
+
   @RequirePermissions('content:generate')
   @Patch(':id/pages/:index')
   updatePage(
@@ -118,6 +128,24 @@ export class PublicPlansController {
   async floorplan(@Param('token') token: string, @Res() res: Response): Promise<void> {
     const plan = await this.plans.byShareToken(token);
     const assetId = (plan as { floorplanAssetId?: string | null }).floorplanAssetId;
+    if (!assetId) {
+      res.status(404);
+      res.end();
+      return;
+    }
+    const asset = await this.media.byId(assetId);
+    const buf = await readFile(this.media.resolveSafe(asset.filePath));
+    res.setHeader('Content-Type', asset.mimeType || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  }
+
+  /** 分享页精装修效果图文件流（凭 shareToken 免鉴权；客户端 LayoutSlide 优先用此图） */
+  @Get(':token/rendered-floorplan')
+  async renderedFloorplan(@Param('token') token: string, @Res() res: Response): Promise<void> {
+    const plan = await this.plans.byShareToken(token);
+    const assetId = (plan as { renderedFloorplanAssetId?: string | null }).renderedFloorplanAssetId;
     if (!assetId) {
       res.status(404);
       res.end();
