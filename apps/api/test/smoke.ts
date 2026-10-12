@@ -512,13 +512,19 @@ async function main(): Promise<void> {
   );
 
   // ---------- 命名模型方案：多套配置一键切换 ----------
+  // ModelProfile 是全局表，本节断言依赖「首个方案自动成为当前」。
+  // 上轮用例会留下一个 active 的「方案B-高质量」，导致第二轮 saveProfile 走 upsert 的
+  // update 分支（该分支不改 active），断言必然失败——即测试不可重复运行。
+  // 先清掉本用例自己的两个方案名，保证 pnpm smoke 可反复执行。
+  const TEST_PROFILES = ['方案A-省钱文案', '方案B-高质量'];
+  await prisma.modelProfile.deleteMany({ where: { name: { in: TEST_PROFILES } } });
   await request(base, '/api/admin/model-config/chat', { ...authA, method: 'PUT', body: JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', model: 'profile-A-model', apiKey: 'sk-profileA9999' }) });
-  const prof1 = await request<{ id: string; name: string }>(base, '/api/admin/model-config/profiles/save', { ...authA, method: 'POST', body: JSON.stringify({ name: '方案A-省钱文案' }) });
-  check('保存命名方案 201', prof1.status === 201 && prof1.body.name === '方案A-省钱文案');
+  const prof1 = await request<{ id: string; name: string }>(base, '/api/admin/model-config/profiles/save', { ...authA, method: 'POST', body: JSON.stringify({ name: TEST_PROFILES[0] }) });
+  check('保存命名方案 201', prof1.status === 201 && prof1.body.name === TEST_PROFILES[0]);
   await request(base, '/api/admin/model-config/chat', { ...authA, method: 'PUT', body: JSON.stringify({ baseUrl: 'http://127.0.0.1:8/v1', model: 'profile-B-model', apiKey: 'sk-profileB8888' }) });
-  const prof2 = await request<{ id: string }>(base, '/api/admin/model-config/profiles/save', { ...authA, method: 'POST', body: JSON.stringify({ name: '方案B-高质量' }) });
+  const prof2 = await request<{ id: string }>(base, '/api/admin/model-config/profiles/save', { ...authA, method: 'POST', body: JSON.stringify({ name: TEST_PROFILES[1] }) });
   const profList = await request<{ id: string; name: string; active: boolean; scopes: Record<string, { hasKey: boolean }> }[]>(base, '/api/admin/model-config/profiles', authA);
-  check('方案列表含两套且首个自动为当前', profList.status === 200 && profList.body.length >= 2 && profList.body.find((p) => p.name === '方案A-省钱文案')?.active === true);
+  check('方案列表含两套且首个自动为当前', profList.status === 200 && profList.body.length >= 2 && profList.body.find((p) => p.name === TEST_PROFILES[0])?.active === true);
   check('方案列表不回传明文 Key', !JSON.stringify(profList.body).includes('sk-profile'));
   const act = await request<{ ok: boolean }>(base, `/api/admin/model-config/profiles/${prof2.body.id}/activate`, { ...authA, method: 'POST' });
   const cfgAfterAct = await request<{ chat: { baseUrl: string; model: string; keyMasked: string | null } }>(base, '/api/admin/model-config', authA);

@@ -187,7 +187,9 @@ export function MainLayout(): ReactNode {
     });
   };
 
-  const isSuperAdmin = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
+  // 命名说明：这里判的是 platform:billing:manage 权限（seed 里 tenant_admin 与 super_admin 都有），
+  // 不是 super_admin 角色本身。叫 isSuperAdmin 会让后来者误以为只有超管可见，与 ModelConfig.tsx 的 canManageModels 也对不上。
+  const canManageModels = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
 
   const menuItems: MenuProps['items'] = useMemo(() => {
     const creation: NonNullable<MenuProps['items']>[number] = {
@@ -218,7 +220,7 @@ export function MainLayout(): ReactNode {
     };
     // 个人中心人人可见；模型配置仅具备平台配置权限（开源自部署默认 tenant_admin 即有）时追加
     const systemChildren: NonNullable<MenuProps['items']> = [{ key: '/tokens', icon: <WalletOutlined />, label: '个人中心' }];
-    if (isSuperAdmin) systemChildren.push({ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' });
+    if (canManageModels) systemChildren.push({ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' });
     const system: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-system',
@@ -226,7 +228,7 @@ export function MainLayout(): ReactNode {
       children: systemChildren,
     };
     return [creation, toolbox, system];
-  }, [isSuperAdmin]);
+  }, [canManageModels]);
 
   const selectedKey = useMemo(() => {
     const p = location.pathname;

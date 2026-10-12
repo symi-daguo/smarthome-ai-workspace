@@ -2,6 +2,33 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.39] - 2026-10-12
+
+### Fix（真实缺陷）
+
+- **smoke 不可重复运行**：`ModelProfile` 是全局表，命名方案用例断言依赖「首个方案自动成为当前」，而上轮用例会遗留一个 active 的「方案B-高质量」，导致第二轮 `saveProfile` 走 upsert 的 update 分支（该分支不改 `active`），断言必然失败。现于用例起始处清理本用例自己的方案名，`pnpm smoke` 可反复执行。
+- **「永久会员」标签恒不显示**：`TokenCenter.tsx` 用 `membership.plan === 'lifetime'` 判定，但 Prisma `Plan` 枚举只有 `BASIC / STANDARD / ENTERPRISE`（且大小写不匹配）。改为按枚举实际取值渲染套餐标签。
+
+### Refactor
+
+- 模型配置菜单变量 `isSuperAdmin` → `canManageModels`：该变量判定的是 `platform:billing:manage` 权限（seed 中 `tenant_admin` 与 `super_admin` 都有），旧名会误导后来者以为仅超管可见。
+
+### Docs（文档与代码对齐）
+
+- README：品类字典 24 → **39**（并补全 39 项清单）、备份 **18 表 → 22 表**、目录树补 `knowledge/` `orders/` `common/` `prisma/` 与 web 的 `components/` `store/` `data/`、账本「充值/退还」改为标注为预留未接入、素材库「我的投稿」补未接入说明。
+- `schema.prisma:346` 注释 24 类 → 39 类（与同文件 305 行一致）。
+- `replica/features.csv`：百宝箱 18 → **19** 工具卡、品类字典 24 → **39**。
+- 规划文档 §7.1 版本表 NestJS 12.0.x → **12.1.2**、Vite 8.3.0 → **8.3.4**；BullMQ「已随技术栈引入」与 RLS「兜底」改为如实标注**未落地**；§7.4 补本版本行。
+- CHANGELOG 0.1.38 自述的三处版本号与实际锁定不符（throttler 6.7.1→6.7.0、pg 8.23.1→8.23.0、plugin-react 6.1.2→6.1.1），已订正。
+- `.env.example`：删除代码从未读取的 `STORAGE_DRIVER` / `LOCAL_STORAGE_PATH`，改为代码实际读取的 `UPLOAD_DIR`；补 `PUBLIC_ORIGIN`。
+- `pnpm-workspace.yaml`：`minimumReleaseAgeExclude` 写的 `lucide@1.53.0` 与实际依赖 1.55.0 不符，已订正并注明当前该配置未生效。
+
+### Verified
+
+- `pnpm typecheck` ✓ / `pnpm build` ✓
+- `pnpm smoke` ✓ **120/120**，且**连续两次运行均全绿**（修复前第二次为 119/120）
+- 本机 Docker 全量重建并重启后：`GET /api/health` 返回 `{"status":"ok"}`，`http://127.0.0.1:5173/` HTTP 200
+
 ## [0.1.38] - 2026-10-12
 
 ### Chore（技术栈 patch/minor 跟进，确保 2026-10 以来最新稳定版）
@@ -12,7 +39,7 @@
 - **mammoth** `^1.12.3 → ^1.13.0`（npm 1.13.0，2026-09-28 发布的 minor，API 无 breaking：仅新增"hyperlinked wp:anchor/wp:inline 处理" 等增量）
 - **pdfjs-dist** `^6.3.289 → ^6.4.299`（npm 6.4.299，2026-10-04 发布的 minor，修复 PDF 解析兼容性）
 
-**未改动项（major bump 不追）**：Prisma 7.10.0（8.x 是 RC）、TypeScript 5.9.3（6.x/7.x 是 major）、React Router 7.18.4（v8 是 major）；其他 patch 跟进项（@nestjs/throttler 6.7.1 / pg 8.23.1 / @vitejs/plugin-react 6.1.2）保持当前锁定，下次维护迭代一并评估（无紧急）。
+**未改动项（major bump 不追）**：Prisma 7.10.0（8.x 是 RC）、TypeScript 5.9.3（6.x/7.x 是 major）、React Router 7.18.4（v8 是 major）；其他 patch 跟进项（@nestjs/throttler 6.7.0 / pg 8.23.0 / @vitejs/plugin-react 6.1.1）保持当前锁定，下次维护迭代一并评估（无紧急）。
 
 ### Verified
 

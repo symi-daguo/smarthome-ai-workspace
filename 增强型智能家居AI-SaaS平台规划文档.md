@@ -153,7 +153,7 @@
 | IoT 设备 | ThingsBoard CE | 原生多租户、规则引擎、数字孪生、白标（付费） |
 | 多模态渲染 | ComfyUI + Wan2.2 / Qwen-Image-2.1 | 工作流模板 JSON 化，模型可换 |
 | 知识库 | MVP 用 PostgreSQL pgvector；数据规模上来后迁 RAGFlow | 阶梯 3 优先标准库/数据库能力，不过度引入 |
-| 队列 | BullMQ（Redis） | 已随技术栈引入，任务轮询体系直接复用 |
+| 队列 | 前端本地任务队列（`components/TaskBall.tsx`） | **尚未引入服务端队列**：BullMQ/Redis 未安装（`apps/**` 无任何 redis 客户端依赖），当前异步任务状态仅存于前端。后端 `generation_tasks` 表与红点跨页持久化待补 |
 
 ---
 
@@ -176,9 +176,9 @@
 
 ### 5.2 多租户隔离
 
-- 共享数据库、按 `tenant_id` 行级隔离，PostgreSQL RLS（Row Level Security）兜底。
-- 请求链路：Gateway 解析租户 → JWT 注入 tenantId → Prisma Client Extension 自动为所有查询追加 tenantId 条件，从框架层杜绝跨租户查询。
-- 资源隔离：对象存储前缀 `tenants/{tenantId}/...`、BullMQ 队列前缀、LiteLLM team/key 级预算。
+- 共享数据库、按 `tenant_id` 行级隔离。**当前实现隔离在应用层**：`TenantGuard` 解析 JWT 中的 `activeTenantId` + Service 层查询显式带 `tenantId` 条件；数据库层 RLS 兜底**尚未落地**（`prisma/migrations/**` 无任何 `ROW LEVEL SECURITY` 语句），列为待交付项。
+- 请求链路：Gateway 解析租户 → JWT 注入 tenantId → Service 层逐查询追加 tenantId 条件。
+- 资源隔离：产物文件按 `uploads/` 统一目录存放（未按租户前缀隔离）；BullMQ 队列前缀、LiteLLM team/key 级预算均未接入。
 - 企业版预留独立 schema 升级路径，MVP 不实现。
 
 ### 5.3 RBAC 权限模型（五角色）
@@ -241,10 +241,10 @@
 |---|---|---|
 | Node.js | 24.19.0 LTS | 本机运行版本即最新 LTS，满足 NestJS 12 要求（20.19+/22.12+） |
 | TypeScript | 5.9.3 | TS 7.x 为原生编译器，生态兼容性未成熟，暂不采用 |
-| NestJS | 12.0.x | ESM-only 包，Standard Schema = Zod |
+| NestJS | 12.1.2 | ESM-only 包，Standard Schema = Zod |
 | React | 19.3.0 | |
 | Ant Design | 6.6.5 | 需 React ≥ 18，CSS Variables 主题 |
-| Vite | 8.3.0 | 前端构建 |
+| Vite | 8.3.4 | 前端构建 |
 | Prisma | 7.10.0 | 8.x 仍为 RC（8.0.0-rc.15），不采用；7.10.0 为最新稳定版 |
 | PostgreSQL | 18.6 | 8 月安全更新修复 28 个 CVE，含 pgvector |
 | Redis | 8.x | 队列与缓存 |
@@ -297,7 +297,9 @@ Agent：`agents, tools, conversations, messages, agent_runs, tool_calls`
 | 0.1.0–0.1.34 | 09-25→10-12 | MVP 全链路、3 套资料 CRUD、Agent 显式人设、token 计费、产品主数据、风格库、ChatStore、模型配置命名方案、跨租户鉴权、9 页方案 7 类页型、点位编辑、风格反推 prompt 等（详见 CHANGELOG.md） |
 | 0.1.35 | 10-12 | MyAssets CRUD（重命名/删除）+ ContentExtract 任务/文档删除；smoke +11 |
 | 0.1.36 | 10-12 | 全链路端到端 Agent 验证（生图/生视频/9 页方案）；账本对账 SUM=95797 |
-| **0.1.37** | **10-12** | **PPT 底部间距修复（13 处 Frame/PointCard/Footer/NeedsSlide）**；**PlanStudio 上传平面图入口拓宽**（工具栏始终可见）；**精装修效果图端到端**（renderedFloorplan_asset_id + renderFloorplan 端点 + PublicPlansController 免登录文件流）；smoke +1 → 120/120 |
+| 0.1.37 | 10-12 | PPT 底部间距修复（13 处 Frame/PointCard/Footer/NeedsSlide）；PlanStudio 上传平面图入口拓宽（工具栏始终可见）；精装修效果图端到端（renderedFloorplan_asset_id + renderFloorplan 端点 + PublicPlansController 免登录文件流）；smoke +1 → 120 条 |
+| 0.1.38 | 10-12 | 文档解析依赖 patch/minor 跟进（jsdom 30.1.2 / mammoth 1.13.0 / pdfjs-dist 6.4.299） |
+| **0.1.39** | **10-12** | **全站审查修复**：smoke 幂等（命名方案用例跨轮失败）、套餐标签改为对齐 Prisma `Plan` 枚举（"永久会员" 恒不显示）、模型配置菜单变量更名 `canManageModels`；文档与代码对齐（品类 39、备份 22 表、百宝箱 19 卡、目录树、env 清单、版本表、BullMQ/RLS 如实标注未落地）；smoke **120/120 且可重复运行** |
 
 ### 7.5 质量与测试策略
 

@@ -343,7 +343,7 @@ model Product {
   @@index([sku])
 }
 
-// 品类字典：tenantId=null 为平台预置（24 类，覆盖市面智能家居品类），非空为租户自定义分类
+// 品类字典：tenantId=null 为平台预置（39 类，覆盖市面智能家居品类），非空为租户自定义分类
 model CategoryDef {
   id       String  @id @default(uuid())
   tenantId String?

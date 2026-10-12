@@ -52,6 +52,17 @@ interface LedgerEntry {
   createdAt: string;
 }
 
+/**
+ * 套餐标签：取值必须与 prisma/schema.prisma 的 Plan 枚举一致（BASIC / STANDARD / ENTERPRISE）。
+ * 之前这里比的是 'lifetime'，而枚举里从来没有这个值（且大小写也不匹配），导致「永久会员」标签恒不显示。
+ * 将来真要加 LIFETIME 套餐，在这里补一行即可，不要在前端另造取值。
+ */
+const PLAN_META: Record<string, { label: string; color: string }> = {
+  BASIC: { label: '基础版', color: 'default' },
+  STANDARD: { label: '标准版', color: 'blue' },
+  ENTERPRISE: { label: '企业版', color: 'purple' },
+};
+
 const REASON_META: Record<string, { label: string; color: string }> = {
   GRANT: { label: '注册发放', color: 'blue' },
   CONSUME: { label: '消耗', color: 'red' },
@@ -289,7 +300,7 @@ export function TokenCenter(): ReactNode {
           <div>
             <Space size={8}>
               <Text strong style={{ fontSize: 17 }}>{user?.displayName ?? '未命名'}</Text>
-              {membership?.plan === 'lifetime' ? <Tag color="gold">永久会员</Tag> : membership ? <Tag color="purple">会员</Tag> : null}
+              {membership ? <Tag color={PLAN_META[membership.plan]?.color ?? 'default'}>{PLAN_META[membership.plan]?.label ?? membership.plan}</Tag> : null}
             </Space>
             <div>
               <Text type="secondary" style={{ fontSize: 13 }}>

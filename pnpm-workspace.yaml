@@ -8,5 +8,7 @@ allowBuilds:
   esbuild: true
   prisma: true
 
+# 仅在启用 minimumReleaseAge（本机 pnpm 当前为 undefined，此列表暂不生效）时用于豁免新发布的 lucide。
+# 版本号必须与 apps/web/package.json 的实际依赖一致，否则豁免静默失效。
 minimumReleaseAgeExclude:
-  - lucide@1.53.0
+  - lucide@1.55.0

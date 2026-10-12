@@ -32,9 +32,9 @@ AI 生视频-时长/画质/比例/声音参数,AIvideo,must,yes,partial,0.1.16 �
 智能方案-11 风格卡横滚选择,plan,must,yes,yes,
 智能方案-方案版本(标准/私宅),plan,should,yes,yes,0.1.8 扩为 3 版本(标准/售前/私宅)+页数 9/10/12
 智能方案-历史方案列表,plan,must,yes,yes,0.1.9 方案记录混排侧栏"历史对话"直达审稿(?id=深链)；抽屉列表保留
-百宝箱-4 组 18 工具卡(堆叠图+角标),treasure,must,yes,yes,页面框架+已有能力挂链先行
+百宝箱-4 组 19 工具卡(堆叠图+角标),treasure,must,yes,yes,页面框架+已有能力挂链先行
 智能设备点位布局(上传户型图+布点+导出图纸/清单),treasure,must,yes,yes,0.1.24 升级：布点携带产品主图→点位显示产品照片(圆裁白底)，无图回退 0.1.23 品类 SVG 徽章(预览/PNG/PPTX/分享四端一致)+一键美化图纸(白底增强保持户型)+挂接方案空间动线页
-产品中心-公共库与我的库双 tab,treasure,must,yes,yes,0.1.26 完善：24 预置品类字典(CategoryDef 表)+自定义分类(图标/颜色可选/在用拒绝删除)；品牌筛选+AutoComplete；lucide(ISC) 线条图标库；上传 canvas 压缩至 1024px；知识库产品资料确认入库自动同步到我的库(价格解析+品类推断)；修 nginx 1m 默认体限制致传图 413 + api() 空 body JSON 解析报错
+产品中心-公共库与我的库双 tab,treasure,must,yes,yes,0.1.26 完善：39 预置品类字典(CategoryDef 表)+自定义分类(图标/颜色可选/在用拒绝删除)；品牌筛选+AutoComplete；lucide(ISC) 线条图标库；上传 canvas 压缩至 1024px；知识库产品资料确认入库自动同步到我的库(价格解析+品类推断)；修 nginx 1m 默认体限制致传图 413 + api() 空 body JSON 解析报错
 全站流式布局无留白,shell,must,yes,yes,0.1.25 重做：pageContainerStyle 去一切 maxWidth 封顶，卡片随视口拉宽铺满(2560 档实测主卡片占内容区约 97%)；生图/生视频双列改 flex 百分比；四档视口无横向溢出
 - **个人中心-统一承载设置(资料偏好+备份治理)**：0.1.24 迁入个人中心页(/tokens)统一承载，0.1.29 新增「刷新登录令牌」+JWT 自动续期(6h 巡检,<2 天续期),保证会话不丢数据
 WiFi 信号热力图(网关点位+覆盖热力叠加),treasure,should,yes,yes,0.1.14 真实化：additive 径向光斑红强绿弱+图例，复用点位编辑器 ?mode=wifi
