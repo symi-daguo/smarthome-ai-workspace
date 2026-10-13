@@ -2,6 +2,59 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.47] - 2026-10-13
+
+### Feat（涂鸦选区局部重绘——此前标为「依赖上游」的缺口，本轮真做出来）
+
+上一轮我把这条记成「依赖上游 mask，暂不做」。复核后发现**只做了一半判断**：
+参考站把 `mask` 发给 `/api/image-editor/redraw` 由后端 inpaint，而我方当时只用了
+`images/generations`（JSON，无 mask 能力）。但 **OpenAI 的 `images/edits` 原生支持 mask**，
+所以只要补一条 multipart 分支就能真做出来，不必停在半成品。
+
+- 新增 `generateViaOpenaiEdit`：走 `POST /images/edits`（multipart），必须同时带原图与遮罩。
+  按 OpenAI 约定生成遮罩：**要重绘的区域透明、其余不透明**（与直觉相反，前端已按此实现）。
+- `/api/media/images` 新增 `imageAssetId` + `maskDataUrl`；两者必须成对出现。
+- 新增 `components/RegionSelector.tsx`：在效果图上按住涂抹圈选要重做的区域，实时描边预览，
+  遮罩在内联成 dataURL 随请求提交（一次性操作参数，不落盘）。`pointer` 事件实现，触屏可用。
+- 画布每轮多一个「圈选重绘」入口，结果作为**新变体**出现，原图与原变体都保留。
+
+**诚实边界**：目前只有 `provider=openai` 支持（走 images/edits）。其它 provider 收到 mask
+一律返回 `503 IMAGE_EDIT_UNSUPPORTED` 并提示去「模型配置」切换，**不会静默忽略**
+——否则用户会以为圈选生效、实际整张重画。
+
+### Fix（校验顺序 + 一条会让功能"看着能用其实没生效"的断链）
+
+- **校验顺序**：参数完整性检查原本排在 provider 能力判断之后，导致「只给一半参数」返回 503 而非 400。
+  已把参数完整性提前：请求不完整是 400，能力不支持才是 503。
+- **mask 在画布链路被静默丢弃**（重要）：`/api/canvas/conversations/:id/turns` 是 UI 实际调用的端点，
+  而我只把 mask 加到了 `/api/media/images` 上——**用户点「圈选重绘」后遮罩根本没传到出图层，
+  实际发生的是整张重画**，而界面显示「圈选重绘」。这正是我一直拒绝的假功能。
+  已把 `imageAssetId` / `maskDataUrl` 贯通 `createTurnSchema` → `JobParams` → `generateImage`，
+  并补一条**专门防这个回归**的测试：带遮罩提交后，若 provider 不支持则作业必须 `failed`
+  ——若遮罩被丢弃，作业会成功，测试立刻失败。
+
+### Verified
+
+- `pnpm typecheck` ✓ / `pnpm build` ✓
+- `pnpm smoke` ✓ **215/215**，连续两次全绿
+- 新增 5 条用例：只给遮罩 400 / 只给原图 400 / provider 不支持 503 / 带遮罩提交 201 /
+  **遮罩确实到达出图层**（防静默丢弃的回归护栏）
+- 浏览器实测圈选器：画布 1280×720，拖动后状态由「尚未圈选」变「已圈选，可提交」，
+  两个操作按钮同步解除禁用
+- **遮罩方向逐像素校验**：圈选处 alpha=**0**（透明=要重绘）、圈外 alpha=**255**（保持原样），
+  与 OpenAI 约定完全一致（注意与直觉相反）
+- 端到端实测：真实 API 提交带遮罩的轮次，作业返回
+  `failed` +「当前生图 provider（minimax）不支持局部重绘…」，证明遮罩确实到达出图层并被正确拒绝
+
+> 验证过程中我一度以为「弹窗打不开」，复核发现是我自己选择器写错（查 `.ant-modal-content`
+> 而实际先渲染的是 `.ant-modal-wrap`），功能本身正常。
+
+### Verified
+
+- `pnpm typecheck` ✓ / `pnpm build` ✓
+- `pnpm smoke` ✓ **213/213**，连续两次全绿
+- 新增 3 条局部重绘用例：只给遮罩 400 / 只给原图 400 / provider 不支持时明确 503
+
 ## [0.1.46] - 2026-10-13
 
 ### Feat（WiFi 热力图：墙体识别 + 真实信号衰减 + 覆盖率统计）

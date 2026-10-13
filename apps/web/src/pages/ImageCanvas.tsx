@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { App as AntApp, Button, Drawer, Empty, Input, Modal, Segmented, Spin, Tag, Tooltip, Typography } from 'antd';
+import { App as AntApp, Button, Drawer, Empty, Input, Modal, Segmented, Spin, Tag, Tooltip, Typography, theme } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import {
   AppstoreOutlined,
@@ -8,9 +8,11 @@ import {
   HistoryOutlined,
   PlusOutlined,
   ReloadOutlined,
+  EditOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { api, fileUrl } from '../lib/api';
+import { RegionSelector, type RegionSelection } from '../components/RegionSelector';
 import { compressImage } from '../lib/compress';
 import { PageHeader } from '../components/PageHeader';
 import { pageContainerStyle } from '../theme/tokens';
@@ -85,6 +87,8 @@ export function ImageCanvas(): ReactNode {
   const [branchChoice, setBranchChoice] = useState<Record<string, string>>({});
   /** 灯箱：正在查看的轮与变体下标 */
   const [lightbox, setLightbox] = useState<{ turnId: string; index: number } | null>(null);
+  const [region, setRegion] = useState<RegionSelection | null>(null);
+  const [selectFor, setSelectFor] = useState('');  // 正在圈选的那一轮
 
   const pollRef = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -249,6 +253,36 @@ export function ImageCanvas(): ReactNode {
     message.info('已把这一轮的描述放回输入框，改完直接发送');
   }, [message]);
 
+  /** 局部重绘：带遮罩重跑一轮，产出新变体（原图与原变体都保留） */
+  const redrawRegion = useCallback(async (turnId: string, sel: RegionSelection): Promise<void> => {
+    const t = turns.find((x) => x.id === turnId);
+    if (!t) return;
+    const src = t.parentId ? byId.get(t.parentId) : undefined;
+    const promptText = src?.prompt ?? t.prompt;
+    setSending(true);
+    try {
+      const cid = await ensureConversation();
+      const r = await api<{ jobId: string }>(`/api/canvas/conversations/${cid}/turns`, {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: promptText,
+          parentId: src?.parentId ?? undefined,
+          size: ratio,
+          imageAssetId: sel.imageAssetId,
+          maskDataUrl: sel.maskDataUrl,
+        }),
+      });
+      setSelectFor('');
+      await loadTurns(cid);
+      pollJob(cid, r.jobId, t.id);
+      message.info('已提交局部重绘，完成后作为新变体出现');
+    } catch (e) {
+      message.error((e as Error).message || '局部重绘提交失败');
+    } finally {
+      setSending(false);
+    }
+  }, [turns, byId, ensureConversation, ratio, loadTurns, pollJob, message]);
+
   const newConversation = useCallback(async () => {
     try {
       const c = await api<Conversation>('/api/canvas/conversations', { method: 'POST', body: JSON.stringify({}) });
@@ -379,6 +413,9 @@ export function ImageCanvas(): ReactNode {
                             <Tag color="purple">变体 {t.variants.length}</Tag>
                             <Button size="small" icon={<ReloadOutlined />} onClick={() => void regenerate(t)}>再出一版</Button>
                             <Button size="small" onClick={() => restore(t)}>改这段描述</Button>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => { setSelectFor(t.id); setLightbox(null); }}>
+                              圈选重绘
+                            </Button>
                             {t.variants.length > 1 && (
                               <Button size="small" onClick={() => setLightbox({ turnId: t.id, index: 0 })}>看全部变体</Button>
                             )}
@@ -508,6 +545,16 @@ export function ImageCanvas(): ReactNode {
           ))
         )}
       </Drawer>
+
+      {/* 圈选局部重绘：只在 openai provider 下后端才接受 mask，其余会明确拒绝 */}
+      {selectFor && (
+        <RegionSelector
+          open
+          imageUrl={fileUrl((byId.get(selectFor)?.variants[0]?.url ?? '').split('?')[0])}
+          onCancel={() => setSelectFor('')}
+          onConfirm={(sel) => void redrawRegion(selectFor, sel)}
+        />
+      )}
 
       {/* 灯箱：变体翻页 + 基于此图继续 */}
       <Modal

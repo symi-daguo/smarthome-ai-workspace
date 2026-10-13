@@ -1247,6 +1247,68 @@ async function main(): Promise<void> {
   });
   check('投稿空标题被校验拒绝（400）', subEmpty.status === 400);
 
+  // ---------- 局部重绘：mask 参数的诚实性与校验 ----------
+  const maskOnly = await request(base, '/api/media/images', {
+    ...authA, method: 'POST', body: JSON.stringify({ prompt: '局部重绘测试用提示词', maskDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
+  });
+  check('只给遮罩不给原图被拒（400）', maskOnly.status === 400);
+  const imgOnly = await request(base, '/api/media/images', {
+    ...authA, method: 'POST', body: JSON.stringify({ prompt: '局部重绘测试用提示词', imageAssetId: '00000000-0000-0000-0000-000000000000' }),
+  });
+  check('只给原图不给遮罩被拒（400）', imgOnly.status === 400);
+  const notSupported = await request<{ code?: string }>(base, '/api/media/images', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      prompt: '局部重绘测试用提示词',
+      imageAssetId: '00000000-0000-0000-0000-000000000000',
+      maskDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+    }),
+  });
+  check(
+    'provider 不支持局部重绘时明确拒绝而非静默忽略（503 IMAGE_EDIT_UNSUPPORTED）',
+    notSupported.status === 503 && notSupported.body.code === 'IMAGE_EDIT_UNSUPPORTED',
+  );
+
+  // ---------- 局部重绘链路：mask 必须真正到达出图层，不能被静默丢弃 ----------
+  // 关键回归点：画布 turns 端点若没把 mask 透传给 generateImage，用户圈选后会变成「整张重画」，
+  // 而 UI 上却显示「圈选重绘」。这里用「provider 不支持 → 作业必须 failed」来证明链路是通的：
+  // 若 mask 被丢弃，作业会成功，说明链路断了。
+  const maskCanvas = await request<{ id: string }>(base, '/api/canvas/conversations', { ...authA, method: 'POST' });
+  const editConv = maskCanvas.status === 201 ? maskCanvas.body?.id ?? '' : '';
+  if (editConv) {
+    const tinyMask = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const imgFd = new FormData();
+    imgFd.append('file', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'edit-src.png');
+    const imgUp = await fetch(`${base}/api/media/uploads`, { method: 'POST', headers: authA.headers, body: imgFd });
+    const imgAssetId = ((await imgUp.json().catch(() => null)) as { id?: string } | null)?.id ?? '';
+    const turn = await request<{ jobId: string }>(base, `/api/canvas/conversations/${editConv}/turns`, {
+      ...authA,
+      method: 'POST',
+      body: JSON.stringify({ prompt: '局部重绘链路验证用提示词', imageAssetId: imgAssetId, maskDataUrl: tinyMask }),
+    });
+    check('带遮罩提交画布轮次成功（201）', turn.status === 201 && Boolean(turn.body?.jobId));
+    if (turn.status === 201 && turn.body?.jobId) {
+      let st = 'pending';
+      let err: string | null = null;
+      for (let i = 0; i < 40 && (st === 'pending' || st === 'running'); i += 1) {
+        await new Promise((r) => setTimeout(r, 200));
+        const j = await request<{ status: string; error: string | null }>(base, `/api/canvas/jobs/${turn.body.jobId}`, authA);
+        st = j.status === 200 ? j.body.status : 'error';
+        err = j.status === 200 ? j.body.error : null;
+      }
+      check(
+        '遮罩确实到达出图层：provider 不支持时作业失败而非静默整张重画',
+        // 作业的 error 字段存的是中文消息（错误码在 message 之外的 code 字段，这里按文案断言更稳）
+        st === 'failed' && /不支持局部重绘/.test(String(err ?? '')),
+      );
+    } else {
+      check('遮罩确实到达出图层：provider 不支持时作业失败而非静默整张重画', false);
+    }
+  } else {
+    check('遮罩确实到达出图层：provider 不支持时作业失败而非静默整张重画', false);
+  }
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);

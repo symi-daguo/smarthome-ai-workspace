@@ -27,6 +27,13 @@ export const createTurnSchema = z.object({
   fitVideo: z.boolean().optional(),
   background: canvasBackgroundSchema.optional(),
   quality: canvasQualitySchema.optional(),
+  /**
+   * 局部重绘：原图资产 + 遮罩 dataURL，必须成对。
+   * 遮罩约定与 OpenAI 一致：**要重绘的区域透明、其余不透明**。
+   * 不传就是普通重出图；传了但 provider 不支持会在出图阶段明确失败而不是静默整张重画。
+   */
+  imageAssetId: z.string().uuid().optional(),
+  maskDataUrl: z.string().max(2_000_000).optional(),
 });
 
 export const updateTurnSchema = z.object({

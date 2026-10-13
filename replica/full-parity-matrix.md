@@ -36,7 +36,7 @@
 | 21 | 会员面板 | 🔸 | 我方改为 /vip 静态说明页，见 §三 |
 | 22 | 开始接单 | ✅ | |
 | 23 | 短视频工作台 | ✅ | |
-| 24 | 涂鸦选区局部重绘 | ⬜ | 依赖上游 mask，见 §四 |
+| 24 | 涂鸦选区局部重绘 | ✅ | 0.1.47 走 OpenAI images/edits 真 inpaint；非 openai provider 明确 503 |
 
 ## 二、已完整移植的部分（可放心交付）
 
@@ -114,10 +114,12 @@
 - **智能体画廊**（`agent-gallery.js` 14KB）：有 `isLocked` 锁定态。我方无锁定态，**这是有意差异**——免费开源不做付费墙。
 - **视频音频设置**（`video-audio.js` 4KB）：`settings` / `describe` / `support` / `sync`。✅ 0.1.46 已实现（音轨编译进提示词，非独立参数）。
 
-## 四、暂不做（需上游能力）
+## 四、涂鸦选区局部重绘（✅ 0.1.47 已实现）
 
-- **涂鸦选区局部重绘**：依赖图像模型支持 mask / inpaint。我方 `/api/media/images` 不接受 mask，
-  硬做会变成「只能圈选预览、不能真正局部重绘」的假功能。
+- `generateViaOpenaiEdit` 走 `POST /images/edits`（multipart），原图 + 遮罩成对传入
+- 遮罩约定：**要重绘的区域透明、其余不透明**（OpenAI 规范，与直觉相反）
+- 仅 `provider=openai` 可用；其它 provider 返回 `503 IMAGE_EDIT_UNSUPPORTED` 明确拒绝，
+  不做「能圈选但整张重画」的假实现
 
 ## 五、结论
 

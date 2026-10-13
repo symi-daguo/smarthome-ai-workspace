@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
 import { ModelConfigService } from '../llm/model-config.service.js';
-import { generateViaComfyui, generateViaMinimax, generateViaOpenai, type GeneratedImage } from './image-provider.js';
+import { generateViaComfyui, generateViaMinimax, generateViaOpenai,
+  generateViaOpenaiEdit, type GeneratedImage } from './image-provider.js';
 import { generateViaMinimaxVideo, generateViaOpenaiVideo } from './video-provider.js';
 
 /** 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
@@ -86,6 +87,9 @@ export class MediaService {
     fitVideo?: boolean;
     /** 背景意图：transparent / white 追加到提示词，auto 不干预 */
     background?: 'auto' | 'transparent' | 'white';
+    /** 局部重绘：原图资产 id + 遮罩 dataURL（二者需同时提供） */
+    imageAssetId?: string;
+    maskDataUrl?: string;
     title?: string;
   }): Promise<{ id: string; url: string; status: string }> {
     const cfg = await this.modelConfig.imageConfig();
@@ -116,7 +120,36 @@ export class MediaService {
     await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
     let img: GeneratedImage;
-    if (cfg.provider === 'comfyui') {
+
+    // 局部重绘：只支持 openai（images/edits），其它 provider 明确拒绝而不是静默忽略，
+    // 否则用户会以为圈选生效了、实际整张重画。
+    if (opts.maskDataUrl || opts.imageAssetId) {
+      // 参数完整性先于能力判断：只给一半是请求错误（400），不是能力不支持（503）
+      if (!opts.imageAssetId || !opts.maskDataUrl) {
+        throw new BadRequestException('局部重绘需要同时提供原图（imageAssetId）与遮罩（maskDataUrl）');
+      }
+      if (cfg.provider !== 'openai') {
+        throw new ServiceUnavailableException({
+          code: 'IMAGE_EDIT_UNSUPPORTED',
+          message: `当前生图 provider（${cfg.provider}）不支持局部重绘，请在「模型配置」把生图切到 OpenAI 兼容端点后再用圈选`,
+        });
+      }
+      const src = await this.prisma.mediaAsset.findFirst({ where: { id: opts.imageAssetId, tenantId: opts.tenantId } });
+      if (!src || src.kind !== 'image') throw new BadRequestException('EDIT_SOURCE_NOT_FOUND');
+      const srcBuf = await readFile(this.resolveSafe(src.filePath));
+      const maskBuf = Buffer.from(opts.maskDataUrl.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+      if (!maskBuf.length) throw new BadRequestException('INVALID_MASK');
+      img = await generateViaOpenaiEdit({
+        baseUrl: cfg.baseUrl,
+        apiKey,
+        model: cfg.model,
+        prompt,
+        size,
+        image: srcBuf,
+        imageMime: src.mimeType || 'image/png',
+        mask: maskBuf,
+      });
+    } else if (cfg.provider === 'comfyui') {
       img = await generateViaComfyui({
         baseUrl: cfg.comfyBaseUrl,
         workflow: await this.loadComfyWorkflow(cfg.workflowPath),

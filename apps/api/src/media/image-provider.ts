@@ -88,6 +88,59 @@ export async function generateViaOpenai(opts: {
 }
 
 /**
+ * OpenAI 局部重绘（images/edits）
+ *
+ * 与 generateViaOpenai 的区别：走 multipart 而非 JSON，且必须同时带原图与 mask。
+ * OpenAI 的约定是**mask 里透明(alph=0)的区域才会被重绘**，不透明区域保持原样——
+ * 所以前端要把「用户涂选的区域」画成不透明、其余留透明。
+ * 只在 provider=openai 时可用；其它 provider 走到这里会由 service 层提前拒绝。
+ */
+export async function generateViaOpenaiEdit(opts: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
+  size: string;
+  image: Buffer;
+  imageMime: string;
+  mask: Buffer;
+}): Promise<GeneratedImage> {
+  const form = new FormData();
+  form.append('model', opts.model);
+  form.append('prompt', opts.prompt);
+  form.append('n', '1');
+  form.append('size', opts.size);
+  // Buffer 的底层可能是 SharedArrayBuffer，与 BlobPart 的类型不兼容，显式转成 ArrayBuffer
+  const toPart = (b: Buffer): ArrayBuffer => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+  form.append('image', new Blob([toPart(opts.image)], { type: opts.imageMime }), 'image.png');
+  form.append('mask', new Blob([toPart(opts.mask)], { type: 'image/png' }), 'mask.png');
+
+  const res = await fetch(`${opts.baseUrl}/images/edits`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${opts.apiKey}` },
+    body: form,
+  });
+  const data = (await res.json().catch(() => null)) as {
+    data?: { b64_json?: string; url?: string }[];
+    error?: { message?: string };
+  } | null;
+  const item = data?.data?.[0];
+  if (!res.ok || !item) {
+    const msg = data?.error?.message ?? `HTTP ${res.status}`;
+    throw new ServiceUnavailableException({ code: 'IMAGE_EDIT_FAILED', message: `局部重绘失败：${msg}` });
+  }
+  if (item.b64_json) {
+    return { buffer: Buffer.from(item.b64_json, 'base64'), mimeType: 'image/png', ext: 'png' };
+  }
+  if (item.url) {
+    const imgRes = await fetch(item.url);
+    if (!imgRes.ok) throw new ServiceUnavailableException({ code: 'ASSET_DOWNLOAD_FAILED', message: `素材下载失败 ${imgRes.status}` });
+    return { buffer: Buffer.from(await imgRes.arrayBuffer()), mimeType: imgRes.headers.get('content-type') ?? 'image/png', ext: 'png' };
+  }
+  throw new ServiceUnavailableException({ code: 'IMAGE_EDIT_FAILED', message: '局部重绘返回空结果' });
+}
+
+/**
  * ComfyUI 本地 workflow 生图（官方 Server API：POST /prompt -> 轮询 GET /history/{id} -> GET /view 下载）。
  * 工作流 JSON 由用户在 ComfyUI「Workflow -> Export(API)」导出后放到 COMFYUI_WORKFLOW_PATH；
  * 提示词注入 COMFYUI_PROMPT_NODE（默认 6，CLIPTextEncode 正向），负向注入 COMFYUI_NEGATIVE_NODE（默认 7），

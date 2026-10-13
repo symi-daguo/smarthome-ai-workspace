@@ -34,6 +34,9 @@ interface JobParams {
   background?: 'auto' | 'transparent' | 'white';
   quality?: 'standard' | 'high';
   refAssetId?: string | null;
+  /** 局部重绘参数（成对存在） */
+  imageAssetId?: string | null;
+  maskDataUrl?: string | null;
   parentId?: string | null;
 }
 
@@ -192,6 +195,9 @@ export class CanvasService {
             background: dto.background ?? 'auto',
             quality: dto.quality ?? 'standard',
             refAssetId: refAsset?.id ?? null,
+            // 局部重绘：原图 + 遮罩必须成对，半对会在出图阶段报错而不是静默整张重画
+            imageAssetId: dto.imageAssetId ?? null,
+            maskDataUrl: dto.maskDataUrl ?? null,
             parentId: dto.parentId ?? null,
           } satisfies JobParams,
         },
@@ -266,6 +272,9 @@ export class CanvasService {
         size: params.size,
         fitVideo: params.fitVideo,
         background: params.background,
+        ...(params.imageAssetId && params.maskDataUrl
+          ? { imageAssetId: params.imageAssetId, maskDataUrl: params.maskDataUrl }
+          : {}),
         title: 'AI 画布',
       });
 

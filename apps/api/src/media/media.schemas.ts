@@ -10,6 +10,13 @@ export const generateImageSchema = z.object({
   fitVideo: z.boolean().default(false),
   /** 背景意图：transparent / white 会写进提示词约束；auto 不干预 */
   background: z.enum(['auto', 'transparent', 'white']).default('auto'),
+  /**
+   * 局部重绘：原图资产 id + 遮罩 dataURL（二者必须同时提供）。
+   * 遮罩约定与 OpenAI 一致：**不透明区域会被重绘，透明区域保持原样**。
+   * 目前只有 provider=openai 支持（走 images/edits），其余 provider 会明确拒绝而不是静默忽略。
+   */
+  imageAssetId: z.string().max(40).optional(),
+  maskDataUrl: z.string().max(2_000_000).optional(),
   title: z.string().max(100).optional(),
 });
 export type GenerateImageDto = z.infer<typeof generateImageSchema>;

@@ -44,6 +44,8 @@ export class MediaController {
       size: dto.size,
       fitVideo: dto.fitVideo,
       background: dto.background,
+      imageAssetId: dto.imageAssetId,
+      maskDataUrl: dto.maskDataUrl,
       title: dto.title,
     });
   }
