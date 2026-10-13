@@ -558,7 +558,8 @@ export function DeviceLayout(): ReactNode {
         </Space>
       </div>
 
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      {/* flex:1 + minWidth:0：否则这个 flex 行会退化成内容宽度，宽屏右侧整片留白 */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
         {/* 画布 */}
         <Card
           style={{ flex: '1 1 560px', minWidth: 320 }}

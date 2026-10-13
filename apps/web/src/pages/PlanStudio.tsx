@@ -370,7 +370,7 @@ export function PlanStudio(): ReactNode {
 
       {/* 步骤 1：客户资料 */}
       {step === 0 ? (
-        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
           <Form form={form} layout="vertical" style={{ flex: 1, minWidth: 320, maxWidth: 560 }}>
             <Form.Item label="小区 / 项目名称" name="title" rules={[{ required: true, message: '请输入项目名称' }]}>
               <Input placeholder="例如：汉江一品" size="large" />
@@ -676,7 +676,7 @@ export function PlanStudio(): ReactNode {
 
       {/* 步骤 3：生成与校对（左页列表 + 右幻灯片预览） */}
       {step === 2 && plan && active ? (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
           <div style={{ width: 300, flex: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {plan.pages.map((p, i) => (
               <div

@@ -157,7 +157,10 @@ export class ModelConfigService {
     const fallbackKey = provider === 'openai' ? this.envKey('VIDEO_API_KEY') : this.envKey('MiniMax_API_KEY');
     const baseUrl = clean(db.baseUrl) || fallbackBase;
     const apiKey = clean(db.apiKey) || fallbackKey || undefined;
-    const model = clean(db.model) || this.env('VIDEO_MODEL') || (provider === 'openai' ? 'sora-2' : 'T2V-01-Director / I2V-01-Director');
+    // minimax 的视频模型名留空表示「按有无首帧自动选 T2V/I2V-01-Director」；
+    // 填具体模型名（如 MiniMax-H3）则原样下发。之前这里默认填了 'T2V-01-Director / I2V-01-Director'
+    // 这个「描述串」，它不是合法模型名，一旦被当模型名下发必然被上游拒绝。
+    const model = clean(db.model) || this.env('VIDEO_MODEL') || (provider === 'openai' ? 'sora-2' : '');
     return { provider, baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, model, source: Object.values(db).some((v) => clean(v)) ? 'db' : 'env' };
   }
 

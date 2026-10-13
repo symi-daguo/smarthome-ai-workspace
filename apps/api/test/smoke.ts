@@ -7,6 +7,8 @@ import { AppModule } from '../src/app.module.js';
 import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
+import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
+import { ModelConfigService } from '../src/llm/model-config.service.js';
 
 const checks: [string, boolean][] = [];
 
@@ -687,6 +689,103 @@ async function main(): Promise<void> {
   check('创建接待线索（status=new）', orderCreate.status === 201 && orderCreate.body.status === 'new');
   const orderId = orderCreate.body.id;
 
+  // ---------- 接单「边聊边记」结构化采集（2026-10-13 补齐） ----------
+  // 回归背景：此前只有 8 个自由文本字段，参考站表单里的体验场景、系统范围三态矩阵、
+  // 预算上下限、装修阶段下拉、生活需求细分全部缺失，而 smoke 一条断言都没写，
+  // 所以 222/222 全绿也照样放过了。这些断言就是为了让缺口再次消失时必失败。
+  const orderFull = await request<{
+    renoStage: string; scenes: string[]; systems: Record<string, { need: string; area: string; detail: string }>;
+    budgetMin: number; budgetMax: number; budgetScope: string;
+    residents: string; exclusions: string; nightHabits: string; city: string;
+  }>(base, `/api/orders/${orderId}`, authA);
+  check('装修阶段默认 undecided（不是空串）', orderFull.status === 200 && orderFull.body.renoStage === 'undecided');
+  check('体验场景默认为空数组', Array.isArray(orderFull.body.scenes) && orderFull.body.scenes.length === 0);
+  check('系统范围默认为空对象', !!orderFull.body.systems && Object.keys(orderFull.body.systems).length === 0);
+  check('预算上下限默认为 0', orderFull.body.budgetMin === 0 && orderFull.body.budgetMax === 0);
+
+  // 完整结构化建档：一次性写入并逐字段回读，证明真的落库而不是被丢弃
+  const structured = await request<{
+    id: string;
+    renoStage: string; scenes: string[]; systems: Record<string, { need: string; area: string; detail: string }>;
+    budgetMin: number; budgetMax: number; budgetScope: string;
+    residents: string; exclusions: string; nightHabits: string; city: string; devicePrefs: string;
+  }>(base, '/api/orders', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      customer: '结构化客户', community: '测试小区',
+      renoStage: 'waterBefore',
+      scenes: ['movie', 'nightUp', 'home'],
+      systems: {
+        lighting: { need: 'yes', area: '客厅+主卧', detail: '无主灯 + 灯带' },
+        curtain: { need: 'maybe', area: '主卧', detail: '' },
+      },
+      budgetMin: 30000, budgetMax: 60000, budgetScope: '含施工',
+      residents: '夫妻+两个孩子', exclusions: '不装摄像头', nightHabits: '睡前要开床头灯',
+      city: '武汉', devicePrefs: '已有米家 App',
+    }),
+  });
+  check('结构化接待建档成功（201）', structured.status === 201);
+  check(
+    '体验场景 3 项写入并回读一致',
+    structured.status === 201 && stable(structured.body.scenes) === stable(['movie', 'nightUp', 'home']),
+  );
+  check(
+    '系统范围三态矩阵写入并回读一致（含 area 与 detail）',
+    structured.status === 201
+      && structured.body.systems?.lighting?.need === 'yes'
+      && structured.body.systems?.lighting?.area === '客厅+主卧'
+      && structured.body.systems?.lighting?.detail === '无主灯 + 灯带'
+      && structured.body.systems?.curtain?.need === 'maybe',
+  );
+  check(
+    '装修阶段写入并回读（waterBefore）',
+    structured.status === 201 && structured.body.renoStage === 'waterBefore',
+  );
+  check(
+    '预算上下限与包含范围写入并回读',
+    structured.status === 201 && structured.body.budgetMin === 30000 && structured.body.budgetMax === 60000 && structured.body.budgetScope === '含施工',
+  );
+  check(
+    '生活需求细分写入并回读',
+    structured.status === 201
+      && structured.body.residents === '夫妻+两个孩子'
+      && structured.body.exclusions === '不装摄像头'
+      && structured.body.nightHabits === '睡前要开床头灯'
+      && structured.body.devicePrefs === '已有米家 App',
+  );
+
+  // 白名单：字典外的场景 key / 系统 key / need 值必须被拒（否则脏数据会进库）
+  const badScene = await request(base, '/api/orders', {
+    ...authA, method: 'POST',
+    body: JSON.stringify({ customer: '脏场景', scenes: ['movie', '不存在的场景'] }),
+  });
+  check('场景 key 字典外被拒（400）', badScene.status === 400);
+  const badSystem = await request(base, '/api/orders', {
+    ...authA, method: 'POST',
+    body: JSON.stringify({ customer: '脏系统', systems: { 不存在的系统: { need: 'yes', area: '', detail: '' } } }),
+  });
+  check('系统 key 字典外被拒（400）', badSystem.status === 400);
+  const badNeed = await request(base, '/api/orders', {
+    ...authA, method: 'POST',
+    body: JSON.stringify({ customer: '脏状态', systems: { lighting: { need: 'maybe-ish', area: '', detail: '' } } }),
+  });
+  check('系统 need 值非法被拒（400）', badNeed.status === 400);
+  const badStage = await request(base, '/api/orders', {
+    ...authA, method: 'POST', body: JSON.stringify({ customer: '脏阶段', renoStage: 'renovating' }),
+  });
+  check('装修阶段字典外被拒（400）', badStage.status === 400);
+  const badBudget = await request(base, '/api/orders', {
+    ...authA, method: 'POST',
+    body: JSON.stringify({ customer: '倒挂预算', budgetMin: 60000, budgetMax: 30000 }),
+  });
+  check('预算上限小于理想起点被拒（400）', badBudget.status === 400);
+
+  // 清理这条结构化线索，避免污染后续用例
+  if (structured.status === 201) {
+    await request(base, `/api/orders/${structured.body.id}`, { ...authA, method: 'DELETE' });
+  }
+
   const orderList = await request<unknown[]>(base, '/api/orders', authA);
   check('接待列表可查', orderList.status === 200 && Array.isArray(orderList.body) && orderList.body.length >= 1);
 
@@ -1247,6 +1346,21 @@ async function main(): Promise<void> {
   });
   check('投稿空标题被校验拒绝（400）', subEmpty.status === 400);
 
+  // ---------- 视频模型名必须真正下发，不能被硬编码覆盖 ----------
+  // 回归点：曾经写死 T2V/I2V-01-Director，用户在「模型配置」填的模型（含 MiniMax-H3 这类
+  // 带原生音轨的新模型）被静默丢弃——配置页显示已保存，实际请求永远发旧模型名。
+  check('配置了 MiniMax-H3 时原样下发（文生视频）', resolveMinimaxVideoModel('MiniMax-H3', false) === 'MiniMax-H3');
+  check('配置了 MiniMax-H3 时原样下发（首帧图生视频）', resolveMinimaxVideoModel('MiniMax-H3', true) === 'MiniMax-H3');
+  check('模型名留空时文生视频回落 T2V-01-Director', resolveMinimaxVideoModel('', false) === 'T2V-01-Director');
+  check('模型名留空时首帧图生视频回落 I2V-01-Director', resolveMinimaxVideoModel('', true) === 'I2V-01-Director');
+  check('模型名纯空白等同留空（不会被当成模型名下发）', resolveMinimaxVideoModel('   ', false) === 'T2V-01-Director');
+  // 默认值不能是「T2V-01-Director / I2V-01-Director」这种描述串——它不是合法模型名
+  const vcfg = await app.get(ModelConfigService).videoConfig();
+  check(
+    `生视频模型默认值不是描述串（当前: ${JSON.stringify(vcfg.model)}）`,
+    !vcfg.model.includes('/') || vcfg.provider === 'openai',
+  );
+
   // ---------- 局部重绘：mask 参数的诚实性与校验 ----------
   const maskOnly = await request(base, '/api/media/images', {
     ...authA, method: 'POST', body: JSON.stringify({ prompt: '局部重绘测试用提示词', maskDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
@@ -1300,13 +1414,20 @@ async function main(): Promise<void> {
       check(
         '遮罩确实到达出图层：provider 不支持时作业失败而非静默整张重画',
         // 作业的 error 字段存的是中文消息（错误码在 message 之外的 code 字段，这里按文案断言更稳）
-        st === 'failed' && /不支持局部重绘/.test(String(err ?? '')),
+        st === 'failed' && /不支持按遮罩局部重绘/.test(String(err ?? '')),
+      );
+      // 拒绝必须点明真实原因（缺的是 mask 参数），否则用户会误读成「这个平台根本不能出图」
+      check(
+        '拒绝文案点明缺的是 mask 参数并给出可行替代，而非笼统说 provider 不行',
+        /mask|遮罩参数/.test(String(err ?? '')) && /OpenAI/.test(String(err ?? '')),
       );
     } else {
       check('遮罩确实到达出图层：provider 不支持时作业失败而非静默整张重画', false);
+      check('拒绝文案点明缺的是 mask 参数并给出可行替代，而非笼统说 provider 不行', false);
     }
   } else {
     check('遮罩确实到达出图层：provider 不支持时作业失败而非静默整张重画', false);
+    check('拒绝文案点明缺的是 mask 参数并给出可行替代，而非笼统说 provider 不行', false);
   }
 
   await app.close();

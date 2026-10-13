@@ -408,6 +408,34 @@ model OrderRequest {
   needs     String   @default("")
   rawInput  String   @default("")
   budget    String   @default("")
+  // —— 接待阶段结构化采集（对齐参考站「边聊边记」表单，2026-10-13 补齐）——
+  // 装修阶段：undecided 尚未开始 / designing 设计中 / waterBefore 水电施工前 /
+  // waterDuring 水电施工中 / roughDone 硬装完成 / living 已经入住
+  renoStage String   @default("undecided")
+  // 房屋补充信息
+  moveInDate String  @default("")
+  city       String  @default("")
+  district   String  @default("")
+  address    String  @default("")
+  store      String  @default("")
+  // 生活需求细分（参考站同名字段）
+  residents   String @default("") // 谁会经常住在这里
+  priority1   String @default("")
+  priority2   String @default("")
+  priority3   String @default("")
+  exclusions  String @default("") // 明确不做的内容
+  habits      String @default("") // 控制习惯
+  nightHabits String @default("") // 睡前与夜间习惯
+  devicePrefs String @default("") // 已有设备 / 品牌偏好
+  // 客户想体验的场景：字符串数组，元素取值见 SCENE_KEYS（movie/party/home/away/sleep/nightup/dinner/read/work/morning）
+  scenes Json @default("[]")
+  // 系统范围矩阵：{ [systemKey]: { need: 'yes'|'no'|'maybe', area: string, detail: string } }
+  // systemKey 取值见 SYSTEM_KEYS（lighting/switch/curtain/wifi/automation/security/hvac/voice/media）
+  systems Json @default("{}")
+  // 预算（结构化部分；budget 保留自由文本档位描述）
+  budgetMin   Int    @default(0) // 理想预算起点（元）
+  budgetMax   Int    @default(0) // 客户预算上限（元）
+  budgetScope String @default("") // 预算包含范围
   // 生态偏好（米家/HomeKit 等）
   ecosystem String   @default("")
   // 状态机：new 了解客户 -> qualified 需求确认 -> proposed 方案匹配 -> quoted 报价 -> won 成单 / lost 失单

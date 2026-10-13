@@ -1029,12 +1029,24 @@ export function QuoteStudio(): ReactNode {
         }
       />
 
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        {/* 左：产品库（flex 百分比，宽屏随内容区拉宽） */}
+      {/*
+        主区两栏：产品库 + 报价单。
+        宽屏留白的根因不是列宽数字，而是**外层 flex 容器自身没有 flex-grow**：
+        它作为 block 级 div 默认 width=100%，但父级 pageContainerStyle 也没约束时，
+        在 AntD Layout 的 flex 行里会退化成内容宽度，两栏加起来多宽就多宽，
+        剩下的全部变成右侧空白。
+        这里显式 flex:1 + minWidth:0（minWidth:0 是关键，否则 flex item 不会收缩到内容以下），
+        再让右栏 flex:1 吃掉剩余宽度 —— 左侧产品库保持窄列（maxWidth 380），右侧铺满。
+      */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+        {/* 左：产品库。
+            宽度取 380px 上下：这是「名称 + 单价 + SKU + 规格」一行排得下的最小宽度，
+            再窄就会出现「空调/伴侣」「智能摄/像头」这种断字。
+            flex-basis 用 px 而非百分比，避免被右侧挤压；右侧 flex:1 吃满剩余，不留白。 */}
         <Card
           title="产品库（点击加入报价单）"
           size="small"
-          style={{ flex: '1 1 300px', minWidth: 280, maxWidth: 380 }}
+          style={{ flex: '0 1 380px', minWidth: 340, maxWidth: 420 }}
           styles={{ body: { padding: '10px 14px', maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' } }}
         >
           {grouped.map(([cat, list]) => (

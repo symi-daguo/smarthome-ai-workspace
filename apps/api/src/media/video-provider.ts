@@ -25,20 +25,46 @@ export interface VideoGenParams {
   firstFrameImage?: string;
 }
 
-/** MiniMax Director：提交 video_generation -> 轮询 query -> files/retrieve 取下载地址 */
+/**
+ * 视频模型名解析（抽成纯函数，便于直接断言，避免只能靠真实调用来验证）。
+ *
+ * 回归背景：曾经这里写死 `first_frame_image ? 'I2V-01-Director' : 'T2V-01-Director'`，
+ * 用户在「模型配置」页填的视频模型被静默丢弃——配置页显示已保存，实际请求永远发旧模型。
+ * 判定标准：配置了就必须原样下发；只有留空/纯空白才回落到第一代默认模型。
+ */
+export function resolveMinimaxVideoModel(configured: string | undefined, hasFirstFrame: boolean): string {
+  const c = (configured ?? '').trim();
+  if (c) return c;
+  return hasFirstFrame ? 'I2V-01-Director' : 'T2V-01-Director';
+}
+
+/**
+ * MiniMax 视频生成：提交 video_generation -> 轮询 query -> files/retrieve 取下载地址
+ *
+ * 换新模型后如果参数枚举不同（如 H3 的分辨率/时长档位），以上游返回的错误为准，不在这里猜。
+ */
 export async function generateViaMinimaxVideo(opts: {
   baseUrl: string;
   apiKey: string;
+  /** 用户在「模型配置」页指定的视频模型名；留空则按有无首帧自动选 */
+  model?: string;
   params: VideoGenParams;
   resolutionMap: Record<string, string>;
   ratioMap: Record<string, string>;
 }): Promise<GeneratedVideo> {
   const { baseUrl, apiKey, params } = opts;
+  const configured = (opts.model ?? '').trim();
+  const model = resolveMinimaxVideoModel(opts.model, Boolean(params.firstFrameImage));
+  if (!configured) {
+    logger.log(`未指定视频模型，按${params.firstFrameImage ? '首帧图生' : '文生'}视频使用默认模型 ${model}`);
+  } else {
+    logger.log(`使用配置的视频模型 ${model}`);
+  }
   const submit = await fetch(`${baseUrl}/video_generation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: params.firstFrameImage ? 'I2V-01-Director' : 'T2V-01-Director',
+      model,
       prompt: params.prompt,
       ...(params.firstFrameImage ? { first_frame_image: params.firstFrameImage } : {}),
       duration: Number(params.duration),

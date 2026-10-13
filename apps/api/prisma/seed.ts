@@ -181,7 +181,43 @@ async function main(): Promise<void> {
     productCount++;
   }
 
-  console.log(`seed done: roles=${ROLE_DEFS.length}, permissions=${PERMISSIONS.length}, categories=${PRESET_CATEGORIES.length}, products=${productCount}, admin=${phone}`);
+  // 公共库价格完整性修复（幂等、只补 0 值、不覆盖已有值）：
+  // PRODUCT_DEFS 按 name 逐条 upsert，不在清单里的历史脏数据永远碰不到。
+  // 实测存在这类行——三级价全 0、sku 空，界面「产品中心」会显示「指导 ¥0」误导用户
+  //（报价侧 sellPrice 有 `priceRetail || priceMax` 回退，算价不会错，但主数据显示是错的）。
+  // 这里对所有公共库行统一补齐：与上面同一套口径（retail=max, project=min, dealer=project*0.9 取整到 10）。
+  const broken = await prisma.product.findMany({
+    where: { tenantId: null, priceMax: { gt: 0 }, OR: [{ priceRetail: 0 }, { priceProject: 0 }, { priceDealer: 0 }] },
+    select: { id: true, name: true, priceMin: true, priceMax: true, priceRetail: true, priceProject: true, priceDealer: true },
+  });
+  let repaired = 0;
+  for (const p of broken) {
+    const priceRetail = p.priceRetail || p.priceMax;
+    const priceProject = p.priceProject || p.priceMin;
+    const priceDealer = p.priceDealer || Math.round((priceProject * 0.9) / 10) * 10;
+    if (priceRetail === p.priceRetail && priceProject === p.priceProject && priceDealer === p.priceDealer) continue;
+    await prisma.product.update({ where: { id: p.id }, data: { priceRetail, priceProject, priceDealer } });
+    repaired++;
+    console.log(`  repaired public product pricing: ${p.name} → retail=${priceRetail} project=${priceProject} dealer=${priceDealer}`);
+  }
+
+  // 公共库孤儿行体检（只报告不删）：列出既不在 PRODUCT_DEFS、又缺 sku/规格的主数据不完整行。
+  // 这类行是脏数据的来源——实测出现过一条「小爱触屏音箱」：三级价全 0、sku/snRule/spec 全空、
+  // 且不属于本项目任何品牌定义。零外键引用、已人工删除；这里留一道体检，
+  // 以后再出现同类行时 seed 会明确报出来，而不是等到界面上看到「指导 ¥0」才发现。
+  const knownNames = new Set(PRODUCT_DEFS.map((d) => d.name));
+  const orphans = await prisma.product.findMany({
+    where: { tenantId: null, sku: '', model: '' },
+    select: { id: true, name: true, sku: true, spec: true },
+  });
+  const orphansUnknown = orphans.filter((p) => !knownNames.has(p.name));
+  for (const o of orphansUnknown) {
+    console.warn(`  ⚠ 公共库孤儿产品（不在 PRODUCT_DEFS 且 sku/model 为空）：${o.name}（${o.id}）`);
+  }
+
+  console.log(
+    `seed done: roles=${ROLE_DEFS.length}, permissions=${PERMISSIONS.length}, categories=${PRESET_CATEGORIES.length}, products=${productCount}, pricingRepaired=${repaired}, orphanProducts=${orphansUnknown.length}, admin=${phone}`,
+  );
 }
 
 main()

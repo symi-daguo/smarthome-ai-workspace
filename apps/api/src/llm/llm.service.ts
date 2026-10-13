@@ -124,8 +124,12 @@ export class LlmService {
   /**
    * 结构化 JSON 抽取：要求模型只返回符合字段说明的 JSON 对象。
    * 解析失败或 key 未配置时抛出，由调用方降级。
+   *
+   * 约束放宽为 `Record<string, unknown>`（原为 `Record<string, string>`）：
+   * 模型输出的字段不都是字符串——接单解析就要返回场景数组、系统三态对象、预算数字。
+   * 调用方负责做运行时白名单过滤与转型，这里不做臆测。
    */
-  async chatObject<T extends Record<string, string>>(input: {
+  async chatObject<T extends Record<string, unknown>>(input: {
     model?: string;
     systemPrompt: string;
     prompt: string;

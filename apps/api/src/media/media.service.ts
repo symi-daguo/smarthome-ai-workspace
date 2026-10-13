@@ -121,17 +121,28 @@ export class MediaService {
 
     let img: GeneratedImage;
 
-    // 局部重绘：只支持 openai（images/edits），其它 provider 明确拒绝而不是静默忽略，
-    // 否则用户会以为圈选生效了、实际整张重画。
+    // 局部重绘需要像素级遮罩参数（mask / inpaint region）。
+    // 查证 MiniMax 官方 /v1/image_generation 的请求 schema（platform.minimax.io/docs/api-reference/image-generation-i2i）：
+    // 只有 model / prompt / subject_reference / aspect_ratio / width / height / response_format / seed / n /
+    // prompt_optimizer，**没有 mask、没有 inpainting 区域、没有 denoise 强度**。
+    // subject_reference 是「参考图主体一致性」（type=character，用于保持人物特征），
+    // 拿它冒充遮罩重绘会让用户以为圈选生效、实际整张重画——这正是这里要避免的。
+    // 所以：没有 mask 语义的 provider 明确拒绝，而不是静默降级。
     if (opts.maskDataUrl || opts.imageAssetId) {
       // 参数完整性先于能力判断：只给一半是请求错误（400），不是能力不支持（503）
       if (!opts.imageAssetId || !opts.maskDataUrl) {
         throw new BadRequestException('局部重绘需要同时提供原图（imageAssetId）与遮罩（maskDataUrl）');
       }
       if (cfg.provider !== 'openai') {
+        const why =
+          cfg.provider === 'minimax'
+            ? 'MiniMax 的图像生成接口只有「参考图（subject_reference）」，没有 mask / 遮罩区域参数'
+            : `provider=${cfg.provider} 没有实现遮罩重绘`;
         throw new ServiceUnavailableException({
           code: 'IMAGE_EDIT_UNSUPPORTED',
-          message: `当前生图 provider（${cfg.provider}）不支持局部重绘，请在「模型配置」把生图切到 OpenAI 兼容端点后再用圈选`,
+          message: `当前出图通道（${cfg.provider}）不支持按遮罩局部重绘：${why}。`
+            + '可行做法：① 在「模型配置」把生图切到 OpenAI 兼容端点后使用圈选；'
+            + '② 或不用圈选，改在提示词里直接描述要改动的位置，让参考图模式重画整张。',
         });
       }
       const src = await this.prisma.mediaAsset.findFirst({ where: { id: opts.imageAssetId, tenantId: opts.tenantId } });
@@ -270,7 +281,14 @@ export class MediaService {
     const video =
       vcfg.provider === 'openai'
         ? await generateViaOpenaiVideo({ baseUrl: vcfg.baseUrl, apiKey: vcfg.apiKey, model: vcfg.model, params })
-        : await generateViaMinimaxVideo({ baseUrl: vcfg.baseUrl, apiKey: vcfg.apiKey, params, resolutionMap: VIDEO_RESOLUTION, ratioMap: VIDEO_ASPECT });
+        : await generateViaMinimaxVideo({
+            baseUrl: vcfg.baseUrl,
+            apiKey: vcfg.apiKey,
+            model: vcfg.model,
+            params,
+            resolutionMap: VIDEO_RESOLUTION,
+            ratioMap: VIDEO_ASPECT,
+          });
 
     const rel = `videos/${this.dayDir()}/${randomUUID()}.${video.ext}`;
     const { sizeBytes, mimeType } = await this.saveBuffer({ buffer: video.buffer, mimeType: video.mimeType, ext: video.ext }, rel);

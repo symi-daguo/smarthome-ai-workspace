@@ -533,9 +533,9 @@ export function ModelConfig(): ReactNode {
             styles={{ body: { padding: 18 } }}
           >
             <Form form={videoForm} layout={isWide ? 'horizontal' : 'vertical'} labelCol={isWide ? { span: 4 } : undefined} wrapperCol={isWide ? { span: 20 } : undefined}>
-              <Form.Item name="provider" label="Provider" rules={[{ required: true }]} extra="MiniMax Director（T2V/I2V，支持首帧图生视频）或 OpenAI Sora 2（videos API）">
+              <Form.Item name="provider" label="Provider" rules={[{ required: true }]} extra="MiniMax（默认走 T2V/I2V-01-Director，也可填 MiniMax-H3 等带原生音轨的新模型）或 OpenAI Sora 2（videos API）">
                 <Radio.Group optionType="button" buttonStyle="solid">
-                  <Radio.Button value="minimax">MiniMax Director</Radio.Button>
+                  <Radio.Button value="minimax">MiniMax</Radio.Button>
                   <Radio.Button value="openai">OpenAI Sora</Radio.Button>
                 </Radio.Group>
               </Form.Item>
@@ -545,8 +545,8 @@ export function ModelConfig(): ReactNode {
               <Form.Item name="apiKey" label="API Key" extra={status.video.keyConfigured ? `已保存（${status.video.keyMasked}），留空则保持不变` : videoProvider === 'openai' ? 'OpenAI 平台的 API Key' : 'MiniMax 平台 Key，可与对话共用'}>
                 <Input.Password placeholder="sk-…" autoComplete="off" allowClear />
               </Form.Item>
-              <Form.Item name="model" label="模型" extra={videoProvider === 'openai' ? 'Sora 模型名，如 sora-2' : '留空即用 T2V/I2V-01-Director（按有无首帧自动切换）'}>
-                <Input placeholder={videoProvider === 'openai' ? 'sora-2' : ''} allowClear />
+              <Form.Item name="model" label="模型" extra={videoProvider === 'openai' ? 'Sora 模型名，如 sora-2' : '留空＝按有无首帧自动选 T2V/I2V-01-Director；填具体模型名则原样下发，如需原生音轨可填 MiniMax-H3。换模型后若参数档位不同，以平台返回的错误为准'}>
+                <Input placeholder={videoProvider === 'openai' ? 'sora-2' : '留空＝自动'} allowClear />
               </Form.Item>
             </Form>
             {actionButtons({ saveScope: 'video', testScope: 'video', resetScope: 'video', resetLabel: '生视频', showReset: status.video.source === 'db' })}

@@ -136,23 +136,49 @@ export function ImageCanvas(): ReactNode {
 
   // ---------- 分支树 ----------
   const byId = useMemo(() => new Map(turns.map((t) => [t.id, t])), [turns]);
-  const headTurn = useMemo(() => turns.find((t) => t.parentId === null) ?? null, [turns]);
+  /** 全部根轮次（按时间序），不是只取第一个 —— 见下方 path 的兜底说明 */
+  const headTurns = useMemo(
+    () => turns.filter((t) => t.parentId === null).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [turns],
+  );
 
-  /** 从头沿当前选定分支走到叶子；children>1 时按 branchChoice 走 */
-  const path = useMemo(() => {
-    const out: Turn[] = [];
-    let cur: Turn | undefined = headTurn ?? undefined;
+  /** 当前对话线的叶子轮次：新消息挂在它之后，保证「像聊天一样连续」而不是凭空多出一条线 */
+  const leafTurn = useMemo(() => {
+    if (!headTurns.length) return undefined;
+    let cur: Turn | undefined = headTurns[headTurns.length - 1];
     const guard = new Set<string>();
     while (cur && !guard.has(cur.id)) {
       guard.add(cur.id);
-      out.push(cur);
       const kids = cur.children ?? [];
       if (!kids.length) break;
-      const pick = branchChoice[cur.id] && kids.includes(branchChoice[cur.id]) ? branchChoice[cur.id] : kids[0];
-      cur = byId.get(pick);
+      cur = byId.get(kids[kids.length - 1]);
+    }
+    return cur;
+  }, [headTurns, byId]);
+
+  /**
+   * 从头沿当前选定分支走到叶子；children>1 时按 branchChoice 走。
+   *
+   * 兜底：历史数据里可能存在**多个**根轮次（早期版本发消息时没带 parentId，每条都是新根）。
+   * 那时只渲染第一个根会让后面的消息整条消失——界面上表现为「出图成功了但什么都没显示」。
+   * 所以这里把所有根按时间串成一条线，保证任何历史数据都能完整显示。
+   */
+  const path = useMemo(() => {
+    const out: Turn[] = [];
+    const guard = new Set<string>();
+    for (const head of headTurns) {
+      let cur: Turn | undefined = head;
+      while (cur && !guard.has(cur.id)) {
+        guard.add(cur.id);
+        out.push(cur);
+        const kids = cur.children ?? [];
+        if (!kids.length) break;
+        const pick = branchChoice[cur.id] && kids.includes(branchChoice[cur.id]) ? branchChoice[cur.id] : kids[0];
+        cur = byId.get(pick);
+      }
     }
     return out;
-  }, [headTurn, byId, branchChoice]);
+  }, [headTurns, byId, branchChoice]);
 
   const switchBranch = useCallback((parentId: string, dir: 1 | -1) => {
     const parent = byId.get(parentId);
@@ -204,7 +230,9 @@ export function ImageCanvas(): ReactNode {
         method: 'POST',
         body: JSON.stringify({
           prompt: text,
-          parentId: baseTurnId,
+          // 不传 parentId 会新建根轮次，导致新消息与已有对话线平级、界面上看起来「消息消失」。
+          // 默认接在当前叶子之后；显式传 baseTurnId（如从某轮派生分支）时以传入值为准。
+          parentId: baseTurnId ?? leafTurn?.id,
           refAssetId: refImage?.assetId,
           size: ratio,
           fitVideo,
@@ -218,7 +246,7 @@ export function ImageCanvas(): ReactNode {
     } finally {
       setSending(false);
     }
-  }, [input, ensureConversation, refImage, ratio, fitVideo, loadTurns, pollJob, message]);
+  }, [input, ensureConversation, refImage, ratio, fitVideo, loadTurns, pollJob, message, leafTurn]);
 
   /** 重新生成：基于同一张基底图再来一版（变体追加，不覆盖） */
   const regenerate = useCallback(async (turn: Turn) => {

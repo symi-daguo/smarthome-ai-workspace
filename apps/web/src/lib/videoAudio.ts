@@ -62,19 +62,42 @@ export function describeAudio(s: AudioSettings): string {
 
 /**
  * 能力判断：返回空串表示该模式下无阻塞；返回文案表示需要提示/禁用。
- * 判定依据只有模型名里能确证的前缀，不猜——猜错会让用户以为能出声却拿到哑片。
+ *
+ * 每条判据都必须有出处，不能靠「大概率」蒙——蒙错会让用户以为能出声却拿到哑片，
+ * 或者选了静音却拿到有声视频（MiniMax H3 就是后者）。
+ *
+ * 依据：
+ * ① 必带原生音频（静音做不到，必须切模型）：gemini-omni、veo、MiniMax H3 / Hailuo 03。
+ *    H3 每条视频都自带 32kHz 立体声（对白、音效、音乐），音频是模型输出的一部分而非附加项。
+ * ② 明确无声：MiniMax 第一代 T2V/I2V（Director）只输出画面；OpenAI Sora 同样只出画面。
+ * ③ 可选声音：seedance 系列支持原生音轨，也能配无音轨变体。
+ * ④ 其它：不做无根据的断言，返回「需实测确认」而不是「大概率不出声」。
  */
 export function audioSupportHint(provider: string, model: string, mode: AudioMode): string {
-  const m = (model || '').toLowerCase();
+  const m = (model || '').toLowerCase().replace(/[\s_]+/g, '-');
   const p = (provider || '').toLowerCase();
-  // 已知自带音频的模型：静音做不到，必须切模型
-  if (m.startsWith('gemini-omni') || m.startsWith('veo')) {
-    return mode === 'silent' ? '当前模型为自带声音的版本，静音做不到；请换用无音轨模型或改选有声模式。' : '';
+
+  // ① 必带原生音频：静音模式物理上做不到
+  const alwaysAuds = m.startsWith('gemini-omni') || m.startsWith('veo') || /(^|-)h3(-|$)/.test(m) || m.includes('hailuo-03');
+  if (alwaysAuds) {
+    return mode === 'silent'
+      ? '当前模型每条视频都自带原生音轨（对白/音效/音乐），静音做不到；请改选有声模式，或换用无音轨的视频模型。'
+      : '';
   }
-  // 明确支持声音的模型
-  if (m.includes('seedance') || p === 'sora' || m.startsWith('gpt-4o-audio')) return '';
-  // 其它：多数只出画面
-  return mode === 'silent' ? '' : '当前模型大概率只输出画面、不出声。选了也有声设置也不代表成片会有声音，建议先试一小段确认。';
+
+  // ② 明确无声：可以放心选静音，也别指望选了音效/音乐会生效
+  const silentOnly = m.includes('sora') || p === 'sora' || /(^|-)(t2v|i2v)(-|$)/.test(m) || m.includes('director');
+  if (silentOnly) {
+    return mode === 'silent' ? '' : '当前模型只输出画面、不生成声音。声音设置仅会写入提示词，不会出现在成片里。';
+  }
+
+  // ③ 明确支持可选音轨
+  if (m.includes('seedance')) return '';
+
+  // ④ 未收录的模型：说明如何自证，而不是替用户下「不出声」的结论
+  return mode === 'silent'
+    ? ''
+    : '未收录该模型的音轨能力：声音设置会写入提示词，是否成声取决于模型本身。建议先用一小段确认成片有无声音。';
 }
 
 /** 把音轨片段拼到用户提示词后面 */

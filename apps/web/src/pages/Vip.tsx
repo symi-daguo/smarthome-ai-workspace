@@ -28,7 +28,7 @@ const CAPABILITIES: { group: string; items: string[] }[] = [
   {
     group: '方案与设计',
     items: [
-      '智能百宝箱 19 个工具入口',
+      '智能百宝箱 20 个工具入口',
       '智能设备点位布局：布点 → 导出图纸 PNG / 设备清单 CSV',
       '智能灯光场景演示：灯具编排 + 手工时间轴 → 出片',
       'WiFi 信号热力图、灯光点位效果图',
