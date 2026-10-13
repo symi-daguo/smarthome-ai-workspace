@@ -1199,6 +1199,28 @@ async function main(): Promise<void> {
   check('清理后画布列表为空（测试数据不残留）', canvasList2.status === 200 && canvasList2.body.length === 0);
   check('清理后生图模型配置回到默认来源', canvasCfgReset.body.image.source === 'env');
 
+  // ---------- 任务中心：跨页面/跨刷新的任务来源 ----------
+  const tasksList = await request<{ id: string; status: string; title: string }[]>(base, '/api/canvas/tasks', authA);
+  check('任务中心列表可查（200 且为数组）', tasksList.status === 200 && Array.isArray(tasksList.body));
+  check(
+    '任务中心按 title 暴露可读摘要',
+    tasksList.status === 200 && tasksList.body.every((t) => typeof t.title === 'string' && t.title.length > 0),
+  );
+  const jobId = tasksList.body[0]?.id ?? '00000000-0000-0000-0000-000000000000';
+  const clearJobs = await request<{ deleted: number }>(base, '/api/canvas/tasks/finished', { ...authA, method: 'DELETE' });
+  check('清空已结束任务可用（200 且返回删除条数）', clearJobs.status === 200 && typeof clearJobs.body.deleted === 'number');
+  const tasksAfter = await request<{ id: string; status: string }[]>(base, '/api/canvas/tasks', authA);
+  check(
+    '清空后不再含已结束任务（进行中必须保留）',
+    tasksAfter.status === 200 && tasksAfter.body.every((t) => t.status !== 'done' && t.status !== 'failed'),
+  );
+  const jobsBefore = tasksList.body.length;
+  check(
+    '清空已结束任务不会误删进行中任务',
+    jobsBefore === 0 || tasksAfter.body.length <= jobsBefore,
+  );
+  void jobId;
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);

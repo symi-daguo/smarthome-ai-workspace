@@ -91,4 +91,21 @@ export class CanvasController {
   runJob(@CurrentUser() user: TenantUser, @Param('id') id: string) {
     return this.canvas.runJob(user.activeTenantId as string, user.id, id);
   }
+
+  /**
+   * 任务中心列表：全租户的生成任务（不只 AI 画布）。
+   * 任务球据此跨页面、跨刷新恢复红点，不再依赖前端内存态。
+   */
+  @RequirePermissions('content:generate')
+  @Get('tasks')
+  listTasks(@CurrentUser() user: TenantUser) {
+    return this.canvas.listTasks(user.activeTenantId as string);
+  }
+
+  /** 清空已结束任务（进行中的必须保留，否则用户会以为任务丢了） */
+  @RequirePermissions('content:generate')
+  @Delete('tasks/finished')
+  clearTasks(@CurrentUser() user: TenantUser) {
+    return this.canvas.clearFinishedTasks(user.activeTenantId as string);
+  }
 }

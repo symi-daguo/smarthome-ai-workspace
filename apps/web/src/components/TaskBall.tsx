@@ -1,13 +1,37 @@
 import { ClearOutlined, RobotOutlined } from '@ant-design/icons';
 import { Badge, Button, Popover, Typography, theme } from 'antd';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../store/ChatStore';
+import { api } from '../lib/api';
 
 const { Text } = Typography;
 
 const BALL_SIZE = 52;
 const MARGIN = 24;
+const POS_KEY = 'task_ball_pos';
+
+/** 服务端任务（跨页面/跨刷新可见） */
+interface ServerTask {
+  id: string;
+  kind: string;
+  status: string;
+  title: string;
+  resultUrl: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+function loadPos(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(POS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { x: number; y: number };
+    return Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+  } catch {
+    return null;
+  }
+}
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -20,8 +44,9 @@ export function TaskBall(): ReactNode {
   const { token } = theme.useToken();
   const navigate = useNavigate();
   const { tasks, clearFinished, unreadDone, markTasksRead } = useChatStore();
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(loadPos);
   const [open, setOpen] = useState(false);
+  const [serverTasks, setServerTasks] = useState<ServerTask[]>([]);
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
   const ballRef = useRef<HTMLDivElement>(null);
 
@@ -30,7 +55,26 @@ export function TaskBall(): ReactNode {
     y: window.innerHeight - BALL_SIZE - MARGIN,
   }), []);
 
-  const resetHome = useCallback(() => setPos(defaultPos()), [defaultPos]);
+  const resetHome = useCallback(() => {
+    const p = defaultPos();
+    setPos(p);
+    localStorage.setItem(POS_KEY, JSON.stringify(p));
+  }, [defaultPos]);
+
+  // 任务来自服务端：切页或刷新后红点仍在（此前只读前端内存态，一刷新就丢）
+  const loadServerTasks = useCallback(async () => {
+    try {
+      setServerTasks(await api<ServerTask[]>('/api/canvas/tasks'));
+    } catch {
+      /* 未登录或接口不可用时静默降级为纯前端任务 */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadServerTasks();
+    const timer = window.setInterval(() => void loadServerTasks(), 6000);
+    return () => window.clearInterval(timer);
+  }, [loadServerTasks]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -76,6 +120,13 @@ export function TaskBall(): ReactNode {
   const onPointerUp = (): void => {
     const drag = dragRef.current;
     dragRef.current = null;
+    if (drag?.moved) {
+      setPos((cur) => {
+        const next = cur ?? defaultPos();
+        localStorage.setItem(POS_KEY, JSON.stringify(next));
+        return next;
+      });
+    }
     if (drag && !drag.moved) {
       const next = !open;
       setOpen(next);
@@ -83,22 +134,53 @@ export function TaskBall(): ReactNode {
     }
   };
 
-  const running = tasks.filter((t) => t.status === 'running');
-  const finished = tasks.filter((t) => t.status === 'done');
+  // 前端即时任务 + 服务端持久任务，按 id 去重（同一任务两边都有时取服务端那份）
+  const merged = useMemo(() => {
+    type Row = { id: string; title: string; status: 'running' | 'done'; at: number; failed: boolean };
+    const map = new Map<string, Row>();
+    for (const t of tasks) {
+      map.set(t.id, { id: t.id, title: t.title, status: t.status === 'running' ? 'running' : 'done', at: t.createdAt, failed: false });
+    }
+    for (const t of serverTasks) {
+      const st = t.status === 'pending' || t.status === 'running' ? 'running' : 'done';
+      map.set(t.id, {
+        id: t.id,
+        title: t.title,
+        status: st,
+        at: new Date(t.createdAt).getTime(),
+        failed: t.status === 'failed',
+      });
+    }
+    return [...map.values()].sort((a, b) => b.at - a.at);
+  }, [tasks, serverTasks]);
+
+  const running = merged.filter((t) => t.status === 'running');
+  const finished = merged.filter((t) => t.status === 'done');
   const current = pos ?? defaultPos();
 
   const panel: ReactNode = (
     <div style={{ width: 300 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <Text strong>生成任务</Text>
-        <Button size="small" type="text" icon={<ClearOutlined />} disabled={finished.length === 0} onClick={clearFinished}>
+        <Button
+          size="small"
+          type="text"
+          icon={<ClearOutlined />}
+          disabled={finished.length === 0}
+          onClick={() => {
+            clearFinished();
+            void api('/api/canvas/tasks/finished', { method: 'DELETE' })
+              .then(() => loadServerTasks())
+              .catch(() => undefined);
+          }}
+        >
           清空已结束（{finished.length}）
         </Button>
       </div>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
         生成会在后台继续，完成后这里亮红点。可同时查看多个任务。
       </Text>
-      {tasks.length === 0 ? (
+      {merged.length === 0 ? (
         <Text type="secondary" style={{ fontSize: 12 }}>
           当前没有待处理任务，历史作品仍可查看
         </Text>
@@ -122,14 +204,14 @@ export function TaskBall(): ReactNode {
                   height: 8,
                   borderRadius: 4,
                   flex: 'none',
-                  background: t.status === 'running' ? token.colorPrimary : token.colorSuccess,
+                  background: t.status === 'running' ? token.colorPrimary : t.failed ? token.colorError : token.colorSuccess,
                 }}
               />
               <Text style={{ flex: 1, fontSize: 12 }} ellipsis={{ tooltip: t.title }}>
                 {t.title}
               </Text>
               <Text type="secondary" style={{ fontSize: 11, flex: 'none' }}>
-                {t.status === 'running' ? '生成中' : formatTime(t.createdAt)}
+                {t.status === 'running' ? '生成中' : t.failed ? '失败' : formatTime(t.at)}
               </Text>
             </div>
           ))}
@@ -159,7 +241,7 @@ export function TaskBall(): ReactNode {
         <Badge count={unreadDone} size="small" offset={[-2, 2]}>
           <div
             role="button"
-            aria-label={`生成任务，${tasks.length}条任务，${open ? '收起' : '展开'}`}
+            aria-label={`生成任务，${running.length}条进行中，共${merged.length}条，${open ? '收起' : '展开'}`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}

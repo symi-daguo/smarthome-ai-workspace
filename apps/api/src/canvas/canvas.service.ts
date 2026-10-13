@@ -331,4 +331,40 @@ export class CanvasService {
     }
     return String(error).slice(0, 500);
   }
+
+  // ---------- 任务中心（跨页面/跨刷新的生成任务来源） ----------
+
+  /**
+   * 列出本租户最近 50 条生成任务。
+   * 返回体刻意扁平化，前端任务球直接渲染，无需再拼装轮次上下文。
+   */
+  async listTasks(tenantId: string): Promise<
+    { id: string; kind: string; status: string; title: string; resultUrl: string | null; error: string | null; createdAt: string }[]
+  > {
+    const jobs = await this.prisma.generationJob.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    return jobs.map((j) => {
+      const params = (j.params ?? {}) as { prompt?: string; title?: string };
+      return {
+        id: j.id,
+        kind: j.kind,
+        status: j.status,
+        title: (params.title || params.prompt || '生成任务').slice(0, 40),
+        resultUrl: j.resultUrl,
+        error: j.error,
+        createdAt: j.createdAt.toISOString(),
+      };
+    });
+  }
+
+  /** 清空已结束任务；进行中的必须保留，否则用户会以为任务丢了 */
+  async clearFinishedTasks(tenantId: string): Promise<{ deleted: number }> {
+    const r = await this.prisma.generationJob.deleteMany({
+      where: { tenantId, status: { in: ['done', 'failed'] } },
+    });
+    return { deleted: r.count };
+  }
 }

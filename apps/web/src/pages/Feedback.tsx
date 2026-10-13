@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { App as AntApp, Button, Card, Empty, Form, Grid, Input, Popconfirm, Segmented, Select, Space, Tag, Typography } from 'antd';
+import { App as AntApp, Button, Card, Empty, Form, Grid, Input, Popconfirm, Segmented, Select, Space, Tag, Typography, theme } from 'antd';
 import { useAuth } from '../store/AuthContext';
 import { api } from '../lib/api';
+import { clearContext, formatContext, getLastError, snapshot } from '../lib/errorContext';
 import { PageHeader } from '../components/PageHeader';
 import { pageContainerStyle } from '../theme/tokens';
 
@@ -61,6 +62,14 @@ export function Feedback(): ReactNode {
   const [submitting, setSubmitting] = useState(false);
   const [filter, setFilter] = useState<'all' | 'open'>('all');
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
+  const { token } = theme.useToken();
+  // 上下文为纯内存采集，路由/操作变化时刷新即可
+  const [ctxTick, setCtxTick] = useState(0);
+  const [contextOn, setContextOn] = useState(true);
+  const [lastErr, setLastErr] = useState<string | null>(null);
+  const ctx = snapshot();
+  const ctxCount = ctx.failedRequests.length + ctx.actions.length;
+  useEffect(() => { setCtxTick((n) => n + 1); setLastErr(getLastError()); }, [tickets.length]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,7 +89,17 @@ export function Feedback(): ReactNode {
   const submit = async (values: { category: string; title: string; detail?: string }): Promise<void> => {
     setSubmitting(true);
     try {
-      await api('/api/feedback', { method: 'POST', body: JSON.stringify(values) });
+      const ctx = formatContext();
+      await api('/api/feedback', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...values,
+          detail: contextOn
+            ? [values.detail, '', '--- 自动采集的上下文 ---', formatContext()].filter(Boolean).join('\n')
+            : values.detail,
+        }),
+      });
+      clearContext();
       message.success('反馈已提交，我们会在「问题反馈」里同步处理进度');
       values.title = '';
       values.detail = '';
@@ -132,8 +151,36 @@ export function Feedback(): ReactNode {
               <Input placeholder="例如：生图一直转圈不出结果" maxLength={80} />
             </Form.Item>
             <Form.Item name="detail" label="详细情况（可选）">
-              <Input.TextArea rows={5} placeholder="什么时间、哪个板块、做了什么操作、期望结果是什么。带上这些我们排查更快。" maxLength={1000} />
+              <Input.TextArea rows={4} placeholder="什么时间、哪个板块、做了什么操作、期望结果是什么。下方会自动附上操作轨迹与失败请求，你不用重复描述。" maxLength={1000} />
             </Form.Item>
+            {/* 自动上下文：用户不必复述操作路径；同时允许一键丢弃，避免混入无关信息 */}
+            <div
+              style={{
+                marginTop: -4, marginBottom: 14, padding: '10px 12px', borderRadius: 10,
+                background: token.colorFillQuaternary, fontSize: 12.5, lineHeight: 1.75,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <Text type="secondary">已自动采集：{ctxCount}</Text>
+                {ctxCount > 0 && (
+                  <Button size="small" type="link" style={{ padding: 0 }} onClick={() => setContextOn(false)}>
+                    不附带
+                  </Button>
+                )}
+              </div>
+              {contextOn && ctxCount > 0 && (
+                <>
+                  <div>· 页面：{ctx.route}</div>
+                  {ctx.failedRequests.length > 0 && (
+                    <div>· {ctx.failedRequests.length} 个失败请求：{ctx.failedRequests.map((r) => r.path).join('、')}</div>
+                  )}
+                  {lastErr && <div style={{ color: token.colorError }}>· 最近一次报错：{lastErr}</div>}
+                  {ctx.actions.length > 0 && (
+                    <div>· 操作轨迹：{ctx.actions.slice(-3).map((a) => a.text).join(' → ')}</div>
+                  )}
+                </>
+              )}
+            </div>
             <Button type="primary" htmlType="submit" loading={submitting} block>提交反馈</Button>
           </Form>
         </Card>

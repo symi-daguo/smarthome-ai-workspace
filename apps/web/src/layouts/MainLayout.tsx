@@ -41,6 +41,7 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { trackRoute } from '../lib/errorContext';
 import { api } from '../lib/api';
 import { tokenToYuan } from '../lib/money';
 import { BRAND_GRADIENT } from '../theme/tokens';
@@ -140,6 +141,9 @@ export function MainLayout(): ReactNode {
   const { conversations, activeKey, setActiveKey, createNew, remove } = useChatStore();
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    trackRoute(location.pathname);
+  }, [location.pathname]);
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? false;
   const [drawerOpen, setDrawerOpen] = useState(false);
