@@ -573,3 +573,25 @@ model GenerationJob {
 
   @@index([tenantId, createdAt])
 }
+
+// ---------- 素材库投稿（创作者投稿 → 审核 → 上架供下载） ----------
+
+model MaterialSubmission {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  title     String
+  desc      String   @default("")
+  // 素材文件相对 UPLOAD_DIR 的路径（先经 /api/media/uploads 上传拿到 assetId）
+  filePath  String
+  mimeType  String   @default("")
+  sizeBytes Int      @default(0)
+  // pending（待审核）| approved（已上架）| rejected（未通过）| offline（已下架）
+  status    String   @default("pending")
+  reviewNote String  @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+  @@index([status])
+}

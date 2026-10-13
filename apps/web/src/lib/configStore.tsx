@@ -18,6 +18,8 @@ export interface ActiveConfig {
   imageModel: string;
   /** 生视频 provider 摘要 */
   videoProvider: string;
+  /** 当前生效的生视频模型名（供音轨能力提示判断；供 Audio 支持检查） */
+  videoModel: string;
   /** 对话 API Key 是否已配置（前端展示用，真实 Key 仅在后端） */
   chatKeyConfigured: boolean;
 }
@@ -29,6 +31,7 @@ const DEFAULT: ActiveConfig = {
   imageProvider: 'MiniMax image-01',
   imageModel: '',
   videoProvider: 'MiniMax Director',
+  videoModel: '',
   chatKeyConfigured: false,
 };
 
@@ -48,7 +51,7 @@ export function ConfigProvider({ children }: { children: ReactNode }): ReactNode
         api<{
           chat: { baseUrl: string; model: string; keyConfigured: boolean };
           image: { provider: string; model: string };
-          video: { provider: string };
+          video: { provider: string; model: string };
         }>('/api/admin/model-config'),
         api<{ name: string; active: boolean }[]>('/api/admin/model-config/profiles'),
       ]);
@@ -63,6 +66,7 @@ export function ConfigProvider({ children }: { children: ReactNode }): ReactNode
         imageProvider: mc.image.provider,
         imageModel: mc.image.model ?? '',
         videoProvider: mc.video.provider,
+        videoModel: mc.video.model ?? '',
         chatKeyConfigured: mc.chat.keyConfigured,
       });
     } catch {

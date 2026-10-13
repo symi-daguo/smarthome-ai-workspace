@@ -25,6 +25,8 @@ const BACKUP_TABLES = [
   'customAgent', 'feedbackTicket', 'lightingScene',
   // 0.1.44 AI 画布：对话线/轮次/异步作业，缺任一张都会丢掉全部创作记录
   'imageConversation', 'imageTurn', 'generationJob',
+  // 0.1.45 素材库投稿
+  'materialSubmission',
 ] as const;
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)

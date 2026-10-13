@@ -1,10 +1,27 @@
-import { PlayCircleOutlined } from '@ant-design/icons';
-import { App as AntApp, Button, Card, Empty, Image, Modal, Tabs, Tag, Typography, theme } from 'antd';
+import { PlayCircleOutlined, PlusOutlined } from '@ant-design/icons';
+import { App as AntApp, Button, Card, Empty, Image, Input, Modal, Space, Tabs, Tag, Typography, Upload, theme } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
+
+/** 投稿审核状态 */
+const SUB_STATUS: Record<string, { label: string; color: string }> = {
+  pending: { label: '待审核', color: 'orange' },
+  approved: { label: '已通过并上架', color: 'green' },
+  rejected: { label: '未通过', color: 'red' },
+  offline: { label: '已下架', color: 'default' },
+};
+
+interface Submission {
+  id: string;
+  title: string;
+  desc: string;
+  status: string;
+  reviewNote: string;
+  createdAt: string;
+}
 
 interface Material {
   key: string;
@@ -92,6 +109,47 @@ export function MaterialLibrary(): ReactNode {
   const [tab, setTab] = useState('excellent');
   const [ownedKeys, setOwnedKeys] = useState<string[]>([]);
   const [preview, setPreview] = useState<Material | null>(null);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [uploadAsset, setUploadAsset] = useState('');
+  const [uploadName, setUploadName] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [title, setTitle] = useState('');
+  const [desc, setDesc] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadSubmissions = async (): Promise<void> => {
+    try {
+      setSubmissions(await api<Submission[]>('/api/media/materials/submissions'));
+    } catch {
+      setSubmissions([]);
+    }
+  };
+
+  useEffect(() => {
+    void loadSubmissions();
+  }, []);
+
+  const submit = async (): Promise<void> => {
+    if (!uploadAsset || !title.trim()) return;
+    setSubmitting(true);
+    try {
+      await api('/api/media/materials/submissions', {
+        method: 'POST',
+        body: JSON.stringify({ assetId: uploadAsset, title: title.trim(), desc: desc.trim() }),
+      });
+      message.success('投稿已提交，审核结果会在这里更新');
+      setUploadAsset('');
+      setUploadName('');
+      setTitle('');
+      setDesc('');
+      await loadSubmissions();
+      setTab('mine');
+    } catch (e) {
+      message.error((e as Error).message || '提交失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     api<MediaRow[]>('/api/media/assets')
@@ -156,10 +214,92 @@ export function MaterialLibrary(): ReactNode {
           </div>
         )
       ) : (
-        <Empty
-          description="还没有投稿，上传你的优秀视频赚取收益（投稿链路 0.3.0 接入）"
-          style={{ marginTop: 48 }}
-        />
+        <div style={{ marginTop: 8 }}>
+          <Card size="small" style={{ marginBottom: 16, background: token.colorFillQuaternary, border: 'none' }}>
+            <Space direction="vertical" size={10} style={{ width: '100%' }}>
+              <Text type="secondary" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+                上传你的原创视频投稿，审核通过后会进入「优秀素材」供同行下载。
+                投稿免费；审核通过发布奖 5 元，不同公司首次购买再得 1 元。
+              </Text>
+              <Space wrap>
+                <Upload
+                  accept="video/mp4,video/webm,video/quicktime"
+                  showUploadList={false}
+                  beforeUpload={async (f) => {
+                    setUploading(true);
+                    try {
+                      const fd = new FormData();
+                      fd.append('file', f);
+                      const r = await api<{ id: string }>('/api/media/materials/upload', { method: 'POST', body: fd });
+                      setUploadAsset(r.id);
+                      setUploadName(f.name);
+                      message.success('文件已上传，填完标题即可提交审核');
+                    } catch (e) {
+                      message.error((e as Error).message || '上传失败');
+                    } finally {
+                      setUploading(false);
+                    }
+                    return false;
+                  }}
+                >
+                  <Button icon={<PlusOutlined />} loading={uploading}>
+                    {uploadAsset ? '重新选择视频' : '选择视频文件'}
+                  </Button>
+                </Upload>
+                {uploadAsset && <Tag color="blue">已选：{uploadName}</Tag>}
+              </Space>
+              {uploadAsset && (
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input
+                    placeholder="给素材起个标题，例如：全屋智能灯光交付实拍"
+                    maxLength={60}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    style={{ width: '100%' }}
+                  />
+                  <Button type="primary" loading={submitting} disabled={!title.trim()} onClick={() => void submit()}>
+                    提交审核
+                  </Button>
+                </Space.Compact>
+              )}
+              {uploadAsset && (
+                <Input.TextArea
+                  placeholder="一句话说明这条素材的看点（可选，500 字内）"
+                  maxLength={500}
+                  autoSize={{ minRows: 2, maxRows: 4 }}
+                  value={desc}
+                  onChange={(e) => setDesc(e.target.value)}
+                />
+              )}
+            </Space>
+          </Card>
+
+          {submissions.length === 0 ? (
+            <Empty description="还没有投稿记录，选一个视频文件就能开始" style={{ padding: '32px 0' }} />
+          ) : (
+            <Space direction="vertical" size={10} style={{ width: '100%' }}>
+              {submissions.map((s) => (
+                <Card key={s.id} size="small">
+                  <Space style={{ width: '100%', justifyContent: 'space-between' }} wrap>
+                    <Space direction="vertical" size={2}>
+                      <Text strong>{s.title}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {new Date(s.createdAt).toLocaleString('zh-CN')}
+                        {s.desc ? ` · ${s.desc}` : ''}
+                      </Text>
+                      {s.reviewNote && (
+                        <Text type={s.status === 'rejected' ? 'danger' : 'secondary'} style={{ fontSize: 12 }}>
+                          审核意见：{s.reviewNote}
+                        </Text>
+                      )}
+                    </Space>
+                    <Tag color={SUB_STATUS[s.status]?.color ?? 'default'}>{SUB_STATUS[s.status]?.label ?? s.status}</Tag>
+                  </Space>
+                </Card>
+              ))}
+            </Space>
+          )}
+        </div>
       )}
 
       {/* 应用内素材预览：关闭即回到列表，不离开当前页 */}

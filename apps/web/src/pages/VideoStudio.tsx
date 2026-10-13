@@ -4,9 +4,14 @@ import {
   PlusOutlined,
   ThunderboltFilled,
 } from '@ant-design/icons';
-import { App as AntApp, Button, Grid, Modal, Select, Typography, Upload, theme } from 'antd';
+import { App as AntApp, Alert, Button, Grid, Input, Modal, Select, Typography, Upload, theme } from 'antd';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { api, fileUrl } from '../lib/api';
+import { useActiveConfig } from '../lib/configStore';
+import {
+  AUDIO_MODES, DEFAULT_EFFECTS, DEFAULT_MUSIC, MAX_EFFECTS_LEN, MAX_MUSIC_LEN,
+  audioSupportHint, normalizeAudio, withAudioPrompt, type AudioMode,
+} from '../lib/videoAudio';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
@@ -61,6 +66,7 @@ interface ImageAsset {
 export function VideoStudio(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
+  const { config } = useActiveConfig();
   const screens = Grid.useBreakpoint();
   const isWide = screens.xl ?? false;
   const [scene, setScene] = useState<string | null>(null);
@@ -68,6 +74,9 @@ export function VideoStudio(): ReactNode {
   const [duration, setDuration] = useState('10');
   const [res, setRes] = useState('720');
   const [ratio, setRatio] = useState('16:9');
+  const [audioMode, setAudioMode] = useState<AudioMode>('silent');
+  const [musicStyle, setMusicStyle] = useState(DEFAULT_MUSIC);
+  const [soundEffects, setSoundEffects] = useState(DEFAULT_EFFECTS);
   const [firstFrame, setFirstFrame] = useState<FirstFrame | null>(null);
   const [uploading, setUploading] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -119,10 +128,13 @@ export function VideoStudio(): ReactNode {
     }
     setGenerating(true);
     try {
+      // 音轨不是上游独立参数，而是编译进提示词交给模型理解
+      const audio = normalizeAudio(audioMode, musicStyle, soundEffects);
+      const fullPrompt = withAudioPrompt(desc.trim(), audio);
       const r = await api<{ url: string }>('/api/media/videos', {
         method: 'POST',
         body: JSON.stringify({
-          prompt: desc.trim(),
+          prompt: fullPrompt,
           duration: Number(duration),
           resolution: `${res}P`,
           ratio,
@@ -255,6 +267,60 @@ export function VideoStudio(): ReactNode {
               <span style={labelStyle}>比例</span>
               <Select value={ratio} onChange={setRatio} options={RATIOS} style={{ width: '100%' }} />
             </div>
+          </div>
+
+          {/* 声音设置：编译进提示词，最终能否出声取决于「模型配置」里配的视频模型 */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <span style={labelStyle}>声音</span>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                声音不是独立开关，而是写进画面描述交给模型生成
+              </Text>
+            </div>
+            <Select
+              value={audioMode}
+              onChange={setAudioMode}
+              options={AUDIO_MODES.map((m) => {
+                const hint = audioSupportHint(config.videoProvider, config.videoModel ?? '', m.value);
+                return { value: m.value, label: m.label, disabled: Boolean(hint) };
+              })}
+              style={{ width: '100%' }}
+            />
+            {audioSupportHint(config.videoProvider, config.videoModel ?? '', audioMode) && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginTop: 8 }}
+                message={audioSupportHint(config.videoProvider, config.videoModel ?? '', audioMode)}
+              />
+            )}
+            {(audioMode === 'music' || audioMode === 'both') && (
+              <div style={{ marginTop: 10 }}>
+                <span style={labelStyle}>音乐风格</span>
+                <Input
+                  value={musicStyle}
+                  onChange={(e) => setMusicStyle(e.target.value)}
+                  maxLength={MAX_MUSIC_LEN}
+                  placeholder="例如：轻柔、低音量的无歌词器乐"
+                />
+              </div>
+            )}
+            {(audioMode === 'effects' || audioMode === 'both') && (
+              <div style={{ marginTop: 10 }}>
+                <span style={labelStyle}>音效说明</span>
+                <Input.TextArea
+                  value={soundEffects}
+                  onChange={(e) => setSoundEffects(e.target.value)}
+                  maxLength={MAX_EFFECTS_LEN}
+                  autoSize={{ minRows: 2, maxRows: 4 }}
+                  placeholder="例如：只保留画面中实际动作的轻微环境音效"
+                />
+              </div>
+            )}
+            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12, lineHeight: 1.7 }}>
+              静音模式不会往提示词里追加任何声音描述；选有声模式时会把你的音乐/音效要求拼到画面描述后面。
+              分类与混音比例请以成片试听为准。
+            </Text>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>

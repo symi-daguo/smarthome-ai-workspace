@@ -1,7 +1,9 @@
 import {
+  CloseOutlined,
   DownloadOutlined,
   EditOutlined,
   FileTextOutlined,
+  FullscreenExitOutlined,
   FullscreenOutlined,
   HistoryOutlined,
   LeftOutlined,
@@ -9,12 +11,12 @@ import {
   PlusOutlined,
   RightOutlined,
 } from '@ant-design/icons';
-import { App as AntApp, Button, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
-import { useEffect, useState, type ReactNode } from 'react';
+import { App as AntApp, Button, Drawer, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
-import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage } from '../data/planThemes';
+import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText } from '../lib/planPptx';
 import { PlanSlide } from '../components/PlanSlide';
 
@@ -22,13 +24,71 @@ const { Text, Title } = Typography;
 
 const STEPS = ['客户资料', '逐页审稿', '生成与校对', '交付客户'];
 
-const BUDGETS = [
-  { value: '1-3', label: '1 – 3 万' },
-  { value: '3-5', label: '3 – 5 万' },
-  { value: '5-10', label: '5 – 10 万' },
-  { value: '10+', label: '10 万以上' },
-  { value: 'none', label: '暂不填写' },
+/**
+ * 预算档位预设：建面 × 单方造价（元/㎡）推导建议金额（万元）。
+ * 档位只做"一键填入"与"按面积推荐"，用户始终可以自由改写预算原文。
+ */
+const BUDGET_TIERS = [
+  { key: 'basic', name: '基础', unit: 600, desc: '主控 + 基础照明安防' },
+  { key: 'comfort', name: '舒适', unit: 1000, desc: '全屋灯光 + 安防 + 网络' },
+  { key: 'premium', name: '豪华', unit: 1600, desc: '影音 + 遮阳 + 暖通联动' },
+  { key: 'custom', name: '定制', unit: 2600, desc: '全屋定制与深化设计' },
+] as const;
+
+/** 生态建议占比（合计 100%），用于预算分配建议条 */
+const ECOSYSTEM_SPLIT = [
+  { key: 'security', name: '安防', percent: 22, color: '#4A90D9' },
+  { key: 'lighting', name: '灯光', percent: 24, color: '#E8A33D' },
+  { key: 'shading', name: '遮阳', percent: 10, color: '#7C9E6B' },
+  { key: 'media', name: '影音', percent: 18, color: '#9A6BC9' },
+  { key: 'hvac', name: '暖通', percent: 14, color: '#4FB0A5' },
+  { key: 'network', name: '网络', percent: 12, color: '#C96B6B' },
 ];
+
+/** 未填面积时的参考建面，用于档位估算（页面会明说这是参考值） */
+const REF_AREA = 120;
+
+/** 合计与预算的差额容差（万元），避免浮点误差把"刚好对齐"误报成超出 */
+const BUDGET_EPS = 0.05;
+
+type BudgetReason = 'empty' | 'non-number' | 'non-positive' | 'ok';
+
+/**
+ * 解析预算（单位：万元）。只接受正数字，允许 "13" / "13万" / "13.5 万元" / "￥13"；
+ * 其余情况给出 reason 供页面提示——不拦截提交，原文照常传给方案生成。
+ */
+function parseBudget(raw: string): { value: number | null; reason: BudgetReason } {
+  const s = (raw ?? '').trim();
+  if (!s) return { value: null, reason: 'empty' };
+  const num = s.replace(/[,，¥￥\s]|万元|万|[wW]$/g, '');
+  if (!/^-?\d+(\.\d+)?$/.test(num)) return { value: null, reason: 'non-number' };
+  const value = Number(num);
+  // 0 与负数同样不参与分配建议计算（否则建议金额会变成负数），仅用 reason 做提示
+  if (!Number.isFinite(value) || value <= 0) return { value: null, reason: 'non-positive' };
+  return { value, reason: 'ok' };
+}
+
+/** 解析面积（㎡）：取首个数字，"130㎡" / "130 平米" / "130" 都能解析 */
+function parseArea(raw: string): number | null {
+  const m = (raw ?? '').match(/(\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** 按建面推荐预算档位；未填面积时回落到"舒适" */
+function recommendTier(area: number | null): (typeof BUDGET_TIERS)[number] {
+  if (area === null) return BUDGET_TIERS[1];
+  if (area < 90) return BUDGET_TIERS[0];
+  if (area < 150) return BUDGET_TIERS[1];
+  if (area < 220) return BUDGET_TIERS[2];
+  return BUDGET_TIERS[3];
+}
+
+/** 档位建议金额（万元）：建面 × 单方造价，保留 1 位小数 */
+function tierAmount(area: number, tier: (typeof BUDGET_TIERS)[number]): number {
+  return Math.max(1, Math.round((area * tier.unit) / 1000) / 10);
+}
 
 const EDITIONS = [
   { key: 'standard', name: '标准完整方案（原版A）', desc: '适合需求明确后的完整汇报：需求、投入取舍、重点场景、预算范围、交付依据和下一步，共 9 个基础模块' },
@@ -76,6 +136,9 @@ interface PlanListItem {
 export function PlanStudio(): ReactNode {
   const { message, modal } = AntApp.useApp();
   const { token } = theme.useToken();
+  const screens = Grid.useBreakpoint();
+  // 窄屏只在首屏渲染前为 undefined，取 false 表示先按宽屏排版，避免列先出现再消失
+  const isNarrow = screens.md === false;
   const [step, setStep] = useState(0);
   const [style, setStyle] = useState('A');
   const [version, setVersion] = useState<'standard' | 'presale' | 'private'>('standard');
@@ -89,11 +152,21 @@ export function PlanStudio(): ReactNode {
   const [history, setHistory] = useState<PlanListItem[]>([]);
   const [activePage, setActivePage] = useState(0);
   const [showNarration, setShowNarration] = useState(false);
-  const [playing, setPlaying] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [renderingFloorplan, setRenderingFloorplan] = useState(false);
+  /** 预算分配：只有用户改过的分类存覆盖值，其余跟随建议占比 */
+  const [splitOverride, setSplitOverride] = useState<Record<string, number | null>>({});
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  // 预算与面积实时联动（档位推荐、校验提示、分配建议条都读这里）
+  const budgetRaw = Form.useWatch('budget', form) ?? '';
+  const areaRaw = Form.useWatch('area', form) ?? '';
+  const budgetParse = parseBudget(budgetRaw);
+  const budgetTotal = budgetParse.value;
+  const areaM2 = parseArea(areaRaw);
+  const suggestedTier = recommendTier(areaM2);
 
   const loadHistory = async (): Promise<void> => {
     try {
@@ -251,6 +324,7 @@ export function PlanStudio(): ReactNode {
     setPlan(null);
     setStep(0);
     setActivePage(0);
+    setSplitOverride({});
     form.resetFields();
   };
 
@@ -263,6 +337,15 @@ export function PlanStudio(): ReactNode {
     renderedFloorplanUrl: plan?.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
     layoutPoints: plan?.layoutPoints ?? null,
   };
+  // 分配建议：预算有效时按占比给出建议金额，用户改过的分类用覆盖值（清空即恢复跟随建议）
+  const splitRows = ECOSYSTEM_SPLIT.map((row) => {
+    const override = splitOverride[row.key];
+    const suggested = budgetTotal === null ? 0 : Math.round(budgetTotal * row.percent * 10) / 10;
+    return { ...row, value: override === null || override === undefined ? suggested : override };
+  });
+  const splitSum = Math.round(splitRows.reduce((sum, row) => sum + row.value, 0) * 10) / 10;
+  const budgetGap = budgetTotal === null ? 0 : Math.round((splitSum - budgetTotal) * 10) / 10;
+  const overBudget = budgetTotal !== null && budgetGap > BUDGET_EPS;
 
   return (
     <div style={pageContainerStyle}>
@@ -298,9 +381,132 @@ export function PlanStudio(): ReactNode {
             <Form.Item label="面积" name="area">
               <Input placeholder="例如：130㎡" size="large" />
             </Form.Item>
-            <Form.Item label="预算" name="budget">
-              <Select placeholder="请选择预算（可暂不填写）" options={BUDGETS} size="large" allowClear />
+            <Form.Item
+              label="预算（万元）"
+              name="budget"
+              validateStatus={budgetParse.reason === 'non-number' || budgetParse.reason === 'non-positive' ? 'warning' : undefined}
+              help={
+                budgetParse.reason === 'empty'
+                  ? '留空表示不限预算，方案生成时按常见区间给建议'
+                  : budgetParse.reason === 'non-number'
+                    ? '预算需为数字（单位：万元）；当前内容仍会原样传入，不会阻断生成'
+                    : budgetParse.reason === 'non-positive'
+                      ? '预算需大于 0；当前值仍会原样传入，请确认是否为预期'
+                      : undefined
+              }
+            >
+              <Input placeholder="例如：13；留空表示不限" size="large" inputMode="decimal" allowClear />
             </Form.Item>
+
+            {/* 预算档位预设：按面积推荐，点一下即写入预算（不限制自由输入） */}
+            <div style={{ marginBottom: 20 }}>
+              <Text strong style={{ fontSize: 12.5, display: 'block', marginBottom: 8 }}>
+                预算档位预设
+                <Tag color="blue" style={{ marginLeft: 8, marginRight: 0 }}>
+                  按 {areaM2 ?? REF_AREA}㎡ 推荐：{suggestedTier.name}
+                </Tag>
+              </Text>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {BUDGET_TIERS.map((tier) => {
+                  const amount = tierAmount(areaM2 ?? REF_AREA, tier);
+                  const picked = budgetTotal !== null && Math.abs(budgetTotal - amount) < BUDGET_EPS;
+                  return (
+                    <div
+                      key={tier.key}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => form.setFieldValue('budget', String(amount))}
+                      onKeyDown={(e) => e.key === 'Enter' && form.setFieldValue('budget', String(amount))}
+                      style={{
+                        flex: isNarrow ? '1 1 calc(50% - 4px)' : '1 1 0',
+                        minWidth: 140,
+                        padding: '8px 10px',
+                        borderRadius: 10,
+                        cursor: 'pointer',
+                        border: `1px solid ${picked ? token.colorPrimary : token.colorBorderSecondary}`,
+                        background: picked ? token.colorPrimaryBg : token.colorBgContainer,
+                      }}
+                    >
+                      <Text strong style={{ fontSize: 13, display: 'block' }}>{tier.name} · 约 {amount} 万</Text>
+                      <Text type="secondary" style={{ fontSize: 11.5 }}>{tier.desc}</Text>
+                    </div>
+                  );
+                })}
+              </div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                {areaM2 === null
+                  ? `未填面积，按参考建面 ${REF_AREA}㎡ 估算，填入面积后会自动换算`
+                  : `按 ${areaM2}㎡ × 单方造价估算，点击即写入预算框`}
+              </Text>
+            </div>
+
+            {/* 预算分配建议条：按生态给出占比，金额可改；合计超预算只提示不阻断 */}
+            <div
+              style={{
+                marginBottom: 24,
+                padding: 12,
+                borderRadius: 12,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                background: token.colorFillQuaternary,
+              }}
+            >
+              <Text strong style={{ fontSize: 12.5 }}>预算分配建议</Text>
+              <Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 2 }}>
+                按生态给出建议占比与金额，金额可改；合计超出预算只提示，不阻断生成
+              </Text>
+              {budgetTotal !== null ? (
+                <div style={{ marginTop: 10 }}>
+                  <Progress
+                    percent={Math.min(100, Math.round((splitSum / budgetTotal) * 100))}
+                    status={overBudget ? 'exception' : 'normal'}
+                    size="small"
+                  />
+                  <Text style={{ fontSize: 12, display: 'block' }}>
+                    合计 {splitSum} 万 / 预算 {budgetTotal} 万
+                    {overBudget ? (
+                      <Text type="danger" style={{ fontSize: 12 }}> · 超出 {budgetGap} 万，可下调分项或提高预算</Text>
+                    ) : budgetGap < -BUDGET_EPS ? (
+                      <Text type="secondary" style={{ fontSize: 12 }}> · 尚余 {-budgetGap} 万未分配</Text>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 12 }}> · 与预算基本一致</Text>
+                    )}
+                  </Text>
+                </div>
+              ) : (
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                  填写有效预算后显示建议金额；当前仅显示生态占比参考
+                </Text>
+              )}
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {splitRows.map((row) => (
+                  <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: isNarrow ? 'wrap' : 'nowrap' }}>
+                    <Text style={{ fontSize: 12, width: isNarrow ? 40 : 44, flex: 'none' }}>{row.name}</Text>
+                    <Progress
+                      percent={
+                        budgetTotal !== null && budgetTotal > 0
+                          ? Math.min(100, Math.round((row.value / budgetTotal) * 100))
+                          : row.percent
+                      }
+                      showInfo={false}
+                      strokeColor={row.color}
+                      size="small"
+                      style={{ flex: 1, minWidth: isNarrow ? 60 : 120, margin: 0 }}
+                    />
+                    <Text type="secondary" style={{ fontSize: 11.5, width: 38, textAlign: 'right', flex: 'none' }}>{row.percent}%</Text>
+                    <InputNumber
+                      size="small"
+                      min={0}
+                      max={99999}
+                      step={0.5}
+                      value={budgetTotal === null ? null : row.value}
+                      disabled={budgetTotal === null}
+                      onChange={(v) => setSplitOverride((prev) => ({ ...prev, [row.key]: v }))}
+                      style={{ width: isNarrow ? 72 : 86, flex: 'none' }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
             <Form.Item label="智能生态" name="ecosystem">
               <Input placeholder="例如：米家 / 可扩展全屋智能" size="large" />
             </Form.Item>
@@ -559,7 +765,7 @@ export function PlanStudio(): ReactNode {
               <Button size="large" icon={<FileTextOutlined />} onClick={downloadScript}>
                 下载完整讲稿
               </Button>
-              <Button size="large" icon={<FullscreenOutlined />} onClick={() => setPlaying(true)}>
+              <Button size="large" icon={<FullscreenOutlined />} onClick={() => setReaderOpen(true)}>
                 全屏播放
               </Button>
               <Button size="large" icon={<LinkOutlined />} onClick={copyLink}>
@@ -585,6 +791,9 @@ export function PlanStudio(): ReactNode {
             </div>
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 14 }}>
               分享链接展示已确认的完整版本（{plan.pages.length} 页 · 文案版本 {plan.versionNo}）。修改方案后，重新打开分享即为客户看到的最新版本。
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+              全屏播放支持 ← → 翻页、Home / End 跳首尾、F 切换全屏、Esc 退出。
             </Text>
           </div>
         </div>
@@ -643,29 +852,10 @@ export function PlanStudio(): ReactNode {
         ) : null}
       </Modal>
 
-      {/* 全屏播放 */}
-      <Modal
-        open={playing}
-        footer={null}
-        onCancel={() => setPlaying(false)}
-        width="92vw"
-        centered
-        styles={{ body: { padding: 8 } }}
-        title={`全屏播放 · ${plan?.title ?? ''}`}
-      >
-        {plan && plan.pages[activePage] ? (
-          <div>
-            <PlanSlide page={plan.pages[activePage]} index={activePage} plan={slidePlan} t={t} />
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 12 }}>
-              <Button icon={<LeftOutlined />} disabled={activePage === 0} onClick={() => setActivePage(activePage - 1)}>上一页</Button>
-              <Text style={{ lineHeight: '32px' }}>{activePage + 1} / {plan.pages.length}</Text>
-              <Button disabled={activePage >= plan.pages.length - 1} onClick={() => setActivePage(activePage + 1)}>
-                下一页 <RightOutlined />
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </Modal>
+      {/* 方案全屏阅读器（演示模式）：逐页渲染复用 PlanSlide */}
+      {readerOpen && plan && plan.pages.length > 0 ? (
+        <PlanReader pages={plan.pages} slidePlan={slidePlan} t={t} onClose={() => setReaderOpen(false)} />
+      ) : null}
 
       {/* 历史方案抽屉 */}
       <Drawer open={historyOpen} onClose={() => setHistoryOpen(false)} title="历史方案" width={440}>
@@ -702,6 +892,264 @@ export function PlanStudio(): ReactNode {
           ))
         )}
       </Drawer>
+    </div>
+  );
+}
+
+/* ---------- 方案全屏阅读器（演示模式） ---------- */
+
+/** PlanSlide 的 plan 入参形状（镜像其内部类型，避免依赖未导出的声明） */
+interface ReaderSlidePlan {
+  store: string;
+  floorplanUrl?: string | null;
+  renderedFloorplanUrl?: string | null;
+  layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+}
+
+/** 跟随系统「减少动态效果」偏好，并在偏好变化时实时更新 */
+function usePrefersReducedMotion(): boolean {
+  const [reduce, setReduce] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = (): void => setReduce(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  return reduce;
+}
+
+/**
+ * 方案全屏阅读器（演示模式）：
+ * - 每页直接复用 PlanSlide 渲染，不另写一套页面渲染逻辑
+ * - 键盘：← → 翻页，Home / End 跳首尾，F 切浏览器全屏，Esc 退出
+ * - 翻页过渡用 Web Animations API（200ms 淡入 + 24px 横向位移，方向决定符号）；
+ *   系统开启「减少动态效果」时整段动画与控制条淡入淡出都跳过，只做瞬时切换
+ * - 鼠标移动/触摸唤醒控制条，静止 2.5 秒后淡出；键盘翻页同样唤醒，保证随时可操作
+ */
+function PlanReader({
+  pages,
+  slidePlan,
+  t,
+  onClose,
+}: {
+  pages: PlanPage[];
+  slidePlan: ReaderSlidePlan;
+  t: PlanTheme;
+  onClose: () => void;
+}): ReactNode {
+  const [index, setIndex] = useState(0);
+  const [dir, setDir] = useState(1);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [chrome, setChrome] = useState(true);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const animRef = useRef<Animation | null>(null);
+  const hideTimer = useRef<number | null>(null);
+  const screens = Grid.useBreakpoint();
+  const isNarrow = screens.md === false;
+  const reduceMotion = usePrefersReducedMotion();
+  const total = pages.length;
+
+  // 打开时锁定背景滚动；关闭时若仍在全屏则退出，避免把页面留在全屏态
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    };
+  }, []);
+
+  // 唤醒控制条，静止 2.5 秒后淡出
+  const wake = useCallback((): void => {
+    setChrome(true);
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setChrome(false), 2500);
+  }, []);
+  useEffect(() => {
+    wake();
+    return () => {
+      if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+    };
+  }, [wake]);
+
+  const go = useCallback(
+    (next: number, direction: number): void => {
+      setDir(direction >= 0 ? 1 : -1);
+      setIndex(Math.min(total - 1, Math.max(0, next)));
+      wake();
+    },
+    [total, wake],
+  );
+  const move = useCallback((delta: number): void => go(index + delta, delta), [go, index]);
+  const jump = useCallback((i: number): void => go(i, i >= index ? 1 : -1), [go, index]);
+
+  const toggleFullscreen = useCallback(async (): Promise<void> => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch {
+      // 浏览器可能因缺少用户手势拒绝全屏；页内浮层本身已是全视口，直接忽略
+    }
+  }, []);
+  useEffect(() => {
+    const sync = (): void => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  // 键盘操作：焦点在输入框内或带修饰键时不拦截
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      switch (e.key) {
+        case 'ArrowRight': e.preventDefault(); move(1); break;
+        case 'ArrowLeft': e.preventDefault(); move(-1); break;
+        case 'Home': e.preventDefault(); jump(0); break;
+        case 'End': e.preventDefault(); jump(total - 1); break;
+        case 'Escape': e.preventDefault(); onClose(); break;
+        case 'f':
+        case 'F': e.preventDefault(); void toggleFullscreen(); break;
+        default: return;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [index, total, move, jump, toggleFullscreen, onClose]);
+
+  // 翻页过渡：淡入 + 横向位移，快速连按时先取消上一段动画，避免叠加
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || reduceMotion) return;
+    animRef.current?.cancel();
+    animRef.current = el.animate(
+      [
+        { opacity: 0, transform: `translateX(${dir * 24}px)` },
+        { opacity: 1, transform: 'translateX(0)' },
+      ],
+      { duration: 200, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)' },
+    );
+  }, [index, dir, reduceMotion]);
+  useEffect(() => () => { animRef.current?.cancel(); }, []);
+
+  const page = pages[index];
+  if (!page) return null;
+  const chromeStyle: CSSProperties = {
+    opacity: chrome ? 1 : 0,
+    pointerEvents: chrome ? 'auto' : 'none',
+    transition: reduceMotion ? 'none' : 'opacity 220ms ease',
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`方案全屏阅读器，第 ${index + 1} 页，共 ${total} 页`}
+      onMouseMove={wake}
+      onTouchStart={wake}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 2000,
+        background: '#0b0c0e',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {/* 顶栏：页型与标题 + 页码 + 全屏/退出 */}
+      <div
+        style={{
+          ...chromeStyle,
+          display: 'flex',
+          alignItems: 'center',
+          gap: isNarrow ? 6 : 12,
+          padding: isNarrow ? '8px 10px' : '12px 20px',
+          flexWrap: 'wrap',
+        }}
+      >
+        <Text
+          style={{
+            flex: 1,
+            minWidth: 120,
+            color: '#ffffffd9',
+            fontSize: isNarrow ? 13 : 15,
+            fontWeight: 700,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {PAGE_TYPE_LABEL[page.type]} · {page.heading}
+        </Text>
+        <Text style={{ color: '#ffffffa6', fontSize: isNarrow ? 12 : 13, fontVariantNumeric: 'tabular-nums' }}>
+          {index + 1} / {total}
+        </Text>
+        <Button
+          size={isNarrow ? 'small' : undefined}
+          icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+          title="全屏切换（F）"
+          onClick={() => void toggleFullscreen()}
+        >
+          {fullscreen ? '退出全屏' : '全屏'}
+        </Button>
+        <Button size={isNarrow ? 'small' : undefined} icon={<CloseOutlined />} onClick={onClose}>
+          退出
+        </Button>
+      </div>
+
+      {/* 舞台：页内容（PlanSlide 内部按 cqw 自适应缩放，窄屏无需额外适配） */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isNarrow ? 8 : 20, overflow: 'hidden' }}>
+        <div ref={stageRef} style={{ width: '100%', maxWidth: isNarrow ? '100%' : 1280, willChange: 'transform, opacity' }}>
+          <PlanSlide page={page} index={index} plan={slidePlan} t={t} />
+        </div>
+      </div>
+
+      {/* 底栏：上一页/下一页 + 可点页码圆点 + 快捷键提示 */}
+      <div
+        style={{
+          ...chromeStyle,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: isNarrow ? 6 : 12,
+          padding: isNarrow ? '8px 10px 12px' : '12px 20px 18px',
+          flexWrap: 'wrap',
+        }}
+      >
+        <Button size={isNarrow ? 'small' : undefined} icon={<LeftOutlined />} disabled={index === 0} onClick={() => move(-1)}>
+          上一页
+        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: isNarrow ? 5 : 8, flexWrap: 'wrap' }}>
+          {pages.map((p, i) => (
+            <button
+              key={i}
+              type="button"
+              aria-label={`第 ${i + 1} 页 ${PAGE_TYPE_LABEL[p.type]}`}
+              aria-current={i === index}
+              onClick={() => jump(i)}
+              style={{
+                width: isNarrow ? 8 : 10,
+                height: isNarrow ? 8 : 10,
+                padding: 0,
+                border: 'none',
+                borderRadius: '50%',
+                cursor: 'pointer',
+                background: i === index ? '#ffffff' : '#ffffff59',
+                transform: i === index ? 'scale(1.25)' : undefined,
+                transition: reduceMotion ? 'none' : 'background 180ms ease, transform 180ms ease',
+              }}
+            />
+          ))}
+        </div>
+        <Button size={isNarrow ? 'small' : undefined} disabled={index >= total - 1} onClick={() => move(1)}>
+          下一页 <RightOutlined />
+        </Button>
+        <Text style={{ width: '100%', textAlign: 'center', color: '#ffffff73', fontSize: 12, marginTop: 4 }}>
+          ← → 翻页 · Home / End 首尾 · F 全屏 · Esc 退出
+        </Text>
+      </div>
     </div>
   );
 }

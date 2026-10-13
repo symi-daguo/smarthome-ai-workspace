@@ -22,16 +22,16 @@
 | 7 | 定制智能体 | ✅ | 0.1.40 落库 |
 | 8 | AI 生图（含 4 类子工作流） | ✅ | 0.1.40 |
 | 9 | **AI 画布（对话式生图）** | ✅ | 0.1.44 |
-| 10 | AI 生视频 | ✅ | |
-| 11 | 智能方案生成 | 🔸 | 缺全屏阅读器、预算校验预设 |
+| 10 | AI 生视频 | ✅ | 0.1.46 补音轨设置（编译进提示词 + 能力诚实提示） |
+| 11 | 智能方案生成 | ✅ | 0.1.46 补全屏阅读器（键盘/动画/降级）+ 预算校验与档位预设 |
 | 12 | 智能百宝箱（20 卡） | ✅ | 0.1.41/0.1.44 |
 | 13 | 智能设备点位布局 | ✅ | |
 | 14 | **智能灯光大师 / 灯光点位与场景** | 🔸 | 见 §三 |
-| 15 | **WiFi 热力图** | 🔸 | 差距大，见 §三 |
-| 16 | **智能报价** | 🔸 | 0.1.45 补变体选择/逐项单价/Excel 导出；房间分组与户型标注见 §三 |
+| 15 | **WiFi 热力图** | ✅ | 0.1.46 墙体识别 + 墙阻衰减 + 覆盖率统计 |
+| 16 | **智能报价** | ✅ | 0.1.45 变体/覆盖价/Excel；0.1.46 房间分组拖拽 + 户型图房间标注 |
 | 17 | 我的知识库 | ✅ | |
 | 18 | 我的资料 | ✅ | |
-| 19 | 优秀视频素材库 | 🔸 | 投稿链路未接入（已在 features.csv 标注） |
+| 19 | 优秀视频素材库 | ✅ | 0.1.46 投稿全链路打通（上传/提交/审核状态） |
 | 20 | 问题反馈 | ✅ | 0.1.45 补自动上下文采集（失败请求/操作轨迹/路由/版本） |
 | 21 | 会员面板 | 🔸 | 我方改为 /vip 静态说明页，见 §三 |
 | 22 | 开始接单 | ✅ | |
@@ -55,15 +55,15 @@
 
 | 能力 | 参考站函数线索 | 我方 |
 |---|---|---|
-| **AI 墙体识别** | `wallMaskFromAiSegments` / `readUpload` | ⬜ |
-| **Otsu 二值化 + 距离变换 + 连通域标记** | `otsu` / `distanceTransform` / `labelMask` / `dilateMask` | ⬜ |
-| 局部墙体检测与源图约束 | `localWallCandidateMask` / `constrainMaskToSource` | ⬜ |
-| 墙体手工修正 | `confirmWalls` / `clearWallMask` / `paintWallMask` / `wallAt` / `countWallsBetween` | ⬜ |
-| **真实物理单位（米/像素比例）** | `widthMeters` / `heightMeters` / `xPixelsPerMeter` | ⬜（我方无比例尺概念） |
-| 设备增删选与信号环 | `addDevice` / `removeDevice` / `drawSignalRings` | 🔸 有放置，无服务端数据 |
-| 墙体间信号衰减 | `signalAt` / `mix` / `heatColor` | ⬜（我方为固定径向叠加） |
-| **覆盖率统计** | `measureCoverageStats` | ⬜ |
-| 导出摘要图 | `drawExportSummary` / `exportCanvas` | 🔸 我方可导出 PNG，无统计摘要 |
+| **墙体识别** | `wallMaskFromAiSegments` / `readUpload` | ✅ 0.1.46（Otsu+距离变换+连通域，纯前端） |
+| **Otsu 二值化 + 距离变换 + 连通域标记** | `otsu` / `distanceTransform` / `labelMask` / `dilateMask` | ✅ 0.1.46 |
+| 局部墙体检测与源图约束 | `localWallCandidateMask` / `constrainMaskToSource` | ✅ 0.1.46（图纸范围约束） |
+| 墙体手工修正 | `confirmWalls` / `clearWallMask` / `paintWallMask` / `wallAt` / `countWallsBetween` | ✅ 0.1.46 |
+| **真实物理单位（米/像素比例）** | `widthMeters` / `heightMeters` / `xPixelsPerMeter` | ✅ 0.1.46 |
+| 设备增删选与信号环 | `addDevice` / `removeDevice` / `drawSignalRings` | ✅ 0.1.46 |
+| 墙体间信号衰减 | `signalAt` / `mix` / `heatColor` | ✅ 0.1.46（洪水填充遇墙停止） |
+| **覆盖率统计** | `measureCoverageStats` | ✅ 0.1.46 |
+| 导出摘要图 | `drawExportSummary` / `exportCanvas` | ✅ 0.1.46 |
 | 新手引导 | `showWifiGuide` / `updateGuideStep` / `dismissBlockingTours` | ⬜ |
 
 ### 3.2 智能报价（`quote-workbench.js` 88KB）
@@ -71,8 +71,8 @@
 | 能力 | 参考站函数线索 | 我方 |
 |---|---|---|
 | **产品变体选择器** | `productFamilyKey` / `variantSiblings` / `variantMatch` / `renderVariantPicker` | ✅ 0.1.45 |
-| **户型图房间标注 + 拖拽** | `planRoomBase` / `renderPlanCanvas` / `startPlanLabelDrag` / `renderPlanLabels` | ⬜ |
-| 房间分组与拖拽排序 | `editorGroups` / `moveRoomBeforeOrAfter` / `clearRoomDrop` | ⬜ |
+| **户型图房间标注 + 拖拽** | `planRoomBase` / `renderPlanCanvas` / `startPlanLabelDrag` / `renderPlanLabels` | ✅ 0.1.46 |
+| 房间分组与拖拽排序 | `editorGroups` / `moveRoomBeforeOrAfter` / `clearRoomDrop` | ✅ 0.1.46（pointer 事件，触屏可用） |
 | 自定义房间 | `addCustomRoom` / `renderRoomChips` | 🔸 我方有房间字段，无分组 |
 | **逐项单价覆盖** | `openPerOrderPrice` / `savePerOrderPrice` | ✅ 0.1.45 |
 | 阶梯优惠 / 整体调整 | `setAdjDiscount` / `openAdj` / `applyAdj` | ⬜ |
@@ -86,8 +86,8 @@
 
 | 能力 | 参考站函数线索 | 我方 |
 |---|---|---|
-| **全屏阅读器 / 演示模式** | `readerSlides` / `animateReader` / `openReader` / `closeReader` / `moveReader` | 🔸 我方有全屏播放但无逐页动画阅读器 |
-| **预算校验与预设** | `validateBudget` / `budgetPreset` / `bindBudget` | 🔸 我方有预算字段，无校验与预设 |
+| **全屏阅读器 / 演示模式** | `readerSlides` / `animateReader` / `openReader` / `closeReader` / `moveReader` | ✅ 0.1.46（含动画降级） |
+| **预算校验与预设** | `validateBudget` / `budgetPreset` / `bindBudget` | ✅ 0.1.46（只提示不阻断） |
 | 字段级编辑与同步 | `patchField` / `sync` / `fields` | ✅ |
 | 方案历史 | `renderHistory` | ✅ |
 
@@ -112,7 +112,7 @@
 
 - **会员**（`membership.js`）：参考站是弹窗式会员面板；我方 `/vip` 是说明页。**这是有意差异**——本项目开源免费，会员概念不适用。
 - **智能体画廊**（`agent-gallery.js` 14KB）：有 `isLocked` 锁定态。我方无锁定态，**这是有意差异**——免费开源不做付费墙。
-- **视频音频设置**（`video-audio.js` 4KB）：`settings` / `sync` / `changed` 音画设置同步。🔸 我方生视频未接独立音轨设置。
+- **视频音频设置**（`video-audio.js` 4KB）：`settings` / `describe` / `support` / `sync`。✅ 0.1.46 已实现（音轨编译进提示词，非独立参数）。
 
 ## 四、暂不做（需上游能力）
 

@@ -43,3 +43,11 @@ export const renameAssetSchema = z.object({
 });
 export type RenameAssetDto = z.infer<typeof renameAssetSchema>;
 
+
+/** 素材库投稿：先经 /api/media/uploads 上传拿到 assetId，再提交审核 */
+export const submitMaterialSchema = z.object({
+  assetId: z.string().min(1, '请先上传素材文件'),
+  title: z.string().trim().min(1, '标题不能为空').max(60),
+  desc: z.string().trim().max(500).default(''),
+});
+export type SubmitMaterialDto = z.infer<typeof submitMaterialSchema>;

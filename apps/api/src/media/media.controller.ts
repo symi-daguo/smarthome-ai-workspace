@@ -15,6 +15,8 @@ import {
   generateImageSchema,
   generateVideoSchema,
   purchaseMaterialSchema,
+  submitMaterialSchema,
+  type SubmitMaterialDto,
   renameAssetSchema,
   reverseImagePromptSchema,
   type GenerateImageDto,
@@ -102,6 +104,23 @@ export class MediaController {
   }
 
   @RequirePermissions('content:generate')
+  /** 素材库投稿：提交审核 */
+  @RequirePermissions('content:generate')
+  @Post('materials/submissions')
+  submitMaterial(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(submitMaterialSchema)) dto: SubmitMaterialDto,
+  ) {
+    return this.media.submitMaterial(user.activeTenantId as string, user.id, dto);
+  }
+
+  /** 我提交的投稿及审核状态 */
+  @RequirePermissions('content:generate')
+  @Get('materials/submissions')
+  mySubmissions(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
+    return this.media.listMySubmissions(user.activeTenantId as string, user.id);
+  }
+
   @Post('materials/purchase')
   purchase(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -122,6 +141,24 @@ export class MediaController {
     if (!file) throw new BadRequestException('EMPTY_FILE');
     if (!/^image\/(jpeg|png|webp)$/.test(file.mimetype)) throw new BadRequestException('INVALID_IMAGE_TYPE');
     return this.media.uploadImage(user.activeTenantId as string, user.id, { buffer: file.buffer, mimeType: file.mimetype }, title ?? '');
+  }
+
+  /**
+   * 素材库投稿的视频上传。
+   * 刻意与上面的通用 uploads 分开：那个端点被生图/生视频页当「参考图」用，
+   * 放开视频会让它们把视频当图片收进来。上限放大到 100MB（视频体积天然更大）。
+   */
+  @RequirePermissions('content:generate')
+  @Post('materials/upload')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 100 * 1024 * 1024 } }))
+  uploadMaterialVideo(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @UploadedFile() file: Express.Multer.File,
+    @Body('title') title?: string,
+  ) {
+    if (!file) throw new BadRequestException('EMPTY_FILE');
+    if (!/^video\//.test(file.mimetype)) throw new BadRequestException('INVALID_VIDEO_TYPE');
+    return this.media.uploadVideo(user.activeTenantId as string, user.id, { buffer: file.buffer, mimeType: file.mimetype }, title ?? '');
   }
 }
 

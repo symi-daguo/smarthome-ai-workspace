@@ -1221,6 +1221,32 @@ async function main(): Promise<void> {
   );
   void jobId;
 
+  // ---------- 素材库投稿：提交 + 我的投稿列表 ----------
+  const subFd2 = new FormData();
+  subFd2.append('file', new Blob([Buffer.from('fake-mp4-bytes')], { type: 'video/mp4' }), 'clip.mp4');
+  const subUpRes = await fetch(`${base}/api/media/materials/upload`, { method: 'POST', headers: authA.headers, body: subFd2 });
+  const upJson = (await subUpRes.json().catch(() => null)) as { id?: string } | null;
+  const subBad = await request(base, '/api/media/materials/submissions', {
+    ...authA, method: 'POST', body: JSON.stringify({ assetId: '00000000-0000-0000-0000-000000000000', title: 'x' }),
+  });
+  check('投稿引用不存在的素材被拒（400）', subBad.status === 400);
+  let subId = '';
+  if (subUpRes.ok && upJson?.id) {
+    const subOk = await request<{ id: string; status: string }>(base, '/api/media/materials/submissions', {
+      ...authA, method: 'POST', body: JSON.stringify({ assetId: upJson.id, title: '冒烟投稿', desc: '自动化测试' }),
+    });
+    subId = subOk.body?.id ?? '';
+    check('投稿提交成功且初始为待审核', subOk.status === 201 && subOk.body.status === 'pending');
+  } else {
+    check('投稿提交成功且初始为待审核', false);
+  }
+  const mySubs = await request<{ id: string; title: string }[]>(base, '/api/media/materials/submissions', authA);
+  check('我的投稿列表含刚提交的记录', mySubs.status === 200 && mySubs.body.some((x) => x.id === subId));
+  const subEmpty = await request(base, '/api/media/materials/submissions', {
+    ...authA, method: 'POST', body: JSON.stringify({ assetId: upJson?.id ?? 'x', title: '' }),
+  });
+  check('投稿空标题被校验拒绝（400）', subEmpty.status === 400);
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);
