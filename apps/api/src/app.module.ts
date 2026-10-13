@@ -19,6 +19,7 @@ import { LayoutModule } from './layout/layout.module.js';
 import { AgentsModule } from './agents/agents.module.js';
 import { FeedbackModule } from './feedback/feedback.module.js';
 import { LightingModule } from './lighting/lighting.module.js';
+import { CanvasModule } from './canvas/canvas.module.js';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { LightingModule } from './lighting/lighting.module.js';
     AgentsModule,
     FeedbackModule,
     LightingModule,
+    CanvasModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

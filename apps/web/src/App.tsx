@@ -18,6 +18,7 @@ import { PlanStudio } from './pages/PlanStudio';
 import { TreasureBox } from './pages/TreasureBox';
 import { DeviceLayout } from './pages/DeviceLayout';
 import { LightingStudio } from './pages/LightingStudio';
+import { ImageCanvas } from './pages/ImageCanvas';
 import { Feedback } from './pages/Feedback';
 import { Vip } from './pages/Vip';
 import { QuoteStudio } from './pages/QuoteStudio';
@@ -41,6 +42,7 @@ function ProtectedRoutes(): React.ReactNode {
             <Route index element={<Dashboard />} />
             <Route path="agents" element={<AgentMarket />} />
             <Route path="image" element={<ImageStudio />} />
+            <Route path="canvas" element={<ImageCanvas />} />
             <Route path="video" element={<VideoStudio />} />
             <Route path="plan" element={<PlanStudio />} />
             <Route path="order" element={<OrderStudio />} />

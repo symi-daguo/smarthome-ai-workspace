@@ -35,6 +35,9 @@
   - **适配视频**：出图统一按 16:9 且保持参考图构图，成图可直接当生视频首帧
   - **背景**：自动 / 纯白 / 透明（写进提示词约束）
   - **模型只读展示**「模型配置」页当前真实生效的模型，不提供选了不生效的下拉
+- **AI 画布**（`/canvas`）：像聊天一样连续出图——多轮对话、每轮可出多个变体（重新生成**追加**不覆盖）、
+  基于任一历史图派生新分支（`‹ 分支 N/M ›` 随时切回）、每轮标注「基于哪张图」、历史轮次可拉回输入框继续改。
+  出图走后台异步作业 + 轮询，不长时间占连接。功能规格见 [replica/ai-canvas-spec.md](./replica/ai-canvas-spec.md)
 - 工作台**智能意图识别**：边输入边识别你要去的板块（生图 / 生视频 / 方案 / 报价 / 资料库 / 知识库），
   给出可点的「前往」建议，问句与闲聊不打扰；不做发送即跳转，不劫持对话
 - 生视频：上传首帧图（或从「我的资料库」选择）做图生视频，也可纯文字描述生成；时长/画质/比例可调
@@ -162,7 +165,7 @@ SEED_ADMIN_PASSWORD=（自定义强密码）
 - 生产环境（`NODE_ENV=production`）：默认 JWT 密钥 / 默认管理员密码启动直接拒绝；Swagger 文档关闭
 - 额度扣减在数据库事务内原子完成（`updateMany` 余额条件 + 账本写入），并发无超扣竞态
 - 文件流路径穿越防护、上传 MIME + 大小校验、多租户资源隔离、密钥仅经环境变量注入不入库
-- **数据备份**：个人设置「导出全库数据备份」→ `GET /api/admin/backup` 导出全部 22 表 JSON（同时在 `uploads/backups/` 留底）；产物文件在 `api-uploads` 卷、数据库在 `pgdata` 卷，迁移时连同两个 docker volume 一起备份即可完整恢复
+- **数据备份**：个人设置「导出全库数据备份」→ `GET /api/admin/backup` 导出全部 28 表 JSON（同时在 `uploads/backups/` 留底）；产物文件在 `api-uploads` 卷、数据库在 `pgdata` 卷，迁移时连同两个 docker volume 一起备份即可完整恢复
 - **磁盘治理**：`docker-compose` 已配 json-file 日志轮转（10MB×3）防日志挤爆磁盘；产物配额 `UPLOAD_QUOTA_MB`（默认 4096），个人设置可查看占用并一键清理 30 天前且未被方案/布局引用的过期产物
 - **升级不丢数据**：数据全在 `pgdata` / `api-uploads` 两个命名卷，`docker compose up -d --build` 重建镜像不影响卷；nginx 对 `index.html` 禁缓存（hash 资源 immutable），发版后浏览器不会加载到失效 chunk
 
@@ -180,7 +183,7 @@ SEED_ADMIN_PASSWORD=（自定义强密码）
 apps/
   api/    NestJS 12：auth / tenants / rbac / billing / content / knowledge(外部知识库) / llm / media /
           plans / layout / orders(接单工作台) / agents(定制智能体) / feedback(问题反馈) /
-          lighting(灯光场景) / admin(备份与存储治理) / health / common / prisma
+          lighting(灯光场景) / canvas(AI 画布) / admin(备份与存储治理) / health / common / prisma
   web/    React 19 SPA：theme / layouts / pages / components(幻灯片渲染、任务球、页头) /
           lib（api、合成、PPTX 生成）/ store（鉴权与会话）/ data（智能体与方案主题预置）
 docker-compose.yml

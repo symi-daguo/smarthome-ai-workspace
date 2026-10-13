@@ -516,3 +516,60 @@ model LightingScene {
 
   @@index([tenantId, createdAt])
 }
+
+// ---------- AI 画布（对话式生图：多轮 / 变体 / 分支） ----------
+
+model ImageConversation {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  title     String   @default("新对话")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  turns     ImageTurn[]
+
+  @@index([tenantId, updatedAt])
+}
+
+model ImageTurn {
+  id             String   @id @default(uuid())
+  conversationId String
+  tenantId       String
+  // 本轮基于哪一轮派生（分支树的父）；null = 对话线首轮
+  parentId       String?
+  // 归一化后的完整提示词（已含参考图/选区等上下文）
+  prompt         String
+  // user（用户指令轮）| assistant（出图轮）
+  kind           String   @default("assistant")
+  // pending | ready | failed
+  status         String   @default("ready")
+  error          String?
+  // 变体：重新生成追加而非覆盖，按 url 去重。[{ url, label, createdAt }]
+  variants       Json     @default("[]")
+  createdAt      DateTime @default(now())
+
+  conversation ImageConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([parentId])
+}
+
+// ---------- 异步生成作业（生图/生视频走轮询，不长时间阻塞连接） ----------
+
+model GenerationJob {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  // image | video
+  kind      String   @default("image")
+  // pending | running | done | failed
+  status    String   @default("pending")
+  resultUrl String?
+  error     String?
+  // 发起时的参数快照（提示词/尺寸/背景/适配视频），便于历史回看
+  params    Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+}

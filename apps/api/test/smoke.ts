@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
 import { TokenService } from '../src/billing/token.service.js';
+import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 
 const checks: [string, boolean][] = [];
@@ -653,6 +657,16 @@ async function main(): Promise<void> {
   // 数据备份与存储治理（管理员）
   const backupRes = await fetch(`${base}/api/admin/backup`, { headers: authA.headers });
   const backupJson = (await backupRes.json().catch(() => null)) as { exportedAt?: string; tables?: Record<string, unknown[]> } | null;
+  // 备份漏表 = 恢复后数据凭空消失。0.1.40/0.1.44 各漏过一批，这里锁死「schema 的每张表都在备份里」。
+  const schemaSql = readFileSync(new URL('../../prisma/schema.prisma', import.meta.url), 'utf-8');
+  const schemaModels = [...schemaSql.matchAll(/^model\s+(\w+)\s*\{/gm)].map((m) => m[1]);
+  const backedUpTables = new Set(Object.keys(backupJson?.tables ?? {}));
+  // Prisma 模型名 CustomAgent -> client 委托名 customAgent（首字母小写）
+  const missingBackup = schemaModels.filter((m) => !backedUpTables.has(m.charAt(0).toLowerCase() + m.slice(1)));
+  check(
+    '全库备份覆盖 schema 每一张表（漏表=恢复后数据消失）',
+    schemaModels.length > 0 && missingBackup.length === 0,
+  );
   check(
     '全库备份导出（tables 完整）',
     backupRes.status === 200 && Boolean(backupJson?.exportedAt) && Array.isArray(backupJson?.tables?.user) && (backupJson?.tables?.user?.length ?? 0) >= 2,
@@ -932,6 +946,258 @@ async function main(): Promise<void> {
   await request(base, `/api/lighting/${sceneId}`, { ...authA, method: 'DELETE' });
   const sceneAfterDel = await request(base, `/api/lighting/${sceneId}`, authA);
   check('删除灯光场景后详情返回 404', sceneAfterDel.status === 404);
+
+  // ---------- AI 画布：对话线 + 分支轮次树 + 异步作业（本地假 ComfyUI 出图，不依赖真实模型 Key） ----------
+  type CanvasVariant = { url: string; label: string; createdAt: string };
+  type CanvasTurnRow = {
+    id: string;
+    parentId: string | null;
+    prompt: string;
+    kind: 'user' | 'assistant';
+    status: 'pending' | 'ready' | 'failed';
+    error: string | null;
+    variants: CanvasVariant[];
+    children: string[];
+  };
+  type CanvasConvRow = { id: string; title: string; preview: string; turnCount: number; updatedAt: string };
+  type CanvasJobRow = { id: string; status: 'pending' | 'running' | 'done' | 'failed'; resultUrl: string | null; error: string | null };
+  const CANVAS_JOB_STATUS = ['pending', 'running', 'done', 'failed'];
+  const canvasService = app.get(CanvasService);
+
+  // 假 ComfyUI：POST /prompt -> GET /history/{id} -> GET /view，让出图链路确定性跑通（上游每 2s 轮询一次）
+  const comfyPng = Buffer.from('89504e470d0a1a0a', 'hex');
+  const comfy = createServer((req, res) => {
+    const path = req.url ?? '';
+    if (path.startsWith('/prompt')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
+      return;
+    }
+    if (path.startsWith('/history/')) {
+      const promptId = path.slice('/history/'.length).split('?')[0];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ [promptId]: { outputs: { '9': { images: [{ filename: 'canvas-smoke.png', subfolder: '', type: 'output' }] } } } }));
+      return;
+    }
+    if (path.startsWith('/view')) {
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      res.end(comfyPng);
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end('{}');
+  });
+  await new Promise<void>((resolve) => comfy.listen(0, '127.0.0.1', resolve));
+  const comfyBase = `http://127.0.0.1:${(comfy.address() as AddressInfo).port}`;
+  const putComfyCanvas = await request<{ ok: boolean }>(base, '/api/admin/model-config/image', {
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ provider: 'comfyui', comfyBaseUrl: comfyBase, workflowPath: 'comfyui-workflow.json', promptNode: '6', negativeNode: '7', latentNode: '5', seedNode: '3' }),
+  });
+  check('画布前置：生图模型配置切到本地 ComfyUI（200）', putComfyCanvas.status === 200);
+
+  /** 轮询画布作业直到终态（出图异步，上游链路每 2s 轮询一次，最多等 10s） */
+  const waitCanvasJob = async (jobId: string): Promise<CanvasJobRow | null> => {
+    for (let i = 0; i < 25; i += 1) {
+      const poll = await request<CanvasJobRow>(base, `/api/canvas/jobs/${jobId}`, authA);
+      if (poll.body.status === 'done' || poll.body.status === 'failed') return poll.body;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return null;
+  };
+
+  // 对话线：新建 / 缺省标题 / 空详情 / 列表
+  const canvasConv = await request<{ id: string; title: string }>(base, '/api/canvas/conversations', { ...authA, method: 'POST', body: JSON.stringify({ title: '冒烟对话线' }) });
+  check('画布新建对话线 201 且 title 生效', canvasConv.status === 201 && canvasConv.body.title === '冒烟对话线');
+  const convId = canvasConv.body.id;
+
+  const canvasConvDefault = await request<{ id: string; title: string }>(base, '/api/canvas/conversations', { ...authA, method: 'POST', body: JSON.stringify({}) });
+  check('画布新建对话线缺省标题为「新对话」', canvasConvDefault.status === 201 && canvasConvDefault.body.title === '新对话');
+
+  const canvasDetailEmpty = await request<{ id: string; title: string; turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  check('新对话线详情 turns 为空数组', canvasDetailEmpty.status === 200 && canvasDetailEmpty.body.turns.length === 0);
+
+  const canvasList0 = await request<CanvasConvRow[]>(base, '/api/canvas/conversations', authA);
+  const canvasRow0 = canvasList0.body.find((c) => c.id === convId);
+  check(
+    '画布列表含新建对话线且带 title 预览/轮次数/updatedAt',
+    canvasList0.status === 200 && canvasRow0 !== undefined && canvasRow0.turnCount === 0 && typeof canvasRow0.preview === 'string' && typeof canvasRow0.updatedAt === 'string',
+  );
+
+  // 租户隔离：另一个租户读/写/删全部 404
+  const canvasCrossGet = await request(base, `/api/canvas/conversations/${convId}`, authB);
+  const canvasCrossTurn = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authB, method: 'POST', body: JSON.stringify({ prompt: '越权发起轮次' }) });
+  const canvasCrossRename = await request(base, `/api/canvas/conversations/${convId}`, { ...authB, method: 'PATCH', body: JSON.stringify({ title: '越权改名' }) });
+  const canvasCrossDel = await request(base, `/api/canvas/conversations/${convId}`, { ...authB, method: 'DELETE' });
+  check('跨租户读画布对话线 404', canvasCrossGet.status === 404);
+  check('跨租户发起轮次 404', canvasCrossTurn.status === 404);
+  check('跨租户改画布对话线标题 404', canvasCrossRename.status === 404);
+  check('跨租户删画布对话线 404', canvasCrossDel.status === 404);
+
+  // 另一条对话线的一轮（用于验证 parentId 不能跨对话线）
+  const canvasOtherTurn = await request<{ userTurnId: string; turnId: string; jobId: string }>(base, `/api/canvas/conversations/${canvasConvDefault.body.id}/turns`, {
+    ...authA, method: 'POST', body: JSON.stringify({ prompt: '另一条对话线的一轮轮次' }),
+  });
+  check('第二条对话线发起一轮 201', canvasOtherTurn.status === 201);
+
+  // 入参校验：不合法的一律 400
+  const canvasBadPrompt = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '短' }) });
+  const canvasBadSize = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '合法长度的提示词', size: '800x600' }) });
+  const canvasBadQuality = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '合法长度的提示词', quality: 'ultra' }) });
+  const canvasBadParent = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '基于随机父轮发起', parentId: randomUUID() }) });
+  const canvasCrossParent = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '基于别的对话线派生', parentId: canvasOtherTurn.body.turnId }) });
+  const canvasBadRef = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '带参考图发起一轮', refAssetId: '00000000-0000-0000-0000-000000000000' }) });
+  const canvasBadRefFmt = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '参考图 id 非法', refAssetId: 'not-a-uuid' }) });
+  const canvasBadParentFmt = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '父轮 id 非法', parentId: 'not-a-uuid' }) });
+  check('提示词短于 4 字被校验拒绝（400）', canvasBadPrompt.status === 400);
+  check('非法画幅被校验拒绝（400）', canvasBadSize.status === 400);
+  check('非法质量档被校验拒绝（400）', canvasBadQuality.status === 400);
+  check('parentId 不存在返回 400', canvasBadParent.status === 400);
+  check('parentId 指向别的对话线返回 400', canvasCrossParent.status === 400);
+  check('参考图资产不存在返回 400', canvasBadRef.status === 400);
+  check('参考图 id 非 uuid 被校验拒绝（400）', canvasBadRefFmt.status === 400);
+  check('父轮 id 非 uuid 被校验拒绝（400）', canvasBadParentFmt.status === 400);
+
+  // 发起一轮：原子写 user 轮 + assistant 轮 + 作业
+  const canvasTurn = await request<{ userTurnId: string; turnId: string; jobId: string }>(base, `/api/canvas/conversations/${convId}/turns`, {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ prompt: '现代简约风客厅效果图，暖色灯光', size: '1536x1024', background: 'white', quality: 'high' }),
+  });
+  check('画布发起一轮 201 并返回 userTurnId/turnId/jobId', canvasTurn.status === 201 && Boolean(canvasTurn.body.userTurnId) && Boolean(canvasTurn.body.turnId) && Boolean(canvasTurn.body.jobId));
+
+  // 参考图：合法资产可发起，且只记进参数快照（不作为首帧参与出图）
+  const canvasRefTurn = await request<{ userTurnId: string; turnId: string; jobId: string }>(base, `/api/canvas/conversations/${convId}/turns`, {
+    ...authA, method: 'POST', body: JSON.stringify({ prompt: '参考图的同风格延伸', refAssetId: upAsset.id }),
+  });
+  const canvasRefJob = canvasRefTurn.status === 201 ? await prisma.generationJob.findUnique({ where: { id: canvasRefTurn.body.jobId } }) : null;
+  const canvasRefParams = canvasRefJob?.params as { refAssetId?: string | null; size?: string } | undefined;
+  check('本租户图片资产可作参考图发起一轮 201', canvasRefTurn.status === 201);
+  check('参考图仅记录进作业参数快照（不参与出图）', canvasRefParams?.refAssetId === upAsset.id && canvasRefJob?.kind === 'image' && canvasRefJob?.status !== 'failed');
+
+  // 详情：轮次链与分支树
+  const canvasDetail1 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasUserTurn = canvasDetail1.body.turns.find((t) => t.id === canvasTurn.body.userTurnId);
+  const canvasAsstTurn = canvasDetail1.body.turns.find((t) => t.id === canvasTurn.body.turnId);
+  check('user 轮：parentId 为空 + kind=user + prompt 为用户原话', canvasUserTurn?.parentId === null && canvasUserTurn?.kind === 'user' && canvasUserTurn?.prompt === '现代简约风客厅效果图，暖色灯光');
+  check('assistant 轮：parentId 指向 user 轮 + 初始 status=pending + variants 为空', canvasAsstTurn?.parentId === canvasTurn.body.userTurnId && canvasAsstTurn?.kind === 'assistant' && canvasAsstTurn?.status === 'pending' && canvasAsstTurn?.variants.length === 0);
+  check('详情为每轮附带 children[]（assistant 轮作为 user 轮的子轮）', Array.isArray(canvasUserTurn?.children) && canvasUserTurn?.children.includes(canvasTurn.body.turnId) === true);
+  check('轮次按 createdAt 正序返回（user 在前 assistant 在后）', canvasDetail1.body.turns[0]?.id === canvasTurn.body.userTurnId && canvasDetail1.body.turns[1]?.id === canvasTurn.body.turnId);
+
+  // 作业轮询：结构与状态枚举恒定合法（出图成败只影响 status 取值）
+  const canvasJob0 = await request<CanvasJobRow>(base, `/api/canvas/jobs/${canvasTurn.body.jobId}`, authA);
+  const canvasJobCross = await request(base, `/api/canvas/jobs/${canvasTurn.body.jobId}`, authB);
+  const canvasJobMissing = await request(base, '/api/canvas/jobs/00000000-0000-0000-0000-000000000000', authA);
+  check('画布作业轮询返回结构合法且 status 属于枚举', canvasJob0.status === 200 && CANVAS_JOB_STATUS.includes(canvasJob0.body.status));
+  check('跨租户读画布作业 404', canvasJobCross.status === 404);
+  check('画布作业不存在返回 404', canvasJobMissing.status === 404);
+
+  const canvasJobDone = await waitCanvasJob(canvasTurn.body.jobId);
+  const canvasDetail2 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasAsstDone = canvasDetail2.body.turns.find((t) => t.id === canvasTurn.body.turnId);
+  check('出图成功路径：作业 done + resultUrl 非空', canvasJobDone?.status === 'done' && Boolean(canvasJobDone?.resultUrl));
+  check(
+    '出图成功路径：轮次转 ready 且结果 URL 追加为第 1 个变体',
+    canvasAsstDone?.status === 'ready' && canvasAsstDone?.variants.length === 1
+      && canvasAsstDone?.variants[0]?.url === canvasJobDone?.resultUrl && canvasAsstDone?.variants[0]?.label === '变体 1' && Boolean(canvasAsstDone?.variants[0]?.createdAt),
+  );
+
+  // 幂等：已终态作业重复触发不重复出图、不重复追加变体
+  await request(base, `/api/canvas/jobs/${canvasTurn.body.jobId}/run`, { ...authA, method: 'POST' });
+  const canvasJobRerun = await request<CanvasJobRow>(base, `/api/canvas/jobs/${canvasTurn.body.jobId}`, authA);
+  const canvasDetail3 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasAsstRerun = canvasDetail3.body.turns.find((t) => t.id === canvasTurn.body.turnId);
+  check('已终态作业重复触发幂等（状态不变、变体不重复追加）', canvasJobRerun.body.status === 'done' && canvasAsstRerun?.variants.length === 1);
+
+  // 变体去重：同 URL 不重复计数；新 URL 追加且已有项编号不重排
+  await canvasService.appendVariant(canvasTurn.body.turnId, canvasJobDone?.resultUrl ?? '');
+  const canvasDetail4 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasAsstDup = canvasDetail4.body.turns.find((t) => t.id === canvasTurn.body.turnId);
+  await canvasService.appendVariant(canvasTurn.body.turnId, '/api/media/assets/00000000-0000-0000-0000-000000000000/file');
+  const canvasDetail5 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasAsstAppend = canvasDetail5.body.turns.find((t) => t.id === canvasTurn.body.turnId);
+  check('变体按 url 去重：重复 URL 不重复追加', canvasAsstDup?.variants.length === 1);
+  check('变体追加新图且已有项编号不重排', canvasAsstAppend?.variants.length === 2 && canvasAsstAppend?.variants[0]?.label === '变体 1' && canvasAsstAppend?.variants[1]?.label === '变体 2');
+
+  // 分支：基于历史轮次派生新一轮
+  const canvasBranch = await request<{ userTurnId: string; turnId: string; jobId: string }>(base, `/api/canvas/conversations/${convId}/turns`, {
+    ...authA, method: 'POST', body: JSON.stringify({ prompt: '基于这张图换个机位重画', parentId: canvasTurn.body.turnId }),
+  });
+  const canvasDetail6 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasParentTurn = canvasDetail6.body.turns.find((t) => t.id === canvasTurn.body.turnId);
+  const canvasBranchUser = canvasDetail6.body.turns.find((t) => t.id === canvasBranch.body.userTurnId);
+  check(
+    '基于历史轮次派生新一轮 201 且分支树 children 正确',
+    canvasBranch.status === 201 && canvasParentTurn?.children.includes(canvasBranch.body.userTurnId) === true && canvasBranchUser?.parentId === canvasTurn.body.turnId,
+  );
+
+  // 失败路径：生图 provider 无 Key 时作业与轮次同步失败且带原因
+  await request(base, '/api/admin/model-config/image', { ...authA, method: 'PUT', body: JSON.stringify({ provider: 'openai', baseUrl: 'http://127.0.0.1:9/v1', model: 'gpt-image-1' }) });
+  const canvasFailTurn = await request<{ userTurnId: string; turnId: string; jobId: string }>(base, `/api/canvas/conversations/${convId}/turns`, {
+    ...authA, method: 'POST', body: JSON.stringify({ prompt: '未配生图 Key 时的失败路径' }),
+  });
+  const canvasJobFail = await waitCanvasJob(canvasFailTurn.body.jobId);
+  const canvasDetail7 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasAsstFail = canvasDetail7.body.turns.find((t) => t.id === canvasFailTurn.body.turnId);
+  check(
+    '出图失败路径：作业 failed + error 非空，轮次同步 failed 且原因一致',
+    canvasJobFail?.status === 'failed' && Boolean(canvasJobFail?.error) && canvasAsstFail?.status === 'failed' && canvasAsstFail?.error === canvasJobFail?.error,
+  );
+
+  // PATCH：改标题与改轮次提示词
+  const canvasRename = await request<{ title: string }>(base, `/api/canvas/conversations/${convId}`, { ...authA, method: 'PATCH', body: JSON.stringify({ title: '冒烟对话线（已改）' }) });
+  const canvasRenameEmpty = await request(base, `/api/canvas/conversations/${convId}`, { ...authA, method: 'PATCH', body: JSON.stringify({ title: '   ' }) });
+  const canvasRenameLong = await request(base, `/api/canvas/conversations/${convId}`, { ...authA, method: 'PATCH', body: JSON.stringify({ title: '标'.repeat(61) }) });
+  check('画布 PATCH 改 title 生效', canvasRename.status === 200 && canvasRename.body.title === '冒烟对话线（已改）');
+  check('标题为空被校验拒绝（400）', canvasRenameEmpty.status === 400);
+  check('标题超 60 字被校验拒绝（400）', canvasRenameLong.status === 400);
+
+  const canvasPromptPatch = await request<{ id: string; prompt: string }>(base, `/api/canvas/turns/${canvasTurn.body.userTurnId}`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ prompt: '改写后的提示词：夜晚氛围的客厅' }),
+  });
+  const canvasPromptBad = await request(base, `/api/canvas/turns/${canvasTurn.body.userTurnId}`, { ...authA, method: 'PATCH', body: JSON.stringify({ prompt: '短' }) });
+  const canvasDetail8 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasUserPatched = canvasDetail8.body.turns.find((t) => t.id === canvasTurn.body.userTurnId);
+  check('画布 PATCH 改轮次 prompt 生效且详情回显', canvasPromptPatch.status === 200 && canvasPromptPatch.body.prompt === '改写后的提示词：夜晚氛围的客厅' && canvasUserPatched?.prompt === '改写后的提示词：夜晚氛围的客厅');
+  check('轮次 prompt 短于 4 字被校验拒绝（400）', canvasPromptBad.status === 400);
+
+  // 轮次删除：跨租户 404、不存在 404、删除连同分支子树
+  const canvasTurnCrossPatch = await request(base, `/api/canvas/turns/${canvasTurn.body.userTurnId}`, { ...authB, method: 'PATCH', body: JSON.stringify({ prompt: '越权改提示词' }) });
+  const canvasTurnCrossDel = await request(base, `/api/canvas/turns/${canvasTurn.body.userTurnId}`, { ...authB, method: 'DELETE' });
+  const canvasTurnMissing = await request(base, '/api/canvas/turns/00000000-0000-0000-0000-000000000000', { ...authA, method: 'DELETE' });
+  check('跨租户改轮次 prompt 404', canvasTurnCrossPatch.status === 404);
+  check('跨租户删轮次 404', canvasTurnCrossDel.status === 404);
+  check('删除不存在的轮次返回 404', canvasTurnMissing.status === 404);
+
+  const canvasTurnDel = await request<{ id: string; deletedTurns: number }>(base, `/api/canvas/turns/${canvasBranch.body.userTurnId}`, { ...authA, method: 'DELETE' });
+  const canvasDetail9 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasParentAfterDel = canvasDetail9.body.turns.find((t) => t.id === canvasTurn.body.turnId);
+  check('删除轮次连同其分支子树（user + assistant 共 2 条）', canvasTurnDel.status === 200 && canvasTurnDel.body.deletedTurns === 2);
+  check(
+    '删除后详情不再包含该分支，且父轮 children 已摘除',
+    !canvasDetail9.body.turns.some((t) => t.id === canvasBranch.body.userTurnId || t.id === canvasBranch.body.turnId)
+      && canvasParentAfterDel?.children.includes(canvasBranch.body.userTurnId) === false
+      && canvasDetail9.body.turns.every((t) => t.parentId !== canvasBranch.body.userTurnId),
+  );
+
+  // 删除对话线：轮次靠 FK 级联清理
+  const canvasConvDel = await request<{ id: string }>(base, `/api/canvas/conversations/${convId}`, { ...authA, method: 'DELETE' });
+  const canvasConvAfterDel = await request(base, `/api/canvas/conversations/${convId}`, authA);
+  const canvasTurnsLeft = await prisma.imageTurn.count({ where: { conversationId: convId } });
+  const canvasList1 = await request<CanvasConvRow[]>(base, '/api/canvas/conversations', authA);
+  check('删除画布对话线 200', canvasConvDel.status === 200 && canvasConvDel.body.id === convId);
+  check('删除后对话线详情 404 且轮次被级联清理', canvasConvAfterDel.status === 404 && canvasTurnsLeft === 0);
+  check('删除后列表不再包含该对话线', !canvasList1.body.some((c) => c.id === convId));
+
+  // 清理：第二条对话线一并删掉、生图模型配置还原为默认、假 ComfyUI 关闭
+  await request(base, `/api/canvas/conversations/${canvasConvDefault.body.id}`, { ...authA, method: 'DELETE' });
+  await request(base, '/api/admin/model-config/image', { ...authA, method: 'DELETE' });
+  const canvasList2 = await request<CanvasConvRow[]>(base, '/api/canvas/conversations', authA);
+  const canvasCfgReset = await request<{ image: { source: string } }>(base, '/api/admin/model-config', authA);
+  comfy.closeAllConnections();
+  await new Promise<void>((resolve) => comfy.close(() => resolve()));
+  check('清理后画布列表为空（测试数据不残留）', canvasList2.status === 200 && canvasList2.body.length === 0);
+  check('清理后生图模型配置回到默认来源', canvasCfgReset.body.image.source === 'env');
 
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;

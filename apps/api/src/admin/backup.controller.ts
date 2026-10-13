@@ -21,6 +21,10 @@ const BACKUP_TABLES = [
   'tokenLedger', 'auditLog', 'extractionJob', 'extractedDocument', 'extractedField',
   'extractionDeficiency', 'reviewConfirmation', 'mediaAsset', 'planProject',
   'product', 'categoryDef', 'modelSetting', 'modelProfile', 'floorplanLayout', 'orderRequest', 'orderNote',
+  // 0.1.40 起新增的表：漏掉任何一张都会让「全库备份」丢掉对应数据，恢复后凭空消失
+  'customAgent', 'feedbackTicket', 'lightingScene',
+  // 0.1.44 AI 画布：对话线/轮次/异步作业，缺任一张都会丢掉全部创作记录
+  'imageConversation', 'imageTurn', 'generationJob',
 ] as const;
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)

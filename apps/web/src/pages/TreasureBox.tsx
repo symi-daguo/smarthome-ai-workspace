@@ -26,6 +26,7 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
       { key: 'video-cover', img: '/images/tools/tool-video-cover.jpg', name: '视频封面', desc: '照片+主题，一键出竖版封面', badge: '3 张配图', to: '/image' },
       { key: 'holiday-poster', img: '/images/tools/tool-holiday-poster.jpg', name: '节假日海报', desc: '选节日+门店名，当天就能发', badge: '4 张配图', to: '/image' },
       { key: 'free-image', img: '/images/tools/tool-free-image.jpg', name: 'AI 自由生图', desc: '上传图片，一句话改图', to: '/image' },
+      { key: 'ai-canvas', img: '/images/tools/tool-ai-canvas.jpg', name: 'AI 画布', desc: '像聊天一样连续出图，可派生分支随时切回', to: '/canvas' },
       { key: 'xhs-image', img: '/images/tools/tool-xhs-image.jpg', name: '小红书生图', desc: '手绘平面图、设备清单图文', to: '/image' },
       { key: 'floorplan-poster', img: '/images/tools/tool-floorplan-poster.jpg', name: '户型方案长图', desc: '上传户型图，出竖版方案海报', to: '/plan' },
     ],

@@ -20,7 +20,7 @@ import {
   ThunderboltOutlined,
   ToolOutlined,
   VideoCameraOutlined,
-  WalletOutlined,
+  WalletOutlined, ApartmentOutlined,
 } from '@ant-design/icons';
 import {
   Avatar,
@@ -201,6 +201,7 @@ export function MainLayout(): ReactNode {
         { key: '/order', icon: <AuditOutlined />, label: '开始接单' },
         { key: '/agents', icon: <RobotOutlined />, label: 'AI 智能体' },
         { key: '/image', icon: <PictureOutlined />, label: 'AI 生图' },
+        { key: '/canvas', icon: <ApartmentOutlined />, label: 'AI 画布' },
         { key: '/video', icon: <VideoCameraOutlined />, label: 'AI 生视频' },
         { key: '/plan', icon: <FilePptOutlined />, label: '智能方案' },
         { key: '/products', icon: <ShopOutlined />, label: '产品中心' },
@@ -233,7 +234,7 @@ export function MainLayout(): ReactNode {
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
-    for (const k of ['/agents', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/tokens', '/model-config', '/lighting', '/feedback', '/vip']) {
+    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/tokens', '/model-config', '/lighting', '/feedback', '/vip']) {
       if (p.startsWith(k)) return k;
     }
     return '/';
