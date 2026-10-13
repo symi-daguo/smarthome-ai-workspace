@@ -9,6 +9,7 @@ import {
   RobotOutlined,
   SendOutlined,
   VideoCameraOutlined,
+  ThunderboltFilled,
 } from '@ant-design/icons';
 import { App as AntApp, Avatar, Button, Dropdown, Grid, Modal, Typography, Upload, theme } from 'antd';
 import { Bubble, Sender, type BubbleItemType } from '@ant-design/x';
@@ -18,6 +19,7 @@ import { BrandMark } from '../components/BrandMark';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore } from '../store/ChatStore';
 import { useActiveConfig } from '../lib/configStore';
+import { detectIntent } from '../lib/intent';
 import { BRAND_GRADIENT } from '../theme/tokens';
 
 const { Text, Title } = Typography;
@@ -98,6 +100,10 @@ export function Dashboard(): ReactNode {
   const { config, refresh: refreshConfig } = useActiveConfig();
   const location = useLocation();
   const [input, setInput] = useState('');
+  // 意图建议：命中「要去某个板块」的关键词时给一条可点提示；不自动跳转、不劫持对话
+  const intent = useMemo(() => detectIntent(input), [input]);
+  const [intentDismissed, setIntentDismissed] = useState('');
+  const suggest = intent && intent.key !== 'chat' && intent.label !== intentDismissed ? intent : null;
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentItem | null>(null);
   const agentRef = useRef<string | undefined>(undefined);
@@ -357,6 +363,32 @@ export function Dashboard(): ReactNode {
                   </div>
                 ) : null}
 
+{suggest ? (
+                  <div
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                      marginBottom: 8, padding: '6px 12px', borderRadius: 10,
+                      background: token.colorPrimaryBg, fontSize: 12.5,
+                    }}
+                  >
+                    <ThunderboltFilled style={{ color: token.colorPrimary }} />
+                    <span>
+                      识别到你要做「{suggest.label}」
+                      <Text type="secondary" style={{ marginInlineStart: 6 }}>（命中「{suggest.hit}」）</Text>
+                    </span>
+                    <Button
+                      size="small"
+                      type="primary"
+                      onClick={() => { navigate(suggest.route); setInput(''); }}
+                    >
+                      前往{suggest.label}
+                    </Button>
+                    <Button size="small" type="text" onClick={() => setIntentDismissed(suggest.label)}>
+                      不用，直接对话
+                    </Button>
+                  </div>
+                ) : null}
+
                 <Sender
                   value={input}
                   onChange={setInput}
@@ -581,6 +613,32 @@ export function Dashboard(): ReactNode {
           }}
         >
           <div style={{ maxWidth: '100%', margin: '0 auto' }}>
+{suggest ? (
+            <div
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                marginBottom: 8, padding: '6px 12px', borderRadius: 10,
+                background: token.colorPrimaryBg, fontSize: 12.5,
+              }}
+            >
+              <ThunderboltFilled style={{ color: token.colorPrimary }} />
+              <span>
+                识别到你要做「{suggest.label}」
+                <Text type="secondary" style={{ marginInlineStart: 6 }}>（命中「{suggest.hit}」）</Text>
+              </span>
+              <Button
+                size="small"
+                type="primary"
+                onClick={() => { navigate(suggest.route); setInput(''); }}
+              >
+                前往{suggest.label}
+              </Button>
+              <Button size="small" type="text" onClick={() => setIntentDismissed(suggest.label)}>
+                不用，直接对话
+              </Button>
+            </div>
+                ) : null}
+
             <Sender
               value={input}
               onChange={setInput}

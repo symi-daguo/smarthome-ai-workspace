@@ -52,16 +52,17 @@ export function ThemeProvider({ children }: { children: ReactNode }): ReactNode 
         theme={{
           algorithm: resolved === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
           token: {
-            // 品牌紫（规划文档锁定主色），明暗两套由算法自动派生
-            colorPrimary: '#6D4DF6',
-            borderRadius: 8,
+            // 品牌主色：靛蓝系（比对标站的亮紫更沉更冷），明暗两套由算法自动派生
+            colorPrimary: '#4F46E5',
+            // 转角比常规 SaaS 更圆一档，配合自有阴影形成独立的视觉语言
+            borderRadius: 12,
             fontFamily:
               "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
           },
           components: {
             Card: {
-              // 卡片使用 AntD Pro 同款低对比细边 + 轻投影
-              boxShadowTertiary: '0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02)',
+              // 自有两级阴影：低对比细边 + 冷调投影（不用中性黑灰，避免偏灰发脏）
+              boxShadowTertiary: '0 1px 2px rgba(28, 27, 46, .04), 0 4px 16px rgba(28, 27, 46, .06)',
             },
             Menu: {
               // 浅色侧栏菜单：选中项品牌紫浅底（取自 colorPrimaryBg 语义色，暗色自动适配）

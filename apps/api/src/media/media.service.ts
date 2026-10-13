@@ -82,6 +82,10 @@ export class MediaService {
     userId: string;
     prompt: string;
     size: string;
+    /** 适配视频：统一 16:9 画幅 + 构图不裁切约束 */
+    fitVideo?: boolean;
+    /** 背景意图：transparent / white 追加到提示词，auto 不干预 */
+    background?: 'auto' | 'transparent' | 'white';
     title?: string;
   }): Promise<{ id: string; url: string; status: string }> {
     const cfg = await this.modelConfig.imageConfig();
@@ -93,6 +97,22 @@ export class MediaService {
         message: cfg.provider === 'openai' ? '生图 API Key 未配置（provider=openai），请在「模型配置」页填写' : '生图 API Key 未配置，请在「模型配置」页填写 MiniMax Key',
       });
     }
+
+    // 两个参数在此转成「真实生效的输入」，而不是透传给上游却不生效：
+    // 1) 适配视频 -> 画幅强制 16:9，并在提示词声明保持原图构图
+    // 2) 背景 -> 写进提示词约束（模型无独立背景参数时，这是唯一可靠通道）
+    // 注：实际使用的生图模型统一取自「模型配置」页，不再由前端选择
+    // （原前端 pro/fast 下拉对结果毫无影响，是假控件，已移除）。
+    const size = opts.fitVideo ? '1536x1024' : opts.size;
+    const bgHint =
+      opts.background === 'transparent'
+        ? '，背景为完全透明、无任何投影与地面'
+        : opts.background === 'white'
+          ? '，背景为纯白无杂色，主体边缘干净'
+          : '';
+    const fitHint = opts.fitVideo ? '，严格保持参考图构图与主体位置，画面边缘自然过渡不被硬裁切' : '';
+    const prompt = `${opts.prompt}${bgHint}${fitHint}`;
+
     await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
     let img: GeneratedImage;
@@ -100,9 +120,9 @@ export class MediaService {
       img = await generateViaComfyui({
         baseUrl: cfg.comfyBaseUrl,
         workflow: await this.loadComfyWorkflow(cfg.workflowPath),
-        prompt: opts.prompt,
-        width: Number(opts.size.split('x')[0]) || 1024,
-        height: Number(opts.size.split('x')[1]) || 1024,
+        prompt,
+        width: Number(size.split('x')[0]) || 1024,
+        height: Number(size.split('x')[1]) || 1024,
         promptNode: cfg.promptNode,
         negativeNode: cfg.negativeNode,
         latentNode: cfg.latentNode,

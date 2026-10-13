@@ -10,4 +10,3 @@ export const CATEGORY_META: Record<string, { label: string }> = Object.fromEntri
 CATEGORY_META.security = { label: '安防监控' };
 
 /** 旧 key 归一化（security -> camera），用于品类推断与存量数据兼容 */
-export const normalizeCategory = (c: string): string => LEGACY_CATEGORY_ALIAS[c] ?? c;

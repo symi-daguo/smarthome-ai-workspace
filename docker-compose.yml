@@ -3,7 +3,6 @@
 # - 当前网络可达 Docker Hub，基础服务使用官方镜像
 # - 若再次遇到 Docker Hub 不可达，可替换为 ghcr.io / quay.io 镜像：
 #   ghcr.io/cloudnative-pg/postgresql:18（注意：该镜像需 operator 调度，不能直接 compose 运行）、
-#   ghcr.io/valkey-io/valkey:8-alpine、quay.io/minio/minio:latest、ghcr.io/berriai/litellm:main-latest
 
 services:
   # pgvector 镜像内置 PostgreSQL 18 + vector 扩展（知识库 RAG 需要）
@@ -25,18 +24,6 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # Redis 8 官方镜像；Docker Hub 不可达时可换 ghcr.io/valkey-io/valkey:8-alpine（Valkey 为 Redis 兼容实现）
-  redis:
-    image: redis:8-alpine
-    ports:
-      - '6379:6379'
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-
-      retries: 10
-    restart: unless-stopped
 
   # NestJS API：启动时自动 migrate deploy + 幂等种子
   api:
@@ -50,7 +37,6 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: '3080'
       DATABASE_URL: postgresql://smarthome:smarthome@db:5432/smarthome?schema=public
-      REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:?生产必须设置 JWT_SECRET（openssl rand -hex 32）}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
@@ -59,8 +45,6 @@ services:
       # 模型网关 / 直连 MiniMax：env 由宿主机 .env 注入；未填时 LlmService 返回 503 LLM_KEY_MISSING
       MiniMax_BASE_URL: ${MiniMax_BASE_URL:-https://api.minimaxi.com/v1}
       MiniMax_API_KEY: ${MiniMax_API_KEY:-replace-me}
-      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://litellm:4000}
-      LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-local-dev}
       # 多模型 provider（对话 OpenAI 兼容 / 生图 minimax|openai|comfyui）；留空则回退 MiniMax
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -112,8 +96,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     restart: unless-stopped
 
   # 前端：Nginx 托管静态资源并同源反代 /api 到 api 容器（宿主 5173 -> 容器 80）
@@ -131,35 +113,8 @@ services:
       - api
     restart: unless-stopped
 
-  # 对象存储：默认不启动，profile storage 控制常驻内存
-  minio:
-    profiles: ['storage']
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - '9000:9000'
-      - '9001:9001'
-    volumes:
-      - miniodata:/data
-    restart: unless-stopped
 
-  # 模型网关：默认不启动，profile gateway 按需启动
-  litellm:
-    profiles: ['gateway']
-    image: ghcr.io/berriai/litellm:main-latest
-    command: ['--port', '4000']
-    ports:
-      - '4000:4000'
-    volumes:
-      - ./docker/litellm-config.yaml:/app/config.yaml:ro
-    environment:
-      LITELLM_CONFIG: /app/config.yaml
-    restart: unless-stopped
 
 volumes:
   pgdata:
-  miniodata:
   api-uploads:

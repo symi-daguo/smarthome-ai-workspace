@@ -40,6 +40,8 @@ export class MediaController {
       userId: user.id,
       prompt: dto.prompt,
       size: dto.size,
+      fitVideo: dto.fitVideo,
+      background: dto.background,
       title: dto.title,
     });
   }

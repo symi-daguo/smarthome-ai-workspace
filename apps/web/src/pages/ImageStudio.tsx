@@ -1,4 +1,5 @@
 import {
+  AppstoreOutlined,
   BulbOutlined,
   DeleteOutlined,
   LeftOutlined,
@@ -7,8 +8,9 @@ import {
   ThunderboltFilled,
   WarningOutlined,
 } from '@ant-design/icons';
-import { Alert, App as AntApp, Button, Grid, Input, Segmented, Select, Spin, Typography, Upload, theme } from 'antd';
+import { Alert, App as AntApp, Button, Empty, Grid, Input, Modal, Segmented, Select, Space, Spin, Typography, Upload, theme } from 'antd';
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   IMAGE_WORKFLOWS,
   emptyDraft,
@@ -54,10 +56,6 @@ const SCENE_PROMPTS: Record<string, string> = {
   电竞模式: '电竞房，桌面与背景墙蓝紫色 RGB 氛围光，双显示器冷光，灯带控制屏幕反光，赛博朋克氛围，真实室内摄影质感',
 };
 
-const MODELS = [
-  { value: 'pro', label: '智居 image pro · 精修' },
-  { value: 'fast', label: '智居 image fast · 快速出图' },
-];
 
 const SIZES = [
   { value: '1536x1024', label: '横图 1536x1024' },
@@ -94,19 +92,27 @@ function arrToLines(list: string[]): string {
 export function ImageStudio(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
+  const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isWide = screens.xl ?? false;
   // 当前激活的对话模型方案（ConfigProvider 注入），供封面文案一键生成用
   const { config } = useActiveConfig();
+  /** 真实生效的生图模型名（来自「模型配置」页），只读展示，不在前端做无效切换 */
+  const imageModelName = config.imageModel || config.imageProvider || '未配置';
 
   // 提示词输入框是唯一事实源：chip/案例/反推/工作流组装都写入它，用户可见可编辑
   const [prompt, setPrompt] = useState('');
   /** 自由生图的场景集合（以〔场景：…〕标记直接写 textarea）；毛坯房模式的场景存在 draft 里 */
   const [activeScenes, setActiveScenes] = useState<Set<string>>(new Set());
-  const [model, setModel] = useState('pro');
   const [size, setSize] = useState('1536x1024');
+  /** 适配视频：出图统一 16:9 且保持原图构图，可直接当视频首帧（参考站同款语义） */
+  const [fitVideo, setFitVideo] = useState(false);
+  /** 背景意图：transparent / white 会写进提示词约束 */
+  const [background, setBackground] = useState<'auto' | 'transparent' | 'white'>('auto');
   const [refImage, setRefImage] = useState<RefImage | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [assets, setAssets] = useState<{ id: string; title: string }[]>([]);
   const [reversing, setReversing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
@@ -215,6 +221,17 @@ export function ImageStudio(): ReactNode {
     return false;
   };
 
+  /** 从「我的资料库」选参考图（与视频页首帧选择同源，不重复造轮子） */
+  const openPicker = async (): Promise<void> => {
+    try {
+      const list = await api<{ id: string; kind: string; title: string }[]>('/api/media/assets');
+      setAssets(list.filter((a) => a.kind === 'image').map((a) => ({ id: a.id, title: a.title })));
+    } catch (e) {
+      message.error((e as Error).message || '资料库加载失败');
+    }
+    setPickerOpen(true);
+  };
+
   /** 视觉模型反推：参考图 → 详细提示词回填输入框 */
   const reversePrompt = async (): Promise<void> => {
     if (!refImage) return;
@@ -283,7 +300,7 @@ export function ImageStudio(): ReactNode {
       const body = isFree ? `${full}，真实室内摄影质感，高清细节，无多余文字水印` : full;
       const r = await api<{ url: string }>('/api/media/images', {
         method: 'POST',
-        body: JSON.stringify({ prompt: body, size, model }),
+        body: JSON.stringify({ prompt: body, size, fitVideo, background }),
       });
       const url = fileUrl(`${r.url}?t=${Date.now()}`);
       setHistory((prev) => [url, ...prev]);
@@ -410,9 +427,9 @@ export function ImageStudio(): ReactNode {
     </div>
   );
 
-  const sizeOptions = isFree
-    ? SIZES
-    : wf.sizes.map((s) => ({ value: s.value, label: s.label }));
+  const baseSizeOptions = isFree ? SIZES : wf.sizes.map((s) => ({ value: s.value, label: s.label }));
+  const fitVideoOpt = { value: '__fitVideo', label: '跟随参考图 · 适配视频' };
+  const sizeOptions = refImage ? [...baseSizeOptions, fitVideoOpt] : baseSizeOptions;
 
   /** 序号由页面统一给出，数据文件只管字段名，避免两处各写一套圈号导致编号错乱 */
   const stepRef = '①';
@@ -461,9 +478,12 @@ export function ImageStudio(): ReactNode {
               </div>
             ) : (
               <>
-                <Upload accept="image/jpeg,image/png,image/webp" maxCount={1} showUploadList={false} beforeUpload={(f) => void onUpload(f)}>
-                  <Button icon={<PlusOutlined />} loading={uploading}>选择参考图</Button>
-                </Upload>
+                <Space wrap>
+                  <Upload accept="image/jpeg,image/png,image/webp" maxCount={1} showUploadList={false} beforeUpload={(f) => void onUpload(f)}>
+                    <Button icon={<PlusOutlined />} loading={uploading}>选择参考图</Button>
+                  </Upload>
+                  <Button icon={<AppstoreOutlined />} onClick={() => void openPicker()}>从「我的资料」选</Button>
+                </Space>
                 <div style={{ marginTop: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>{wf.refHint}</Text></div>
               </>
             )}
@@ -539,21 +559,70 @@ export function ImageStudio(): ReactNode {
             </div>
           </div>
 
-          {/* 模型 */}
+          {/* 模型：只读展示「模型配置」页当前生效的真实模型，不做无效选择 */}
           <div style={{ margin: '18px 0 12px' }}>
             <SectionLabel>{`${stepModel} 模型`}</SectionLabel>
-            <Select value={model} onChange={setModel} options={MODELS} style={{ width: '100%' }} size="large" />
+            <div
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                padding: '6px 12px', border: `1px solid ${token.colorBorder}`, borderRadius: 8,
+                background: token.colorFillQuaternary, fontSize: 13.5,
+              }}
+            >
+              <span>{imageModelName}</span>
+              <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/model-config')}>
+                去切换
+              </Button>
+            </div>
           </div>
 
           {/* 参数 */}
           <div style={{ display: 'grid', gridTemplateColumns: isWide ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)', gap: 12, marginBottom: 20 }}>
             <div>
               <span style={labelStyle}>{isFree ? '尺寸' : wf.sizes.length > 1 ? '尺寸' : '尺寸（本流程固定）'}</span>
-              <Select value={size} onChange={setSize} options={sizeOptions} style={{ width: '100%' }} disabled={!isFree && wf.sizes.length === 1} />
+              <Select
+                value={size === '__fitVideo' ? '__fitVideo' : size}
+                onChange={(v) => {
+                  if (v === '__fitVideo') { setFitVideo(true); setSize(baseSizeOptions[0]?.value ?? '1536x1024'); }
+                  else { setFitVideo(false); setSize(String(v)); }
+                }}
+                options={sizeOptions}
+                style={{ width: '100%' }}
+                disabled={!isFree && wf.sizes.length === 1}
+              />
             </div>
-            <div><span style={labelStyle}>质量</span><Select value="medium" options={[{ value: 'medium', label: '标准' }]} style={{ width: '100%' }} disabled /></div>
-            <div><span style={labelStyle}>格式</span><Select value="png" options={[{ value: 'png', label: 'PNG' }]} style={{ width: '100%' }} disabled /></div>
-            <div><span style={labelStyle}>背景</span><Select value="auto" options={[{ value: 'auto', label: '自动' }]} style={{ width: '100%' }} disabled /></div>
+            <div>
+              <span style={labelStyle}>背景</span>
+              <Select
+                value={background}
+                onChange={setBackground}
+                options={[
+                  { value: 'auto', label: '自动' },
+                  { value: 'white', label: '纯白背景' },
+                  { value: 'transparent', label: '透明背景' },
+                ]}
+                style={{ width: '100%' }}
+              />
+            </div>
+            {refImage && (
+              <div>
+                <span style={labelStyle}>适配视频</span>
+                <Select
+                  value={fitVideo ? 'on' : 'off'}
+                  onChange={(v) => setFitVideo(v === 'on')}
+                  options={[{ value: 'off', label: '关闭' }, { value: 'on', label: '开启（16:9 不裁切）' }]}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            )}
+            {refImage && (
+              <div>
+                <span style={labelStyle}>构图说明</span>
+                <Text type="secondary" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                  开启后会按 16:9 出图并保持参考图构图，可直接作为生视频首帧。
+                </Text>
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
@@ -627,6 +696,36 @@ export function ImageStudio(): ReactNode {
           </div>
         </div>
       ) : null}
+        <Modal
+          title="从「我的资料库」选择参考图"
+          open={pickerOpen}
+          onCancel={() => setPickerOpen(false)}
+          footer={null}
+          width={720}
+        >
+          {assets.length === 0 ? (
+            <Empty description="还没有图片资料，先去「AI 生图」生成一张，或直接上传文件" />
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, maxHeight: 420, overflowY: 'auto' }}>
+              {assets.map((a) => (
+                <div
+                  key={a.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setRefImage({ assetId: a.id, url: fileUrl(`/api/media/assets/${a.id}/file`) });
+                    setPickerOpen(false);
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && setPickerOpen(false)}
+                  style={{ cursor: 'pointer', border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 10, overflow: 'hidden' }}
+                >
+                  <img src={fileUrl(`/api/media/assets/${a.id}/file`)} alt={a.title} loading="lazy" style={{ width: '100%', height: 96, objectFit: 'cover', display: 'block' }} />
+                  <div style={{ padding: '6px 8px', fontSize: 12 }}>{a.title}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Modal>
     </div>
   );
 }

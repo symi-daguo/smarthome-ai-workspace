@@ -62,7 +62,6 @@ export const PRESET_CATEGORIES: Omit<CategoryDef, 'id'>[] = [
 const LEGACY: Record<string, string> = { security: 'camera' };
 
 let dict = new Map<string, CategoryDef>(PRESET_CATEGORIES.map((c) => [c.key, { ...c, id: c.key }]));
-let loaded = false;
 
 export async function loadCategoryDict(): Promise<void> {
   try {
@@ -70,13 +69,11 @@ export async function loadCategoryDict(): Promise<void> {
     if (rows.length) {
       dict = new Map(rows.map((c) => [c.key, c]));
     }
-    loaded = true;
   } catch {
     // 字典加载失败用预置兜底，不阻塞页面
   }
 }
 
-export const categoryDictLoaded = (): boolean => loaded;
 
 export const catDef = (key: string): CategoryDef | undefined => dict.get(LEGACY[key] ?? key);
 
@@ -95,6 +92,5 @@ export const categoryList = (): CategoryDef[] =>
 
 /** 自定义分类增删后强制刷新（返回新字典） */
 export const refreshCategoryDict = (): Promise<void> => {
-  loaded = false;
   return loadCategoryDict();
 };
