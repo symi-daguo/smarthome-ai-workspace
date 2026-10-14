@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
 import { TokenService } from '../src/billing/token.service.js';
@@ -679,6 +680,21 @@ async function main(): Promise<void> {
 
   const cleanupRes = await request<{ deleted: number; freedBytes: number }>(base, '/api/admin/storage/cleanup?beforeDays=3650', { ...authA, method: 'POST' });
   check('产物清理端点可用（0 天阈值不误删）', [200, 201].includes(cleanupRes.status) && typeof cleanupRes.body?.deleted === 'number');
+
+  // ---------- 前端种子数据护栏：智能体封面必须真实存在 ----------
+  // 背景（2026-10-14）：新增「本地推流大师」时封面文件漏建，界面上是一块纯色空白 +
+  // 一条 404。typecheck 与 smoke 都发现不了（封面是静态资源，不参与编译）。
+  // 这里直接查 public/images/agents/ 下每个种子智能体都有对应文件。
+  {
+    // 从 dist/test/ 运行时相对路径会错位，用 process.cwd()（= apps/api）作基准
+    const agentsSrc = readFileSync(join(process.cwd(), '../web/src/data/agents.ts'), 'utf8');
+    const covers = [...agentsSrc.matchAll(/cover:\s*'\/images\/agents\/([a-z0-9]+\.jpg)'/g)].map((m) => m[1]);
+    const missing = covers.filter((c) => !existsSync(join(process.cwd(), '../web/public/images/agents', c)));
+    check(
+      `智能体封面全部存在（检查 ${covers.length} 张${missing.length ? `，缺失：${missing.join(',')}` : ''}）`,
+      covers.length > 0 && missing.length === 0,
+    );
+  }
 
   // ---------- 接单工作台：CRUD + 状态机（不触发真实 LLM intake） ----------
   const orderCreate = await request<{ id: string; status: string }>(base, '/api/orders', {

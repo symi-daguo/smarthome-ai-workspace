@@ -24,7 +24,11 @@
 - **个人中心统一承载设置**（侧栏「设置」直达 /tokens，无独立弹窗）：资料与偏好（昵称 / 头像底色 / 主题亮暗跟随系统）+ 数据备份与存储治理（全库 JSON 备份导出 / 产物占用统计 / 过期未引用产物清理）
 - 亮色 / 暗色 / 跟随系统三态主题，**顶栏常驻切换**（额度胶囊旁），全站持久化；
   页面配色一律走 AntD 语义 token（`colorBgContainer` / `colorFillTertiary` / `colorBorder` 等），
-  **不允许写死 `#fff` / `#F5F5F7` 这类浅色值**——深色主题下会变成突兀的浅色块
+  **不允许写死 `#fff` / `#F5F5F7` 这类浅色值**——深色主题下会变成突兀的浅色块。
+  **判断口径**：压在**界面容器**上（卡片 / 面板 / 页面底 / 提示框）的颜色一律走 token；
+  压在**图片或画面之上**做标记的颜色（播放头、色温光晕、时间码胶囊）刻意写死并抽成具名常量 +
+  注明理由，因为它们明暗两套主题下都要醒目——否则下次审查会被当成漏改项再扫一遍。
+  0.1.52 按此口径全站扫了 18 条路由，结论见 [audit §6.5](./replica/audit-2026-10-13.md)
 
 ### 工作台（首页）
 - 居中欢迎区 + 大输入卡（附件 / 图生图 / 生视频 / 生方案功能 chip）+ 5 张快捷卡（方案 / 海报 / 视频 / 文案仿写 / 找智能体）
@@ -207,10 +211,10 @@ apps/
   web/    React 19 SPA：theme / layouts / pages / components(幻灯片渲染、任务球、页头) /
           lib（api、合成、PPTX 生成）/ store（鉴权与会话）/ data（智能体与方案主题预置）
 docker-compose.yml
-replica/  功能对标基线（recon.md、features.csv、自有实现截图 clone-screens/、布局比对 diffs/、参考站原始截图 screens/）
+replica/  功能对标基线（recon.md、features.csv、audit-*.md、full-parity-matrix.md）
 ```
 
-对标参考素材（含第三方品牌 UI）仅本地留存、不入库，遵循 clean-room 原则：只重建功能与交互模式，不取对方代码 / 素材 / 文案 / 商标。
+对标参考素材（含第三方品牌 UI）与比对截图（`replica/screens/`、`replica/diffs/`、`replica/clone-screens/`）仅本地留存、不入库（已在 `.gitignore`），遵循 clean-room 原则：只重建功能与交互模式，不取对方代码 / 素材 / 文案 / 商标。
 
 ## 开发规范
 

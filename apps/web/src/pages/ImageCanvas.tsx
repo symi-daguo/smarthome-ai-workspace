@@ -430,12 +430,12 @@ export function ImageCanvas(): ReactNode {
                       )}
 
                       {t.status === 'pending' ? (
-                        <div style={{ border: '1px dashed rgba(79,70,229,.35)', borderRadius: 12, padding: 32, textAlign: 'center', color: 'rgba(28,27,46,.55)' }}>
+                        <div style={{ border: '1px dashed rgba(79,70,229,.35)', borderRadius: 12, padding: 32, textAlign: 'center', color: token.colorTextSecondary }}>
                           <Spin size="small" style={{ marginRight: 8 }} />
                           正在出图，可继续补充描述或切换到别的对话
                         </div>
                       ) : t.status === 'failed' ? (
-                        <div style={{ border: '1px solid rgba(255,77,79,.35)', background: '#FFF2F0', borderRadius: 12, padding: 16, fontSize: 13 }}>
+                        <div style={{ border: `1px solid ${token.colorErrorBorder}`, background: token.colorErrorBg, borderRadius: 12, padding: 16, fontSize: 13 }}>
                           出图失败：{t.error ?? '未配置模型 Key'}
                           <Button size="small" style={{ marginLeft: 12 }} onClick={() => void regenerate(t)}>重试</Button>
                         </div>
@@ -447,8 +447,8 @@ export function ImageCanvas(): ReactNode {
                             onClick={() => setLightbox({ turnId: t.id, index: 0 })}
                             onKeyDown={(e) => e.key === 'Enter' && setLightbox({ turnId: t.id, index: 0 })}
                             style={{
-                              borderRadius: 14, overflow: 'hidden', border: '1px solid rgba(28,27,46,.08)', cursor: 'zoom-in',
-                              background: '#F7F7FA', maxWidth: 420,
+                              borderRadius: 14, overflow: 'hidden', border: `1px solid ${token.colorBorderSecondary}`, cursor: 'zoom-in',
+                              background: token.colorFillQuaternary, maxWidth: 420,
                             }}
                           >
                             <img src={fileUrl(t.variants[0].url)} alt={t.prompt} style={{ width: '100%', display: 'block' }} />

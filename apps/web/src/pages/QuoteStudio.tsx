@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons';
 import { api } from '../lib/api';
 import { compressImage } from '../lib/compress';
+import { downloadBlob } from '../lib/download';
 import { PageHeader } from '../components/PageHeader';
 import { catMeta } from '../lib/pointOverlay';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
@@ -67,15 +68,6 @@ function costPrice(p: Product): number {
 /** 行内对外单价：优先本次谈定的逐项覆盖价，否则按口径取产品标准价 */
 function lineSellPrice(l: Line, mode: PriceMode): number {
   return l.unitPrice ?? sellPrice(l.product, mode);
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 /** 导出单元格里的数字：不带货币符号与千分位，方便在 Excel/WPS 里直接求和 */

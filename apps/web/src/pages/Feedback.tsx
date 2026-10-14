@@ -211,7 +211,7 @@ export function Feedback(): ReactNode {
                       {t.detail && <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{t.detail}</Paragraph>}
 
                       {t.reply && (
-                        <Card size="small" style={{ background: '#F6FFFA', borderColor: '#B7EB8F' }} styles={{ body: { padding: 10 } }}>
+                        <Card size="small" style={{ background: token.colorSuccessBg, borderColor: token.colorSuccessBorder }} styles={{ body: { padding: 10 } }}>
                           <Text type="secondary" style={{ fontSize: 12 }}>官方回复{t.repliedBy ? `（${t.repliedBy}）` : ''}</Text>
                           <Paragraph style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{t.reply}</Paragraph>
                         </Card>

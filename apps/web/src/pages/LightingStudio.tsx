@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { App as AntApp, Button, Card, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Slider, Space, Steps, Switch, Tag, Tooltip, Typography, Upload, theme } from 'antd';
+import { Alert, App as AntApp, Button, Card, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Slider, Space, Steps, Switch, Tag, Tooltip, Typography, Upload, theme } from 'antd';
 import { InboxOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { api, fileUrl } from '../lib/api';
+import { downloadCsv } from '../lib/download';
 import { compressImage } from '../lib/compress';
 import { PageHeader } from '../components/PageHeader';
-import { pageContainerStyle } from '../theme/tokens';
+import { ACCENT_TEAL, fillHeightContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
 
@@ -34,6 +35,20 @@ interface Fixture {
   /** 常暗：不参与时间轴，始终保持最低亮度 */
   alwaysDim: boolean;
   order: number;
+  /**
+   * 电气回路归属（2026-10-14 对齐参考站）：决定这盏灯由哪个开关/空开控制。
+   * 空串＝未归组。这是门店报价与施工图的真实需求——
+   * 「客厅有 12 盏灯」不能报一个数，得说清「客厅分 3 个回路，每路不超过多少盏」。
+   */
+  circuit: string;
+}
+
+/** 回路：一条回路 = 一组由同一开关控制的灯具 */
+interface Circuit {
+  id: string;
+  name: string;
+  /** 回路内灯具 id 顺序（与 fixtures 保持一致的显示顺序） */
+  fixtureIds: string[];
 }
 
 interface Keyframe {
@@ -75,6 +90,10 @@ const TYPE_SIZE: Record<FixtureType, number> = Object.fromEntries(TYPES.map((t) 
 
 const RATIOS = ['16:9', '9:16', '1:1'] as const;
 
+/** 播放头标记色：压在底图/轨道**画面之上**的标记，明暗两套主题下都要醒目，因此刻意不跟随主题 token。
+ *  （与「卡片背景」类硬编码色不同——那类必须走 token，否则深色主题下会出现白卡片。） */
+const PLAYHEAD_COLOR = '#EB2F96';
+
 /** 色温近似 RGB（够用的视觉映射，不追求物理精确） */
 function kelvinToRgb(k: number): string {
   const stops: [number, [number, number, number]][] = [
@@ -103,7 +122,7 @@ let seq = 0;
 const nextId = (): string => `fx${Date.now().toString(36)}${(seq += 1)}`;
 
 function makeFixture(type: FixtureType, x: number, y: number, order: number): Fixture {
-  return { id: nextId(), type, name: `${TYPE_LABEL[type]}${order}`, x, y, brightness: 80, colorTemp: 3500, alwaysDim: false, order };
+  return { id: nextId(), type, name: `${TYPE_LABEL[type]}${order}`, x, y, brightness: 80, colorTemp: 3500, alwaysDim: false, order, circuit: '' };
 }
 
 /** 在 t 时刻线性插值某灯具的亮度与色温（关键帧区间外取端点值） */
@@ -165,6 +184,10 @@ export function LightingStudio(): ReactNode {
   const [sceneId, setSceneId] = useState('');
   const [scenes, setScenes] = useState<SceneRow[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // —— 电气回路（2026-10-14 对齐参考站「灯具回路连线」）——
+  const [circuits, setCircuits] = useState<Circuit[]>([]);
+  /** 正在往当前回路里连续加灯（参考站的交互：连续选择灯具后确认） */
+  const [circuitPick, setCircuitPick] = useState(false);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string } | null>(null);
@@ -265,6 +288,34 @@ export function LightingStudio(): ReactNode {
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
     setFixtures((prev) => prev.map((f) => (f.id === id ? { ...f, x: Math.min(0.98, Math.max(0.02, x)), y: Math.min(0.98, Math.max(0.02, y)) } : f)));
+  };
+
+  // —— 电气回路逻辑（2026-10-14）——
+  /** 回路编辑模式下已连续选中的灯具 id（按选择顺序） */
+  const [circuitPickIds, setCircuitPickIds] = useState<string[]>([]);
+  const selectedFixtureIds = circuitPickIds;
+
+  /** 回路编辑模式下点画布上的灯 = 连续加灯（参考站的交互：连续选择灯具后确认） */
+  const pickForCircuit = (id: string): void => {
+    if (!circuitPick) return;
+    setCircuitPickIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSelected(id);
+  };
+
+  /** 确认回路：把本次连续选中的灯具归到一个新回路 */
+  const confirmCircuit = (): void => {
+    const ids = circuitPickIds.filter((id) => fixtures.some((f) => f.id === id));
+    if (ids.length === 0) {
+      message.warning('请先点选至少一盏灯');
+      return;
+    }
+    const no = circuits.length + 1;
+    const cid = `ck${Date.now().toString(36)}`;
+    setCircuits((prev) => [...prev, { id: cid, name: `回路 ${no}`, fixtureIds: ids }]);
+    setFixtures((prev) => prev.map((f) => (ids.includes(f.id) ? { ...f, circuit: cid } : f)));
+    setCircuitPickIds([]);
+    setCircuitPick(false);
+    message.success(`已建立回路 ${no}，含 ${ids.length} 盏灯`);
   };
 
   const patchFixture = (id: string, patch: Partial<Fixture>): void => {
@@ -413,7 +464,7 @@ export function LightingStudio(): ReactNode {
   const stepTitle = ['上传效果图', '编排灯具', '灯光时间轴', '出片'];
 
   return (
-    <div style={pageContainerStyle}>
+    <div style={fillHeightContainerStyle}>
       <PageHeader
         title="智能灯光场景演示"
         description="上传效果图，编排每盏灯并手工调整时间轴，生成灯光场景演示视频"
@@ -427,7 +478,9 @@ export function LightingStudio(): ReactNode {
         }
       />
 
-      <Card>
+      {/* 本页参与视口高度链：根容器 minHeight 撑满 → 卡片 flex:1 → 卡片体 flex:1 → 各步骤内容撑开。
+          缺任何一环都会退回「内容只占顶部一条、下方整片页面底色」。 */}
+      <Card style={{ flex: 1, display: 'flex', flexDirection: 'column' }} styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column' } }}>
         <Steps current={step} onChange={(v) => { if (v <= step || (v === 1 && imgSrc)) setStep(v); }} items={stepTitle.map((t) => ({ title: t }))} style={{ marginBottom: 20 }} />
 
         {step === 0 && (
@@ -471,7 +524,7 @@ export function LightingStudio(): ReactNode {
         )}
 
         {step === 1 && (
-          <div>
+          <div style={{ flex: stacked ? '0 0 auto' : 1, display: 'flex', flexDirection: 'column' }}>
             <Space wrap style={{ marginBottom: 12 }}>
               <Text>添加灯具：</Text>
               {TYPES.map((t) => (
@@ -493,24 +546,38 @@ export function LightingStudio(): ReactNode {
               <Text type="secondary">也可以直接在图上点选放置</Text>
             </Space>
 
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
+            {/* 编排区：舞台按画幅比例保持自身比例并垂直居中，右侧灯具面板与舞台同高、内部滚动。
+                面板高度由 stretch 对齐，不再用写死的 maxHeight:420 去截断——那是「卡片被切一半」的根因。 */}
+            <div
+              style={
+                stacked
+                  ? { display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }
+                  : { display: 'flex', gap: 16, flex: 1, minWidth: 0 }
+              }
+            >
+              <div
+                style={stacked ? { width: '100%', minHeight: 320, display: 'flex', alignItems: 'center' } : { flex: '1 1 520px', minWidth: 300, display: 'flex', alignItems: 'center', overflow: 'hidden' }}
+              >
+              {/* 舞台盒不设 maxHeight：一旦被压扁，底图 objectFit:contain 会在左右留边，
+                  灯具按盒宽归一化就会点到图外的黑边上。宁可让整页滚动也要保持盒子=画幅比例。 */}
               <div
                 ref={stageRef}
                 onPointerDown={onStagePointerDown}
                 onPointerMove={onStagePointerMove}
                 onPointerUp={() => { dragRef.current = null; }}
                 onPointerLeave={() => { dragRef.current = null; }}
-                style={{ position: 'relative', aspectRatio: aspect, maxHeight: 560, flex: '1 1 520px', minWidth: 300, background: token.colorFillTertiary, borderRadius: 12, overflow: 'hidden', cursor: 'crosshair' }}
+                style={{ position: 'relative', aspectRatio: aspect, width: '100%', background: token.colorFillTertiary, borderRadius: 12, overflow: 'hidden', cursor: 'crosshair' }}
               >
                 {imgSrc ? <img src={imgSrc} alt="参考效果图" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} /> : <Empty description="请先回到第一步上传效果图" />}
                 {fixtures.map((f) => {
                   const size = TYPE_SIZE[f.type];
                   const active = f.id === selected;
+                  const picked = circuitPickIds.includes(f.id);
                   return (
                     <div
                       key={f.id}
                       title={`${f.name}（${TYPE_LABEL[f.type]}）`}
-                      onPointerDown={(e) => { e.stopPropagation(); setSelected(f.id); dragRef.current = { id: f.id }; }}
+                      onPointerDown={(e) => { e.stopPropagation(); setSelected(f.id); if (circuitPick) pickForCircuit(f.id); dragRef.current = { id: f.id }; }}
                       style={{
                         position: 'absolute',
                         left: `${f.x * 100}%`,
@@ -521,8 +588,9 @@ export function LightingStudio(): ReactNode {
                         borderRadius: '50%',
                         background: `radial-gradient(circle, ${kelvinToRgb(f.colorTemp)}cc 0%, ${kelvinToRgb(f.colorTemp)}44 42%, transparent 72%)`,
                         opacity: 0.25 + (f.brightness / 100) * 0.75,
-                        border: `2px solid ${active ? '#5B5BF0' : 'rgba(0,0,0,.28)'}`,
-                        boxShadow: active ? '0 0 0 3px rgba(91,91,240,.22)' : 'none',
+                        // 回路编辑中：已选入当前回路的灯用青绿描边，与「当前选中」的紫色区分开
+                        border: `2px solid ${picked ? ACCENT_TEAL : active ? token.colorPrimary : token.colorBorder}`,
+                        boxShadow: picked ? '0 0 0 3px rgba(15,181,165,.25)' : active ? `0 0 0 3px ${token.colorPrimary}38` : 'none',
                         pointerEvents: 'none',
                         cursor: 'move',
                       }}
@@ -530,16 +598,29 @@ export function LightingStudio(): ReactNode {
                   );
                 })}
               </div>
+              </div>
 
-              <Card size="small" style={stacked ? { width: '100%' } : { flex: '0 0 300px', width: 300 }} title={`灯具列表（${fixtures.length}）`}>
+              <Card
+                size="small"
+                style={{
+                  ...(stacked ? { width: '100%' } : { flex: '0 0 300px', width: 300 }),
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+                styles={{ body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } }}
+                title={`灯具列表（${fixtures.length}）`}
+              >
                 {fixtures.length === 0 && <Text type="secondary">还没有灯具，点上方按钮或直接点图添加</Text>}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflowY: 'auto' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0, overflowY: 'auto' }}>
                   {[...fixtures].sort((a, b) => a.order - b.order).map((f, i, arr) => (
                     <Card
                       key={f.id}
                       size="small"
                       onClick={() => setSelected(f.id)}
-                      style={{ borderColor: f.id === selected ? '#5B5BF0' : undefined, background: f.id === selected ? '#F5F4FF' : undefined }}
+                      style={{
+                        borderColor: f.id === selected ? token.colorPrimary : undefined,
+                        background: f.id === selected ? token.colorPrimaryBg : undefined,
+                      }}
                       styles={{ body: { padding: 10 } }}
                     >
                       <Space direction="vertical" size={6} style={{ width: '100%' }}>
@@ -564,18 +645,48 @@ export function LightingStudio(): ReactNode {
                           <Text type="secondary" style={{ fontSize: 12 }}>常暗（不参与时间轴）</Text>
                           <Switch size="small" checked={f.alwaysDim} onChange={(v) => patchFixture(f.id, { alwaysDim: v })} />
                         </div>
-                        {!f.alwaysDim && (
-                          <>
-                            <div>
-                              <Text type="secondary" style={{ fontSize: 12 }}>亮度 {f.brightness}%</Text>
-                              <Slider min={0} max={100} value={f.brightness} onChange={(v) => patchFixture(f.id, { brightness: v })} style={{ margin: 0 }} />
-                            </div>
-                            <div>
-                              <Text type="secondary" style={{ fontSize: 12 }}>色温 {f.colorTemp}K</Text>
-                              <Slider min={2200} max={6500} step={100} value={f.colorTemp} onChange={(v) => patchFixture(f.id, { colorTemp: v })} style={{ margin: 0 }} />
-                            </div>
-                          </>
-                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>所属回路</Text>
+                          <Select
+                            size="small"
+                            value={f.circuit || undefined}
+                            placeholder="未归组"
+                            style={{ flex: 1 }}
+                            allowClear
+                            options={circuits.map((c) => ({ value: c.id, label: `${c.name}（${c.fixtureIds.length} 盏）` }))}
+                            onChange={(v) => patchFixture(f.id, { circuit: v ?? '' })}
+                          />
+                        </div>
+                        {/* 亮度/色温两条滑块**始终渲染**：常暗灯只把控件置灰并换文案。
+                            早先按 `!f.alwaysDim` 整块隐藏，导致同一列表里卡片高度 214/214/134 参差，
+                            视觉上「很丑且不规范」。控件恒定 → 卡片等高。 */}
+                        <div>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {f.alwaysDim ? '亮度（常暗锁定 8%）' : `亮度 ${f.brightness}%`}
+                          </Text>
+                          <Slider
+                            min={0}
+                            max={100}
+                            value={f.brightness}
+                            disabled={f.alwaysDim}
+                            onChange={(v) => patchFixture(f.id, { brightness: v })}
+                            style={{ margin: 0 }}
+                          />
+                        </div>
+                        <div>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {f.alwaysDim ? '色温（常暗时只作为基线）' : `色温 ${f.colorTemp}K`}
+                          </Text>
+                          <Slider
+                            min={2200}
+                            max={6500}
+                            step={100}
+                            value={f.colorTemp}
+                            disabled={f.alwaysDim}
+                            onChange={(v) => patchFixture(f.id, { colorTemp: v })}
+                            style={{ margin: 0 }}
+                          />
+                        </div>
                       </Space>
                     </Card>
                   ))}
@@ -591,7 +702,7 @@ export function LightingStudio(): ReactNode {
         )}
 
         {step === 2 && (
-          <div>
+          <div style={{ flex: stacked ? '0 0 auto' : 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             <Space wrap style={{ marginBottom: 12 }}>
               <Text>片长</Text>
               <InputNumber min={3} max={12} value={durationSec} onChange={(v) => setDurationSec(Number(v) || 6)} addonAfter="秒" style={{ width: 110 }} />
@@ -602,9 +713,15 @@ export function LightingStudio(): ReactNode {
               <Text type="secondary">在轨道上点击空白处添加关键帧，拖动圆点改时间，选中关键帧可调亮度与色温</Text>
             </Space>
 
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
-              <div style={stacked ? { width: '100%' } : { flex: '1 1 480px', minWidth: 320 }}>
-                <div style={{ position: 'relative', aspectRatio: aspect, maxHeight: 420, background: token.colorFillTertiary, borderRadius: 12, overflow: 'hidden' }}>
+            <div
+              style={
+                stacked
+                  ? { display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }
+                  : { display: 'flex', gap: 16, flex: 1, minWidth: 0, minHeight: 320 }
+              }
+            >
+              <div style={stacked ? { width: '100%', display: 'flex', alignItems: 'center' } : { flex: '1 1 480px', minWidth: 320, minHeight: 0, display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+                <div style={{ position: 'relative', aspectRatio: aspect, width: '100%', maxHeight: 420, background: token.colorFillTertiary, borderRadius: 12, overflow: 'hidden' }}>
                   {imgSrc ? <img src={imgSrc} alt="预览底图" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} /> : null}
                   {fixtures.map((f) => {
                     const s = sampleAt(tracks.find((x) => x.fixtureId === f.id), playhead, f);
@@ -634,7 +751,114 @@ export function LightingStudio(): ReactNode {
                 </div>
               </div>
 
-              <Card size="small" style={stacked ? { width: '100%' } : { flex: '0 0 280px', width: 280 }} title="关键帧">
+              {/* 电气回路：一条回路 = 一组由同一开关控制的灯具。
+                  这是报价与施工图的真实需求——「客厅 12 盏灯」不能报一个数，
+                  得说清分几个回路、每路多少盏。参考站在此基础上还画回路连线，
+                  我方先保证数据正确可导出，连线可视化留待后续（见 audit §6.4）。 */}
+              <Card
+                size="small"
+                style={{
+                  ...(stacked ? { width: '100%' } : { flex: '0 0 280px', width: 280 }),
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+                styles={{ body: { overflowY: 'auto', flex: 1, minHeight: 0 } }}
+                title={
+                  <Space size={6}>
+                    <span>电气回路（{circuits.length}）</span>
+                    {circuits.length === 0 && fixtures.length > 0 && (
+                      <Tag color={token.colorPrimary}>建议归组后再报价</Tag>
+                    )}
+                  </Space>
+                }
+              >
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <Space wrap size={6}>
+                    <Button
+                      size="small"
+                      type={circuitPick ? 'primary' : 'default'}
+                      disabled={fixtures.length === 0}
+                      onClick={() => setCircuitPick((v) => !v)}
+                    >
+                      {circuitPick ? '选灯中…点「完成回路」' : '新建回路'}
+                    </Button>
+                    <Button size="small" disabled={!circuitPick || selectedFixtureIds.length === 0} onClick={confirmCircuit}>
+                      完成回路（已选 {selectedFixtureIds.length}）
+                    </Button>
+                    <Button
+                      size="small"
+                      disabled={circuits.length === 0}
+                      onClick={() => {
+                        downloadCsv(
+                          [
+                            ['回路', '灯数', '灯具清单'],
+                            ...circuits.map((c) => [
+                              c.name,
+                              String(c.fixtureIds.length),
+                              fixtures.filter((f) => c.fixtureIds.includes(f.id)).map((f) => f.name).join(' / '),
+                            ]),
+                          ],
+                          `${title}-电气回路清单.csv`,
+                        );
+                        message.success('已导出回路清单');
+                      }}
+                    >
+                      导出回路清单
+                    </Button>
+                  </Space>
+                  {circuitPick && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ fontSize: 12 }}
+                      message={`连点 ${selectedFixtureIds.length} 盏灯后点「完成回路」。未归组的灯具不会被算进任何回路。`}
+                    />
+                  )}
+                  {circuits.length === 0 ? (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      还没有回路。放好灯后点「新建回路」，再连续点击要归到同一回路的灯具。
+                    </Text>
+                  ) : (
+                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      {circuits.map((c) => (
+                        <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Input
+                            size="small"
+                            value={c.name}
+                            style={{ flex: 1 }}
+                            onChange={(e) => setCircuits((prev) => prev.map((x) => (x.id === c.id ? { ...x, name: e.target.value } : x)))}
+                          />
+                          <Tag>{c.fixtureIds.length} 盏</Tag>
+                          <Button
+                            size="small"
+                            danger
+                            onClick={() => {
+                              setCircuits((prev) => prev.filter((x) => x.id !== c.id));
+                              setFixtures((prev) => prev.map((f) => (f.circuit === c.id ? { ...f, circuit: '' } : f)));
+                            }}
+                          >
+                            删
+                          </Button>
+                        </div>
+                      ))}
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        未归组：{fixtures.filter((f) => !f.circuit).length} 盏
+                      </Text>
+                    </Space>
+                  )}
+                </Space>
+              </Card>
+
+              <Card
+                size="small"
+                style={{
+                  ...(stacked ? { width: '100%' } : { flex: '0 0 280px', width: 280 }),
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+                styles={{ body: { overflowY: 'auto', flex: 1, minHeight: 0 } }}
+                title="关键帧"
+              >
                 {(() => {
                   const activeFixture = fixtures.find((f) => f.id === selected);
                   if (!activeFixture) return <Text type="secondary">先在左侧灯具列表里选中一盏灯</Text>;
@@ -648,7 +872,7 @@ export function LightingStudio(): ReactNode {
                       {kfs.map((k, i) => {
                         const near = Math.abs(k.t - playhead) < 0.06;
                         return (
-                          <Card key={`${k.t}-${i}`} size="small" onClick={() => setPlayhead(k.t)} style={{ borderColor: near ? '#5B5BF0' : undefined }} styles={{ body: { padding: 8 } }}>
+                          <Card key={`${k.t}-${i}`} size="small" onClick={() => setPlayhead(k.t)} style={{ borderColor: near ? token.colorPrimary : undefined }} styles={{ body: { padding: 8 } }}>
                             <Space direction="vertical" size={4} style={{ width: '100%' }}>
                               <Space size={6}>
                                 <Text style={{ fontSize: 12 }}>{(k.t * durationSec).toFixed(1)}s</Text>
@@ -686,7 +910,7 @@ export function LightingStudio(): ReactNode {
             </div>
 
             <Card size="small" title="灯光轨道时间轴" style={{ marginTop: 16 }}>
-              <div style={{ display: 'flex', fontSize: 12, color: '#8C8C8C', marginBottom: 4 }}>
+              <div style={{ display: 'flex', fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
                 {Array.from({ length: durationSec + 1 }, (_, i) => (
                   <span key={i} style={{ flex: 1, textAlign: i === 0 ? 'left' : 'center' }}>{i}s</span>
                 ))}
@@ -699,7 +923,7 @@ export function LightingStudio(): ReactNode {
                     <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                       <div
                         onClick={() => setSelected(f.id)}
-                        style={{ flex: '0 0 96px', fontSize: 12, cursor: 'pointer', color: f.id === selected ? '#5B5BF0' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        style={{ flex: '0 0 96px', fontSize: 12, cursor: 'pointer', color: f.id === selected ? token.colorPrimary : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       >
                         {f.name}{f.alwaysDim ? '（常暗）' : ''}
                       </div>
@@ -715,7 +939,7 @@ export function LightingStudio(): ReactNode {
                             <polyline
                               points={kfs.map((k) => `${k.t * 100},${28 - (k.brightness / 100) * 24}`).join(' ')}
                               fill="none"
-                              stroke="#5B5BF0"
+                              stroke={token.colorPrimary}
                               strokeWidth={2}
                             />
                           </svg>
@@ -732,8 +956,8 @@ export function LightingStudio(): ReactNode {
                               width: 12,
                               height: 12,
                               borderRadius: '50%',
-                              background: '#5B5BF0',
-                              border: '2px solid #fff',
+                              background: token.colorPrimary,
+                              border: `2px solid ${token.colorFillTertiary}`,
                               cursor: 'ew-resize',
                               pointerEvents: 'auto',
                             }}
@@ -744,7 +968,7 @@ export function LightingStudio(): ReactNode {
                   );
                 })}
                 <div style={{ position: 'absolute', left: 104, right: 0, top: 0, bottom: 0, pointerEvents: 'none' }}>
-                  <div style={{ position: 'absolute', left: `${playhead * 100}%`, top: 0, bottom: 0, width: 2, background: '#EB2F96' }} />
+                  <div style={{ position: 'absolute', left: `${playhead * 100}%`, top: 0, bottom: 0, width: 2, background: PLAYHEAD_COLOR }} />
                 </div>
               </div>
             </Card>
@@ -764,7 +988,7 @@ export function LightingStudio(): ReactNode {
                   将把已编排的 {fixtures.length} 盏灯与 {tracks.reduce((s, t) => s + t.keyframes.length, 0)} 个关键帧翻译成画面描述，
                   以参考效果图为首帧生成 {durationSec} 秒灯光场景视频。预览与出片使用同一份数据。
                 </Text>
-                <Card size="small" styles={{ body: { padding: 12, background: '#FAFAFC', fontSize: 12, lineHeight: 1.8 } }}>
+                <Card size="small" styles={{ body: { padding: 12, background: token.colorFillQuaternary, fontSize: 12, lineHeight: 1.8 } }}>
                   {buildVideoPrompt(fixtures, timeline)}
                 </Card>
                 <Space>

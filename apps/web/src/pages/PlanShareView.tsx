@@ -1,4 +1,4 @@
-import { Typography } from 'antd';
+import { Typography, theme } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -25,6 +25,7 @@ interface SharePlan {
 /** 客户分享页：/share/plan/:token，无需登录微信直开；16:9 幻灯片画布逐页呈现（讲解稿不显示） */
 export function PlanShareView(): ReactNode {
   const { token } = useParams<{ token: string }>();
+  const { token: tk } = theme.useToken();
   const [plan, setPlan] = useState<SharePlan | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,14 +38,14 @@ export function PlanShareView(): ReactNode {
 
   if (error) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F7F8F9' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: tk.colorBgLayout }}>
         <Text type="secondary">{error}</Text>
       </div>
     );
   }
   if (!plan) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F7F8F9' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: tk.colorBgLayout }}>
         <Text type="secondary">方案加载中…</Text>
       </div>
     );
