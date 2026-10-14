@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { App as AntApp, Button, Card, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Slider, Space, Steps, Switch, Tag, Tooltip, Typography, Upload } from 'antd';
+import { App as AntApp, Button, Card, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Slider, Space, Steps, Switch, Tag, Tooltip, Typography, Upload, theme } from 'antd';
 import { InboxOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { api, fileUrl } from '../lib/api';
 import { compressImage } from '../lib/compress';
@@ -144,6 +144,7 @@ function buildVideoPrompt(fixtures: Fixture[], timeline: Timeline): string {
 
 export function LightingStudio(): ReactNode {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   // 窄屏（平板竖屏 / 手机）把并排的编辑面板改为上下堆叠
   const screens = Grid.useBreakpoint();
   const stacked = !(screens.lg ?? false);
@@ -492,14 +493,14 @@ export function LightingStudio(): ReactNode {
               <Text type="secondary">也可以直接在图上点选放置</Text>
             </Space>
 
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
               <div
                 ref={stageRef}
                 onPointerDown={onStagePointerDown}
                 onPointerMove={onStagePointerMove}
                 onPointerUp={() => { dragRef.current = null; }}
                 onPointerLeave={() => { dragRef.current = null; }}
-                style={{ position: 'relative', aspectRatio: aspect, maxHeight: 560, flex: '1 1 520px', minWidth: 300, background: '#F5F5F7', borderRadius: 12, overflow: 'hidden', cursor: 'crosshair' }}
+                style={{ position: 'relative', aspectRatio: aspect, maxHeight: 560, flex: '1 1 520px', minWidth: 300, background: token.colorFillTertiary, borderRadius: 12, overflow: 'hidden', cursor: 'crosshair' }}
               >
                 {imgSrc ? <img src={imgSrc} alt="参考效果图" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} /> : <Empty description="请先回到第一步上传效果图" />}
                 {fixtures.map((f) => {
@@ -601,9 +602,9 @@ export function LightingStudio(): ReactNode {
               <Text type="secondary">在轨道上点击空白处添加关键帧，拖动圆点改时间，选中关键帧可调亮度与色温</Text>
             </Space>
 
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
               <div style={stacked ? { width: '100%' } : { flex: '1 1 480px', minWidth: 320 }}>
-                <div style={{ position: 'relative', aspectRatio: aspect, maxHeight: 420, background: '#F5F5F7', borderRadius: 12, overflow: 'hidden' }}>
+                <div style={{ position: 'relative', aspectRatio: aspect, maxHeight: 420, background: token.colorFillTertiary, borderRadius: 12, overflow: 'hidden' }}>
                   {imgSrc ? <img src={imgSrc} alt="预览底图" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} /> : null}
                   {fixtures.map((f) => {
                     const s = sampleAt(tracks.find((x) => x.fixtureId === f.id), playhead, f);
@@ -707,7 +708,7 @@ export function LightingStudio(): ReactNode {
                         onPointerMove={(e) => { if (kfDragRef.current) onTimelinePointerDown(e, f.id); }}
                         onPointerUp={() => { kfDragRef.current = null; }}
                         onPointerLeave={() => { kfDragRef.current = null; }}
-                        style={{ position: 'relative', flex: 1, height: 30, background: '#F5F5F7', borderRadius: 6, border: f.id === selected ? '1px solid #5B5BF0' : '1px solid #E8E8ED', cursor: 'crosshair' }}
+                        style={{ position: 'relative', flex: 1, height: 30, background: token.colorFillTertiary, borderRadius: 6, border: `1px solid ${f.id === selected ? token.colorPrimary : token.colorBorder}`, cursor: 'crosshair' }}
                       >
                         {kfs.length > 1 && (
                           <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>

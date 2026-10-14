@@ -1,7 +1,9 @@
 import {
   AuditOutlined,
   BookOutlined,
+  BulbFilled,
   BulbOutlined,
+  MoonFilled,
   CheckOutlined,
   FilePptOutlined,
   FileSearchOutlined,
@@ -34,6 +36,7 @@ import {
   Menu,
   Modal,
   Popconfirm,
+  Segmented,
   Space,
   Typography,
   theme,
@@ -610,6 +613,19 @@ export function MainLayout(): ReactNode {
           <div style={{ flex: 1 }} />
 
           <TokenPill />
+          {/* 主题切换：常驻顶栏，不再只藏在头像菜单里。
+              明暗两套的卡片配色由 AntD 算法派生，这里只提供入口与当前态指示。 */}
+          <Segmented
+            size="small"
+            value={mode}
+            onChange={(v) => setMode(v as ThemeMode)}
+            options={[
+              { label: '跟随', value: 'auto', icon: <BulbOutlined /> },
+              { label: '浅色', value: 'light', icon: <BulbFilled /> },
+              { label: '深色', value: 'dark', icon: <MoonFilled /> },
+            ]}
+            style={{ marginRight: 8 }}
+          />
           <Button
             size="small"
             onClick={() => setGuideOpen(true)}

@@ -15,7 +15,7 @@ import { api, fileUrl } from '../lib/api';
 import { RegionSelector, type RegionSelection } from '../components/RegionSelector';
 import { compressImage } from '../lib/compress';
 import { PageHeader } from '../components/PageHeader';
-import { pageContainerStyle } from '../theme/tokens';
+import { fillHeightContainerStyle } from '../theme/tokens';
 
 const { Text, Paragraph } = Typography;
 
@@ -70,6 +70,7 @@ const RATIOS = [
 
 export function ImageCanvas(): ReactNode {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState('');
@@ -356,7 +357,7 @@ export function ImageCanvas(): ReactNode {
   const lbVariant = lbTurn?.variants[lightbox?.index ?? 0];
 
   return (
-    <div style={pageContainerStyle}>
+    <div style={fillHeightContainerStyle}>
       <PageHeader
         title="AI 画布"
         description="像聊天一样连续出图：每轮可出多个变体，基于任一历史图派生新分支，随时切回"
@@ -373,11 +374,26 @@ export function ImageCanvas(): ReactNode {
       <div
         style={{
           display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap',
-          background: '#fff', border: '1px solid rgba(28,27,46,.08)', borderRadius: 16, padding: 16,
+          // flex:1 + minWidth:0：缺了它这个 flex 行会退化成内容宽度，宽屏右侧整片留白
+          flex: 1, minWidth: 0,
+          // flex:1 吃掉 fillHeightContainerStyle 的剩余高度；对话区撑满，卡片底边落在视口内，
+          // 不会出现「卡片只有内容高、下面一大片空」
+          background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: 16, padding: 16,
         }}
       >
-        {/* 对话流 */}
-        <div ref={listRef} style={{ flex: '1 1 520px', minWidth: 300, maxHeight: '68vh', overflowY: 'auto', paddingRight: 4 }}>
+        {/* 对话流：minHeight 兜住空态，flex:1 让长对话滚动而不是把卡片撑出屏。
+            空态（无任何轮次）时内容垂直居中，否则会贴在卡片顶部、下方空一大片；
+            有内容后回到顶部对齐——消息流必须从上往下读，不能居中。 */}
+        <div
+          ref={listRef}
+          style={{
+            flex: '1 1 520px', minWidth: 300, minHeight: 360,
+            maxHeight: 'calc(100vh - 220px)', overflowY: 'auto', paddingRight: 4,
+            display: 'flex', flexDirection: 'column',
+            justifyContent: path.length ? 'flex-start' : 'center',
+          }}
+        >
           {loading && !turns.length ? (
             <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div>
           ) : !path.length ? (

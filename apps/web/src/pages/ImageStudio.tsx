@@ -459,7 +459,7 @@ export function ImageStudio(): ReactNode {
         当前流程：{wf.name} · {wf.description}
       </Text>
 
-      <div style={{ display: 'flex', gap: 20, marginTop: 4, alignItems: 'flex-start', flexWrap: isWide ? 'nowrap' : 'wrap' }}>
+      <div style={{ display: 'flex', gap: 20, marginTop: 4, alignItems: 'flex-start', flexWrap: isWide ? 'nowrap' : 'wrap', flex: 1, minWidth: 0 }}>
         {/* 左：表单 */}
         <div style={{ flex: '1 1 46%', minWidth: 320 }}>
           {/* ① 参考图：真实上传 + 反推提示词 */}

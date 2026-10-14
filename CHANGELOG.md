@@ -2,6 +2,50 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.50] - 2026-10-14
+
+### Fix（用户实测反馈：右上角没有主题切换入口、卡片配色不跟随主题、AI 画布一片白、下方留白太多）
+
+昨天的明暗主题「实测通过」是错的——我当时用 DOM 看到侧栏 `background: rgb(255,255,255)`
+就下了结论，但**没有扫全站的硬编码颜色**，也没有真的逐页看。本轮按用户反馈实测后抓到：
+
+- **顶栏主题切换入口缺失**：切换只在头像下拉菜单里，等于没有。已在额度胶囊旁常驻
+  三态分段控件（跟随系统 / 浅色 / 深色），带图标与当前态指示
+- **5 处硬编码浅色，深色主题下是突兀的浅色块**：
+  - `ImageCanvas.tsx` 主对话区卡片 `background: '#fff'` + `border: rgba(28,27,46,.08)`
+    —— 实测深色下仍是 `rgb(255,255,255)` 纯白卡片（已改为 `rgb(20,20,20)` / `rgb(48,48,48)`）
+  - `LightingStudio.tsx` 三处舞台/预览/时间轴底 `#F5F5F7`，选中框 `#5B5BF0`、边框 `#E8E8ED`
+  - `RegionSelector.tsx` 圈选画布底 `#f5f5f7`
+  - `DeviceLayout.tsx` 产品缩略图圆点底 `#fff`
+  全部改为 `token.colorBgContainer` / `token.colorFillTertiary` / `token.colorBorder` 等语义 token
+- **画布页下方大片留白**：页面根容器无 `minHeight`，内容只占顶部约 1/4
+- **5 处双栏容器缺 `flex: 1`**：`ImageStudio` / `Feedback` / `LightingStudio`×2 / `ImageCanvas`
+  （昨天只修了 4 个文件里的，这次代码层全量扫了一遍 `display:flex` + `gap` + `alignItems:flex-start` 的组合）
+- **空态内容贴顶**：卡片撑满后，空态提示仍贴在顶部、下方空 1200px。
+  改为对话流容器 `flex-direction: column` + 空态时 `justify-content: center`，
+  有内容后回到 `flex-start`（消息流必须从上往下读，不能居中）
+
+### 踩坑与自我纠错：全局 flex 差点换来三个页面破版
+
+修留白时先给**全局** `pageContainerStyle` 加了 `minHeight` + `display: flex; flexDirection: column`，
+本以为一劳永逸。部署后立刻发现**报价页产品库被压成空壳**——标题在、21 个产品全没了。
+原因：全局 flex column 下各页面根节点默认 `flex-shrink: 1`，在 minHeight 约束下被压扁。
+
+已回退全局改动，改为新增 `fillHeightContainerStyle` 供需要撑满视口高度的页面单独使用
+（当前只有 AI 画布），并在 `tokens.ts` 注释里写明**为什么不能放在全局**。
+
+> 教训：撑满视口高度是少数「对话流型」页面的需求，不是全站需求。
+> 全局兜底看起来更省事，实际是把一个页面的诉求强加给了所有页面。
+
+### Test
+
+- smoke **237/237** 全绿；typecheck / build 全绿
+- 部署一致性核对：容器镜像 ID == 最新镜像 ID
+
+> 未完成：参考站逐板块比对。本轮参考站会话已掉登录（`platform.gougezn.com/#/space`
+> 返回「尚未登录」），需要重新登录后才能比对百宝箱内的 WiFi 热力图、灯光大师、定制智能体等
+> 昨天未核完的板块。这部分如实标注为**未完成**，不宣称已核对。
+
 ## [0.1.49] - 2026-10-13
 
 ### Feat（接单「边聊边记」结构化采集补齐 —— 全量界面核对后发现的真实缺口）

@@ -141,7 +141,7 @@ export function Feedback(): ReactNode {
         extra={<Button onClick={() => void load()} loading={loading}>刷新</Button>}
       />
 
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
         <Card title="提交反馈" style={stacked ? { width: '100%' } : { flex: '0 0 380px', width: 380 }}>
           <Form layout="vertical" onFinish={(v) => void submit(v)} initialValues={{ category: 'bug' }}>
             <Form.Item name="category" label="类型" rules={[{ required: true, message: '请选择类型' }]}>

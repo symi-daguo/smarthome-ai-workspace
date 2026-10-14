@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { App as AntApp, Button, Card, Empty, Grid, Input, InputNumber, Segmented, Slider, Space, Spin, Switch, Tag, Tooltip, Typography, Upload } from 'antd';
+import { App as AntApp, Button, Card, Empty, Grid, Input, InputNumber, Segmented, Slider, Space, Spin, Switch, Tag, Tooltip, Typography, Upload, theme } from 'antd';
 import { api, fileUrl } from '../lib/api';
 import { loadCategoryDict } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
@@ -120,6 +120,7 @@ function exportBomCsv(points: LayoutPoint[], products: Product[], title: string)
 
 export function DeviceLayout(): ReactNode {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const planId = params.get('planId') ?? '';
@@ -621,7 +622,7 @@ export function DeviceLayout(): ReactNode {
                           src={fileUrl(p.iconUrl)}
                           alt={p.name}
                           draggable={false}
-                          style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', objectFit: 'cover', background: '#fff', border: `2px solid ${m.color}`, boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'block' }}
+                          style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', objectFit: 'cover', background: token.colorBgContainer, border: `2px solid ${m.color}`, boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'block' }}
                         />
                       ) : (
                         <div style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', background: m.color, border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

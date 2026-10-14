@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { App as AntApp, Button, Modal, Space, Tag, Typography } from 'antd';
+import { App as AntApp, Button, Modal, Space, Tag, Typography, theme } from 'antd';
 import { HighlightOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
@@ -34,6 +34,7 @@ interface Props {
  */
 export function RegionSelector({ open, imageUrl, onCancel, onConfirm }: Props): ReactNode {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [drawing, setDrawing] = useState(false);
   const [hasMarks, setHasMarks] = useState(false);
@@ -182,7 +183,7 @@ export function RegionSelector({ open, imageUrl, onCancel, onConfirm }: Props): 
           <HighlightOutlined style={{ marginInlineEnd: 4 }} />
           {hasMarks ? '已圈选，可提交' : '尚未圈选'}
         </Tag>
-        <div style={{ position: 'relative', background: '#f5f5f7', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ position: 'relative', background: token.colorFillTertiary, borderRadius: 12, overflow: 'hidden' }}>
           <canvas
             ref={canvasRef}
             onPointerDown={onDown}
