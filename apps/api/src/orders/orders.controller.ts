@@ -29,55 +29,55 @@ import {
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:read')
   @Get()
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.orders.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:read')
   @Post('intake')
   intake(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Body(new ZodValidationPipe(intakeSchema)) dto: IntakeDto) {
     return this.orders.intake(user.activeTenantId as string, user.id, dto.rawInput);
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:write')
   @Post()
   create(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Body(new ZodValidationPipe(createOrderSchema)) dto: CreateOrderDto) {
     return this.orders.create(user.activeTenantId as string, user.id, dto);
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:write')
   @Get(':id')
   detail(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.orders.detail(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:read')
   @Patch(':id')
   update(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string, @Body(new ZodValidationPipe(updateOrderSchema)) dto: UpdateOrderDto) {
     return this.orders.update(user.activeTenantId as string, id, dto);
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:write')
   @Patch(':id/status')
   changeStatus(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string, @Body(new ZodValidationPipe(orderStatusSchema)) dto: OrderStatusDto) {
     return this.orders.changeStatus(user.activeTenantId as string, id, dto.status, { lostReason: dto.lostReason, planId: dto.planId });
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:write')
   @Post(':id/notes')
   addNote(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string, @Body(new ZodValidationPipe(addNoteSchema)) dto: AddNoteDto) {
     return this.orders.addNote(user.activeTenantId as string, user.id, id, dto.content);
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:write')
   @Post(':id/followup')
   followup(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.orders.followupAdvice(user.activeTenantId as string, user.id, id);
   }
 
-  @RequirePermissions('order:manage')
+  @RequirePermissions('order:write')
   @Delete(':id')
   remove(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.orders.remove(user.activeTenantId as string, id);

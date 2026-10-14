@@ -11,7 +11,7 @@ import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
-import { PERMISSIONS } from '../src/rbac/permissions.js';
+import { PERMISSIONS, WRITE_IMPLIES_READ } from '../src/rbac/permissions.js';
 
 const MANIFEST_KEYS = MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
 
@@ -890,7 +890,7 @@ async function main(): Promise<void> {
   const viewerOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
   check('viewer 访问接单被拒（403）', viewerOrders.status === 403);
 
-  // tenant_admin 默认可访问接单（order:manage）
+  // tenant_admin 默认可访问接单（order:write）
   await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: (await prisma.role.findUniqueOrThrow({ where: { key: 'tenant_admin' } })).id } });
   const taOrders = await request(base, '/api/orders', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
   check('tenant_admin 可访问接单（200）', taOrders.status === 200);
@@ -1605,7 +1605,7 @@ async function main(): Promise<void> {
     check('API Key 可直接作为 Bearer 访问接口', viaKey.status === 200 && viaKey.body.id === svc.body.id);
 
     // 用「发 Key」这条来试 RBAC：它要 tenant:member:manage，viewer 没有。
-    // 之前拿 POST /api/feedback 试，那条只要 cs:manage 而 viewer 恰好有 → 断言口径本身就错了
+    // 之前拿 POST /api/feedback 试，那条只要 cs:write 而 viewer 恰好有 → 断言口径本身就错了
     const denied = await request<{ message?: string }>(base, '/api/agent/keys', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key.body.token}` },
@@ -1871,7 +1871,7 @@ async function main(): Promise<void> {
     // 想造一个含这项的角色塞给自己 —— 必须被 service 层的防提权守卫挡住
     const escalate = await request<{ message?: string }>(base, '/api/team/roles', {
       method: 'POST', ...authA,
-      body: JSON.stringify({ name: '越权角色', permissions: ['platform:tenant:manage', 'quote:manage'] }),
+      body: JSON.stringify({ name: '越权角色', permissions: ['platform:tenant:manage', 'quote:write'] }),
     });
     check(
       '有建角色资格也不能授予自己没有的权限（防提权）',
@@ -1880,7 +1880,7 @@ async function main(): Promise<void> {
     // 管理员可以建自定义角色
     const custom = await request<{ id: string; name: string; permissions: string[] }>(base, '/api/team/roles', {
       method: 'POST', ...authA,
-      body: JSON.stringify({ name: '冒烟自定义岗', description: '由冒烟测试创建', permissions: ['quote:manage', 'knowledge:read'] }),
+      body: JSON.stringify({ name: '冒烟自定义岗', description: '由冒烟测试创建', permissions: ['quote:write', 'knowledge:read'] }),
     });
     check('管理员可勾权限创建自定义角色', custom.status === 201 && (custom.body?.permissions?.length ?? 0) === 2);
 
@@ -1987,10 +1987,10 @@ async function main(): Promise<void> {
     );
 
     // ④ 清单承诺与守卫实际行为一致：挑几条实际打一下，越权必须真的是 403
-    // 只读成员只有 knowledge:read 与 cs:manage。抽查三条：有权限的能进、没权限的进不去。
+    // 只读成员只有 knowledge:read 与 cs:write。抽查三条：有权限的能进、没权限的进不去。
     const realChecks: [string, boolean][] = [
-      ['GET /api/feedback (有 cs:manage)', (await request(base, '/api/feedback', roAuth)).status === 200],
-      ['GET /api/products (无 quote:manage)', (await request(base, '/api/products', roAuth)).status === 403],
+      ['GET /api/feedback (有 cs:write)', (await request(base, '/api/feedback', roAuth)).status === 200],
+      ['GET /api/products (无 quote:read)', (await request(base, '/api/products', roAuth)).status === 403],
       ['GET /api/admin/backup (无 platform:billing:manage)', (await request(base, '/api/admin/backup', roAuth)).status === 403],
     ];
     check(
@@ -2004,6 +2004,122 @@ async function main(): Promise<void> {
     const roMember = (await request<{ id: string; phone: string }[]>(base, '/api/team/members', authA)).body
       .find((m) => m.phone === phoneRO);
     if (roMember) await request(base, `/api/team/members/${roMember.id}`, { method: 'DELETE', ...authA });
+  }
+
+  // ---------- 权限二元切分（0.1.55）----------
+  {
+    // ① 读写二元：凡有 write 的资源都必须有 read，且 catalog 描述齐全
+    const permSet = new Set<string>(PERMISSIONS);
+    const writeActions = PERMISSIONS.filter((a) => WRITE_IMPLIES_READ[a]);
+    const orphanWrite = writeActions.filter((w) => !permSet.has(WRITE_IMPLIES_READ[w]));
+    check(
+      `权限已拆成读写二元（${writeActions.length} 组：${writeActions.join('、')}）`,
+      writeActions.length >= 5 && orphanWrite.length === 0,
+    );
+    check(
+      `权限里已不再残留笼统的 :manage（残留 ${PERMISSIONS.filter((a) => a.endsWith(':manage') && !['platform:tenant:manage', 'platform:billing:manage', 'tenant:member:manage', 'knowledge:manage'].includes(a)).length} 个）`,
+      PERMISSIONS.every((a) =>
+        a.endsWith(':manage')
+          ? ['platform:tenant:manage', 'platform:billing:manage', 'tenant:member:manage', 'knowledge:manage'].includes(a)
+          : true,
+      ),
+    );
+
+    // ② 「写隐含读」必须在权限判定层真的生效：只有 write 的账号应当能调 read 的端点
+    const phoneW = randomPhone();
+    const rid = await request<{ id: string }>(base, '/api/team/roles', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ name: '只给写的冒烟角色', permissions: ['quote:write'] }),
+    });
+    check('可创建只含写权限的自定义角色', rid.status === 201);
+    await request(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: phoneW, displayName: '写隐含读验证', roleKey: rid.body.id, password: 'Smoke12345' }),
+    });
+    const wLogin = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: phoneW, password: 'Smoke12345' }),
+    });
+    const wAuth = { headers: { Authorization: `Bearer ${wLogin.body.token}` } };
+    const wRead = await request(base, '/api/products', wAuth);
+    const wWrite = await request(base, '/api/products/mine', {
+      method: 'POST', headers: { Authorization: `Bearer ${wLogin.body.token}` },
+      body: JSON.stringify({ name: '写隐含读验证产品', category: 'light', unit: '台' }),
+    });
+    check(
+      '写权限隐含读权限（只有 quote:write 也能读产品库）',
+      wRead.status === 200 && wWrite.status === 201,
+    );
+    // 但反之不成立：只有 read 不能写
+    const phoneR = randomPhone();
+    const ridR = await request<{ id: string }>(base, '/api/team/roles', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ name: '只给读的冒烟角色', permissions: ['quote:read'] }),
+    });
+    await request(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: phoneR, displayName: '只读验证', roleKey: ridR.body.id, password: 'Smoke12345' }),
+    });
+    const rLogin = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: phoneR, password: 'Smoke12345' }),
+    });
+    const rAuth = { headers: { Authorization: `Bearer ${rLogin.body.token}` } };
+    check(
+      '读权限不含写权限（只有 quote:read 改不了产品库）',
+      (await request(base, '/api/products', rAuth)).status === 200
+      && (await request(base, '/api/products/mine', { method: 'POST', ...rAuth, body: JSON.stringify({ name: 'x', category: 'light' }) })).status === 403,
+    );
+
+    // ③ 财务这个真实诉求现在能被表达了：能看报价，不能改价
+    const finPhone = randomPhone();
+    await request(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: finPhone, displayName: '财务验证', roleKey: 'finance', password: 'Smoke12345' }),
+    });
+    const finLogin = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: finPhone, password: 'Smoke12345' }),
+    });
+    const finAuth = { headers: { Authorization: `Bearer ${finLogin.body.token}` } };
+    check(
+      '财务能看报价但不能改价（split 二元切分解决的真问题）',
+      (await request(base, '/api/products', finAuth)).status === 200
+      && (await request(base, '/api/products/mine', { method: 'POST', ...finAuth, body: JSON.stringify({ name: 'x', category: 'light' }) })).status === 403,
+    );
+
+    // 清理三个验证账号与其角色
+    for (const ph of [phoneW, phoneR, finPhone]) {
+      const m = (await request<{ id: string; phone: string }[]>(base, '/api/team/members', authA)).body.find((x) => x.phone === ph);
+      if (m) await request(base, `/api/team/members/${m.id}`, { method: 'DELETE', ...authA });
+    }
+    for (const roleId of [rid.body.id, ridR.body.id]) {
+      await request(base, `/api/team/roles/${roleId}`, { method: 'DELETE', ...authA });
+    }
+  }
+
+  // ---------- 机器账号可删除（0.1.55 补齐的缺口）----------
+  {
+    const svc = await request<{ id: string; name: string }>(base, '/api/agent/service-accounts', {
+      method: 'POST', ...authA, body: JSON.stringify({ name: '待删除的机器账号', roleKey: 'viewer' }),
+    });
+    const key = await request<{ id: string; token: string }>(base, '/api/agent/keys', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ name: 'k', serviceAccountId: svc.body.id }),
+    });
+    check('机器账号可签发 Key 并立即可用',
+      (await request(base, '/api/auth/me', { headers: { Authorization: `Bearer ${key.body.token}` } })).status === 200);
+
+    const del = await request(base, `/api/team/service-accounts/${svc.body.id}`, { method: 'DELETE', ...authA });
+    check('机器账号可删除', del.status === 200);
+    check(
+      '删除机器账号后其 Key 立即失效',
+      (await request(base, '/api/auth/me', { headers: { Authorization: `Bearer ${key.body.token}` } })).status === 401,
+    );
+    // 人类成员不能走这个口删，避免把人的全局账号连带删掉
+    const human = (await request<{ id: string }[]>(base, '/api/team/members', authA)).body[0];
+    const wrong = await request<{ message?: string }>(base, `/api/team/service-accounts/${human.id}`, { method: 'DELETE', ...authA });
+    check(
+      '人类成员不能走机器账号删除通道（避免连带删掉其全局账号）',
+      wrong.status === 400 && /NOT_A_SERVICE_ACCOUNT/.test(wrong.body.message ?? ''),
+    );
   }
 
   await app.close();

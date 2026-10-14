@@ -29,25 +29,25 @@ type TenantUser = AuthProfile & { activeTenantId?: string };
 export class CanvasController {
   constructor(private readonly canvas: CanvasService) {}
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get('conversations')
   list(@CurrentUser() user: TenantUser) {
     return this.canvas.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Post('conversations')
   create(@CurrentUser() user: TenantUser, @Body(new ZodValidationPipe(createConversationSchema)) dto: CreateConversationDto) {
     return this.canvas.create(user.activeTenantId as string, user.id, dto);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get('conversations/:id')
   detail(@CurrentUser() user: TenantUser, @Param('id') id: string) {
     return this.canvas.detail(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Patch('conversations/:id')
   rename(@CurrentUser() user: TenantUser, @Param('id') id: string, @Body(new ZodValidationPipe(updateConversationSchema)) dto: UpdateConversationDto) {
     return this.canvas.rename(user.activeTenantId as string, id, dto);
@@ -79,14 +79,14 @@ export class CanvasController {
     return this.canvas.removeTurn(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get('jobs/:id')
   job(@CurrentUser() user: TenantUser, @Param('id') id: string) {
     return this.canvas.job(user.activeTenantId as string, id);
   }
 
   /** 手动触发执行（正常流程由创建轮次时后台自动调用，此端点供补跑与排障） */
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Post('jobs/:id/run')
   runJob(@CurrentUser() user: TenantUser, @Param('id') id: string) {
     return this.canvas.runJob(user.activeTenantId as string, user.id, id);
@@ -96,14 +96,14 @@ export class CanvasController {
    * 任务中心列表：全租户的生成任务（不只 AI 画布）。
    * 任务球据此跨页面、跨刷新恢复红点，不再依赖前端内存态。
    */
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get('tasks')
   listTasks(@CurrentUser() user: TenantUser) {
     return this.canvas.listTasks(user.activeTenantId as string);
   }
 
   /** 清空已结束任务（进行中的必须保留，否则用户会以为任务丢了） */
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Delete('tasks/finished')
   clearTasks(@CurrentUser() user: TenantUser) {
     return this.canvas.clearFinishedTasks(user.activeTenantId as string);

@@ -18,13 +18,13 @@ import { createSceneSchema, updateSceneSchema, type CreateSceneDto, type UpdateS
 export class LightingController {
   constructor(private readonly lighting: LightingService) {}
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get()
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.lighting.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Post()
   create(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -33,13 +33,13 @@ export class LightingController {
     return this.lighting.create(user.activeTenantId as string, user.id, dto);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get(':id')
   detail(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.lighting.detail(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Patch(':id')
   update(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

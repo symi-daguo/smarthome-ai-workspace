@@ -2,6 +2,98 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.55] - 2026-10-14
+
+把 0.1.54 末尾自报的两个缺口做完。**没有引入任何新概念** —— 读/写二元切分是 Appwrite
+（BSD-3-Clause）既有的 `resource.read` / `resource.write` 模式，许可证上一版已核实。
+
+### Refactor（权限粒度从「笼统的 manage」拆成读写二元）
+
+#### 为什么要拆
+
+`quote:manage` 把「看」和「改」绑在一起，于是**最常见的诉求根本无法表达**：
+
+> 财务要能看报价金额和账本，但不能改价。
+
+在 `:manage` 之下只有两个坏选项 —— 要么给全权（财务能乱改价），要么干脆不给（财务看不到账）。
+这不是权限不够细的问题，是**模型里少了一个维度**。
+
+#### 改法
+
+15 个 action → **20 个**，凡有读写之分的资源一律成对：
+
+| 资源 | 改前 | 改后 |
+|---|---|---|
+| 报价 | `quote:manage` | `quote:read` / `quote:write` |
+| 接单 | `order:manage` | `order:read` / `order:write` |
+| 内容发布 | `publish:manage` | `publish:read` / `publish:write` |
+| 反馈 | `cs:manage` | `cs:read` / `cs:write` |
+| AI 生成与素材 | 只有 `content:generate` | `content:read` / `content:generate` |
+
+**刻意保留单动作不拆的**（拆了只会制造无意义的组合）：`platform:*` 平台级运维、
+`tenant:member:manage` / `tenant:role:assign` / `tenant:token:grant`（成员增删改、角色分配、
+额度发放本身就是一件事）、`content:extract`（不存在「只读地提取」）、`knowledge:manage`/`knowledge:read`（已是二元）。
+
+#### 配套规则：写隐含读
+
+二元切分必须配一条规则，否则角色定义要为每个资源重复写两遍 read，
+而且会出现「**能改却看不到**」这种反直觉的权限组合。
+
+规则写在 `AbilityFactory` 一处（`WRITE_IMPLIES_READ` 表在 `permissions.ts`）：
+拿到 `X:write` 自动获得 `X:read`。前端权限勾选器同步体现这条 —— 勾「做报价、改产品库」
+会自动带上「查看报价与产品库」，取消时若没有别的写者依赖才一并取消。
+
+#### 11 个角色的权限重新分配
+
+财务这个岗位现在真的「能看不能改」了：
+
+```
+财务 = tenant:billing:view, quote:read, knowledge:read, cs:write
+       ↑ 只有 read，没有 quote:write
+```
+
+端到端实测：财务读产品库 **200**、建产品 **403**、看额度账本 **200**、接单列表 **403**。
+只给 `quote:write` 的账号读产品库 **200**（写隐含读生效）。
+**在 0.1.54 之前，「财务能看价不能改」这个岗位是无法表达的。**
+
+### Fix（补上「机器账号删不掉」的缺口）
+
+0.1.54 末尾自报：机器账号只能新建、签发 Key、吊销 Key，**没法把账号本身删掉**，
+清理时要手工改库。本版补 `DELETE /api/team/service-accounts/:userId`：
+
+- **先吊销全部 Key 再删账号**。凭证校验只在 `JwtStrategy` 里按 id 查库，
+  账号行一删而 Key 行还留着，就成了一枚查不到归属的孤儿凭证
+- 确认该 User 没有其他租户关系后一并清掉，不留孤儿 User
+- **人类成员走这个口会被拒**（`NOT_A_SERVICE_ACCOUNT`）：人类成员必须用「移出团队」，
+  那条路径保留其全局账号 —— 走错口等于把人的账号连带删了
+
+端到端实测：删除前 Key 200 → 删除机器账号 200 → 删除后 Key **401**；
+对人类成员调用该口 → **400** `NOT_A_SERVICE_ACCOUNT`。
+
+### Fix（脚本改写时踩到的坑）
+
+**权限装饰器在 HTTP 装饰器的上方**（`@RequirePermissions` 然后 `@Get`），
+而我第一版脚本往上找动词，改了 8 个文件却漏掉一批 —— 表现为 typecheck 仍然报
+`'"quote:manage"' is not assignable`，才暴露出来。改成上下各找 4 行后一次过。
+
+> 这类「按模式批量改代码」的脚本，**改完必须让编译器过一遍**，
+> 否则漏改的文件会以「类型错误」的形式迟到，而且报错信息指向的是症状不是原因。
+
+### Test（新增 10 条，308/308）
+
+- 读写二元成对且无孤儿 write；权限里不残留笼统 `:manage`
+- **写权限隐含读**：只给 `quote:write` 的账号能读产品库（200）也能建（201）
+- **读不含写**：只给 `quote:read` 的账号能读（200）但不能建（403）
+- **财务能看报价不能改价**（split 真正解决的那个问题）
+- 机器账号可删除；删除后 Key 立即失效；人类成员走错口被拒（`NOT_A_SERVICE_ACCOUNT`）
+- 0.1.54 已有的**守卫静态一致性检查继续全绿** —— 133 条端点的权限声明与
+  `@RequirePermissions` 装饰器在这次大改后仍然逐条吻合，这是本次重构的安全网
+
+### 门禁
+
+`pnpm typecheck` ✓ / `pnpm build` ✓ / `pnpm smoke` **308/308**（新增 10 条）。
+部署核对：容器镜像 ID == 最新镜像 ID；界面实测「勾写自动带读」「管理租户置灰」均符合预期。
+
 ## [0.1.54] - 2026-10-14
 
 ### Feat（团队成员 + 11 个岗位角色模板 + 自定义角色 + 局域网使用）

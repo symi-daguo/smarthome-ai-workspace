@@ -74,17 +74,27 @@ const ROLE_TONE: Record<string, string> = {
   viewer: 'default',
 };
 
-/** 全部权限 action 及其人话说明。权限勾选器按业务分组展示，
- *  直接甩 15 个 `platform:billing:manage` 出去没人看得懂 */
+/** 权限 action 的人话说明与分组。
+ *
+ * 与后端 `rbac/permissions.ts` 的 PERMISSION_CATALOG 同源同口径：
+ * 读/写二元切分（Appwrite 的 resource.read / resource.write 模式），
+ * 且「写隐含读」由后端 AbilityFactory 统一处理，这里不重复表达。
+ * 界面上必须显示人话而不是 `quote:write` 这种串 —— 店长看不懂串，但看得懂「做报价、改产品库」。
+ */
 const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
-  { action: 'quote:manage', label: '报价与产品库', group: '报价' },
-  { action: 'order:manage', label: '接单与跟进', group: '报价' },
-  { action: 'publish:manage', label: '朋友圈/小红书等发布', group: '内容' },
-  { action: 'content:generate', label: '生成方案与出图', group: '内容' },
+  { action: 'quote:read', label: '查看报价与产品库', group: '报价' },
+  { action: 'quote:write', label: '做报价、改产品库', group: '报价' },
+  { action: 'order:read', label: '查看接单与客户跟进', group: '接单' },
+  { action: 'order:write', label: '建单、改状态、加跟进', group: '接单' },
+  { action: 'publish:read', label: '查看朋友圈/小红书素材', group: '内容' },
+  { action: 'publish:write', label: '生成并发布文案与图文', group: '内容' },
+  { action: 'content:read', label: '查看素材库与产物', group: '内容' },
+  { action: 'content:generate', label: '生成方案与出图、生视频', group: '内容' },
   { action: 'content:extract', label: '内容提取与解析', group: '内容' },
-  { action: 'knowledge:manage', label: '维护知识库', group: '知识库' },
   { action: 'knowledge:read', label: '查阅知识库', group: '知识库' },
-  { action: 'cs:manage', label: '提交与处理反馈', group: '协作' },
+  { action: 'knowledge:manage', label: '维护知识库', group: '知识库' },
+  { action: 'cs:read', label: '查看反馈与工单', group: '协作' },
+  { action: 'cs:write', label: '提交与处理反馈', group: '协作' },
   { action: 'tenant:member:manage', label: '管理团队成员', group: '团队' },
   { action: 'tenant:role:assign', label: '分配角色', group: '团队' },
   { action: 'tenant:token:grant', label: '发放额度', group: '团队' },
@@ -93,6 +103,15 @@ const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
   { action: 'platform:audit:view', label: '查看操作审计', group: '平台' },
   { action: 'platform:tenant:manage', label: '管理租户', group: '平台' },
 ];
+
+/** 写权限隐含读权限：勾了「写」不必再勾「读」，界面直接体现这条规则 */
+const WRITE_IMPLIES_READ: Record<string, string> = {
+  'quote:write': 'quote:read',
+  'order:write': 'order:read',
+  'publish:write': 'publish:read',
+  'content:generate': 'content:read',
+  'cs:write': 'cs:read',
+};
 
 const MAX_PERMISSIONS = PERMISSION_CATALOG.length;
 
@@ -152,6 +171,16 @@ export function TeamPage(): ReactNode {
       message.error(e instanceof Error ? e.message : '创建失败');
     } finally {
       setRoleSaving(false);
+    }
+  };
+
+  const removeSvc = async (userId: string): Promise<void> => {
+    try {
+      await api(`/api/team/service-accounts/${userId}`, { method: 'DELETE' });
+      message.success('机器账号已删除，其 API Key 同时失效');
+      await load();
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '删除失败');
     }
   };
 
@@ -435,8 +464,19 @@ export function TeamPage(): ReactNode {
               { title: '角色', dataIndex: 'roleKey', width: 130, render: (v: string) => <Tag color={ROLE_TONE[v] ?? 'default'}>{templates.find((t) => t.key === v)?.name ?? v}</Tag> },
               {
                 title: '操作',
-                width: 110,
-                render: (_, s) => <Button size="small" type="primary" icon={<KeyOutlined />} onClick={() => setKeyFor(s.id)}>签发 Key</Button>,
+                width: 190,
+                render: (_, s) => (
+                  <Space size={6}>
+                    <Button size="small" type="primary" icon={<KeyOutlined />} onClick={() => setKeyFor(s.id)}>签发 Key</Button>
+                    <Popconfirm
+                      title={`删除机器账号「${s.name}」？`}
+                      description="其全部 API Key 会同时吊销，立即失效"
+                      onConfirm={() => void removeSvc(s.id)}
+                    >
+                      <Button size="small" danger>删除</Button>
+                    </Popconfirm>
+                  </Space>
+                ),
               },
             ]}
           />
@@ -533,7 +573,23 @@ export function TeamPage(): ReactNode {
                     <Checkbox
                       checked={picked.includes(c.action)}
                       disabled={!allowed}
-                      onChange={(e) => setPicked((prev) => (e.target.checked ? [...prev, c.action] : prev.filter((x) => x !== c.action)))}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          // 勾「写」自动带上它隐含的「读」，与后端 AbilityFactory 的规则一致
+                          const implied = WRITE_IMPLIES_READ[c.action];
+                          setPicked((prev) => (implied && !prev.includes(implied) ? [...prev, c.action, implied] : [...prev, c.action]));
+                        } else {
+                          setPicked((prev) => {
+                            const next = prev.filter((x) => x !== c.action);
+                            // 取消「写」时，只有在没有别的写权限依赖它的情况下才一并取消「读」
+                            const implied = WRITE_IMPLIES_READ[c.action];
+                            const stillNeeded = implied
+                              ? Object.entries(WRITE_IMPLIES_READ).some(([w, r]) => r === implied && next.includes(w))
+                              : false;
+                            return implied && !stillNeeded ? next.filter((x) => x !== implied) : next;
+                          });
+                        }
+                      }}
                     >
                       {c.label}
                     </Checkbox>

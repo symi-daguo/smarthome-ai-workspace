@@ -99,4 +99,10 @@ export class TeamController {
   serviceAccounts(@CurrentUser() user: AuthProfile): Promise<unknown> {
     return this.team.serviceAccounts(user.activeTenantId as string);
   }
+
+  /** 删除机器账号：连带吊销其全部 API Key */
+  @Delete('service-accounts/:userId')
+  removeServiceAccount(@CurrentUser() user: AuthProfile, @Param('userId') userId: string): Promise<unknown> {
+    return this.team.removeServiceAccount(user.activeTenantId as string, userId);
+  }
 }

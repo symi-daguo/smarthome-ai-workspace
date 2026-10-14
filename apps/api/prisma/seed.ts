@@ -30,78 +30,79 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
       // 模型配置中心默认对租户管理员开放（会员机制保留，权限不锁死）
       'platform:billing:manage',
       'platform:audit:view',
-      'content:generate',
-      'content:extract',
-      'knowledge:manage',
-      'knowledge:read',
-      'order:manage',
-      'quote:manage',
-      'publish:manage',
-      'cs:manage',
+      'quote:read', 'quote:write',
+      'order:read', 'order:write',
+      'publish:read', 'publish:write',
+      'content:read', 'content:generate', 'content:extract',
+      'knowledge:read', 'knowledge:manage',
+      'cs:read', 'cs:write',
     ],
     description: '本团队全部操作权：报价、接单、方案、成员管理、模型配置、数据备份',
   },
   // —— 以下按门店/家装公司的真实岗位划分 ——
   // 每个岗位只拿自己每天真正要用的动作，权限越窄误操作面越小。
+  // 「只看不能改」能表达的诉求（财务看账、设计看方案）现在真的能表达了。
   {
     key: 'sales',
     name: '销售顾问',
     scope: 'TENANT',
-    permissions: ['order:manage', 'quote:manage', 'content:extract', 'knowledge:read', 'cs:manage'],
+    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'content:extract', 'knowledge:read', 'cs:write'],
     description: '接待客户、报价、出报价单；不能改团队设置，也看不到模型配置',
   },
   {
     key: 'designer',
     name: '设计师',
     scope: 'TENANT',
-    permissions: ['content:generate', 'content:extract', 'knowledge:manage', 'knowledge:read', 'publish:manage', 'cs:manage'],
+    permissions: ['content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'publish:read', 'publish:write', 'cs:write'],
     description: '做方案与出图、渲染户型图、维护知识库；不碰客户报价与接单',
   },
   {
     key: 'delivery',
     name: '施工交付',
     scope: 'TENANT',
-    permissions: ['order:manage', 'content:generate', 'content:extract', 'knowledge:read', 'cs:manage'],
-    description: '跟单交付、上传现场图与户型图、在产品库里查规格；不改价格',
+    permissions: ['order:read', 'order:write', 'quote:read', 'content:read', 'content:generate', 'content:extract', 'knowledge:read', 'cs:write'],
+    description: '跟单交付、上传现场图与户型图、在产品库里查规格；不能改价格',
   },
   {
+    // 财务的核心诉求：能看报价金额与账本，但不能改价、不能接单
     key: 'finance',
     name: '财务',
     scope: 'TENANT',
-    permissions: ['tenant:billing:view', 'quote:manage', 'knowledge:read', 'cs:manage'],
-    description: '看额度账本与报价金额、做收款记录；不参与接待与出图',
+    permissions: ['tenant:billing:view', 'quote:read', 'knowledge:read', 'cs:write'],
+    description: '看额度账本与报价金额、记录收款；**只能看不能改价**，不参与接待与出图',
   },
   {
     key: 'purchase',
     name: '采购仓管',
     scope: 'TENANT',
-    permissions: ['quote:manage', 'knowledge:read', 'cs:manage'],
+    permissions: ['quote:read', 'quote:write', 'knowledge:read', 'cs:write'],
     description: '维护产品库、录入与调价；不接客户单、不出图',
   },
   {
     key: 'marketing',
     name: '市场运营',
     scope: 'TENANT',
-    permissions: ['publish:manage', 'content:generate', 'content:extract', 'knowledge:manage', 'knowledge:read', 'cs:manage'],
+    permissions: ['publish:read', 'publish:write', 'content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'cs:write'],
     description: '发朋友圈/小红书、做短视频与海报；不碰客户报价与接单',
   },
   {
     key: 'service',
     name: '客服售后',
     scope: 'TENANT',
-    permissions: ['order:manage', 'knowledge:manage', 'knowledge:read', 'cs:manage'],
+    permissions: ['order:read', 'order:write', 'knowledge:read', 'knowledge:manage', 'cs:read', 'cs:write'],
     description: '跟进老客户、应答售后问题、维护知识库；不出方案也不报价',
   },
   {
     key: 'operator',
     name: '运营',
     scope: 'TENANT',
-    permissions: ['order:manage', 'quote:manage', 'publish:manage', 'cs:manage', 'content:extract', 'knowledge:read'],
-    description: '接待、报价、发布三样都沾的混合岗；职责单一时装销售顾问或市场运营，权限更窄更安全',
+    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'publish:read', 'publish:write', 'content:extract', 'knowledge:read', 'cs:write'],
+    description: '接待、报价、发布三样都沾的混合岗；职责单时装销售顾问或市场运营，权限更窄更安全',
   },
   // 只读成员也要能提反馈：遇到问题的人恰恰常常是权限最低的人，反馈入口不能因角色低而关闭
-  { key: 'viewer', name: '只读成员', scope: 'TENANT', permissions: ['knowledge:read', 'cs:manage'], description: '只看不能改，但可以提反馈与查知识库' },
+  { key: 'viewer', name: '只读成员', scope: 'TENANT', permissions: ['knowledge:read', 'cs:write'], description: '只看不能改，但可以提反馈与查知识库' },
 ];
+
 
 
 async function main(): Promise<void> {

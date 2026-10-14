@@ -53,13 +53,13 @@ export class PlansController {
     });
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get()
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.plans.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get(':id')
   detail(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

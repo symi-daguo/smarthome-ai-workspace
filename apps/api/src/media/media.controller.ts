@@ -78,14 +78,14 @@ export class MediaController {
     });
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get('assets')
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.media.list(user.activeTenantId as string);
   }
 
   /** 重命名我的资料（图片/视频）：最基本的修改能力；公共产品图不可改 */
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Patch('assets/:id')
   renameAsset(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -117,7 +117,7 @@ export class MediaController {
   }
 
   /** 我提交的投稿及审核状态 */
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get('materials/submissions')
   mySubmissions(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.media.listMySubmissions(user.activeTenantId as string, user.id);
@@ -177,7 +177,7 @@ export class MediaController {
 export class MediaFileController {
   constructor(private readonly media: MediaService) {}
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get('assets/:id/file')
   async file(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

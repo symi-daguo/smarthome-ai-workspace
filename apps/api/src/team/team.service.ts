@@ -283,6 +283,37 @@ export class TeamService {
     return role;
   }
 
+  /**
+   * 删除机器账号。
+   *
+   * 流程上必须**先吊销全部 Key 再删账号**：凭证校验只在 JwtStrategy 里按 id 查库，
+   * 账号行一删，Key 行若还留着就成了一枚查不到归属的孤儿凭证。
+   * 删 Membership 而不是删 User 全局账号的理由与 removeMember 相同：
+   * 同一个人可能还属于别的租户，机器账号虽无此可能，但保持同一条删除路径更不容易出错。
+   */
+  async removeServiceAccount(tenantId: string, userId: string): Promise<{ ok: true }> {
+    const membership = await this.prisma.membership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      include: { user: true },
+    });
+    if (!membership) throw new NotFoundException('SERVICE_ACCOUNT_NOT_FOUND');
+    if (!membership.user.isServiceAccount) {
+      throw new BadRequestException('NOT_A_SERVICE_ACCOUNT: 人类成员请用「移出团队」，那会保留其全局账号');
+    }
+    await this.prisma.apiKey.updateMany({ where: { tenantId, userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    await this.prisma.membership.delete({ where: { id: membership.id } });
+    // 机器账号没有密码也不该留在成员表里占位置；确认无其他租户关系后一并清掉
+    const others = await this.prisma.membership.count({ where: { userId } });
+    if (others === 0) {
+      await this.prisma.apiKey.deleteMany({ where: { userId } });
+      await this.prisma.user.delete({ where: { id: userId } });
+    }
+    void this.prisma.auditLog.create({
+      data: { tenantId, actorId: userId, actorKind: 'USER', action: 'DELETE /api/team/service-accounts', target: userId },
+    }).catch(() => undefined);
+    return { ok: true };
+  }
+
   /** 机器账号与人类成员分开列出，避免管理员把机器人当同事删掉 */
   async serviceAccounts(tenantId: string): Promise<{ id: string; name: string; phone: string; roleKey: string }[]> {
     return this.agent.listServiceAccounts(tenantId);

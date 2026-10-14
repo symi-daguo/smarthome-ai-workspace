@@ -18,13 +18,13 @@ import { createAgentSchema, updateAgentSchema, type CreateAgentDto, type UpdateA
 export class AgentsController {
   constructor(private readonly agents: AgentsService) {}
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Get()
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.agents.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('content:generate')
+  @RequirePermissions('content:read')
   @Post()
   create(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

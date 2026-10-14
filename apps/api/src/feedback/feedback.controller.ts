@@ -25,13 +25,13 @@ import {
 export class FeedbackController {
   constructor(private readonly feedback: FeedbackService) {}
 
-  @RequirePermissions('cs:manage')
+  @RequirePermissions('cs:read')
   @Get()
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.feedback.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('cs:manage')
+  @RequirePermissions('cs:read')
   @Post()
   create(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -41,13 +41,13 @@ export class FeedbackController {
     return this.feedback.create(user.activeTenantId as string, user.id, dto);
   }
 
-  @RequirePermissions('cs:manage')
+  @RequirePermissions('cs:read')
   @Get(':id')
   detail(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.feedback.detail(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('cs:manage')
+  @RequirePermissions('cs:read')
   @Delete(':id')
   remove(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
