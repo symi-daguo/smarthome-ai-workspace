@@ -22,8 +22,30 @@ async function bootstrap(): Promise<void> {
   // nginx 反代后限流按真实客户端 IP 计数（否则所有请求同算代理 IP，限流失效/误伤）
   app.set('trust proxy', 1);
 
+  // CORS 只影响「前端与 API 不同源」的情况：
+  //   - 容器部署时 nginx 把 /api 同源反代到 api 容器，因此**局域网访问不受 CORS 限制**，
+  //     团队成员用浏览器打开 http://<主机IP>:5173 即可，不需要改任何配置。
+  //   - 只有本地开发（vite 5173 直连 api 3080，跨源）才需要列出来源。
+  // 但同网段的另一台机器若要跑 vite dev 调试，主机名/IP 各不相同，
+  // 因此除 CORS_ORIGIN 外还放行所有局域网地址（RFC1918 + 本机回环）。
+  const allowlist = (process.env.CORS_ORIGIN ?? 'http://localhost:5173')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const isLanOrigin = (origin: string): boolean => {
+    if (!/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)) return false;
+    return true;
+  };
   app.enableCors({
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+    origin: (origin, cb) => {
+      // 无 Origin（同源、curl、服务端调用）直接放行
+      if (!origin) return cb(null, true);
+      if (allowlist.includes('*') || allowlist.includes(origin)) return cb(null, true);
+      // 开发态同网段调试：http://192.168.x.x:5173 / http://10.x.x.x:5173
+      if (/^https?:\/\/((\d{1,3}\.){3}\d{1,3}|\[[0-9a-fA-F:]+\])(:\d+)?$/.test(origin)) return cb(null, true);
+      if (isLanOrigin(origin)) return cb(null, true);
+      return cb(new Error(`CORS 拒绝来源 ${origin}；如需放行请在 CORS_ORIGIN 里加白名单`), false);
+    },
     credentials: true,
   });
   app.setGlobalPrefix('api');

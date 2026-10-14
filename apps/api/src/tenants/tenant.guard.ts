@@ -12,6 +12,12 @@ export class TenantGuard implements CanActivate {
     const user = request.user;
     if (!user) throw new ForbiddenException('UNAUTHENTICATED');
 
+    // 机器凭证只能操作它自己那个租户：拿 A 的 Key 带 X-Tenant-Id 指向 B 必须被拒。
+    // 这一层比「只看 memberships 是否匹配」更早、更明确 —— 后者要等到找不到成员才失败。
+    if (user.apiKeyTenantId && request.headers['x-tenant-id'] && request.headers['x-tenant-id'] !== user.apiKeyTenantId) {
+      throw new ForbiddenException('API_KEY_TENANT_MISMATCH');
+    }
+
     const headerTenantId = request.headers['x-tenant-id'];
     const membership = headerTenantId
       ? user.memberships.find((m) => m.tenantId === headerTenantId)

@@ -31,6 +31,172 @@ export const COMMON_NOTES = {
 
 export type Risk = 'read' | 'write' | 'destructive';
 
+/**
+ * 每个能力需要哪项权限才能调用。
+ *
+ * 为什么要有这张表：能力清单原本对所有调用者返回**全部**路由，一个只读 Key 读到的清单
+ * 也会显示「可以删产品」「可以改模型配置」—— 清单在骗它，Agent 就会照着错的预期反复撞 403，
+ * 既浪费 token 又浪费轮次。清单必须如实反映「以你的权限，你实际能做什么」。
+ *
+ * 口径与 PermissionsGuard 保持一致：`required` 为空表示所有登录用户都能调（公开读）。
+ * 这里显式声明而不是运行时反射守卫，是因为守卫装饰器无法在不启动应用的情况下被可靠遍历；
+ * 声明与守卫不一致时，下面 smoke 的「清单不得承诺调用者做不到的操作」会抓到。
+ */
+/** 按调用者权限过滤清单时用；未列出的操作视为无额外要求 */
+export const OP_PERMISSIONS: Record<string, string[]> = {
+  'POST /api/auth/register': [],
+  'POST /api/auth/login': [],
+  'GET /api/auth/me': [],
+  'POST /api/auth/refresh': [],
+  'PATCH /api/auth/profile': [],
+  'POST /api/auth/change-password': [],
+
+  'GET /api/team/role-templates': ['tenant:member:manage'],
+  'GET /api/team/members': ['tenant:member:manage'],
+  'POST /api/team/members': ['tenant:member:manage'],
+  'PATCH /api/team/members/{userId}': ['tenant:member:manage'],
+  'DELETE /api/team/members/{userId}': ['tenant:member:manage'],
+  'GET /api/team/service-accounts': ['tenant:member:manage'],
+  'POST /api/team/roles': ['tenant:member:manage'],
+  'PATCH /api/team/roles/{id}': ['tenant:member:manage'],
+  'DELETE /api/team/roles/{id}': ['tenant:member:manage'],
+
+  'POST /api/agent/service-accounts': ['tenant:member:manage'],
+  'GET /api/agent/service-accounts': ['tenant:member:manage'],
+  'POST /api/agent/keys': ['tenant:member:manage'],
+  'GET /api/agent/keys': ['tenant:member:manage'],
+  'POST /api/agent/keys/{id}/revoke': ['tenant:member:manage'],
+  'GET /api/agent/audit': ['platform:audit:view'],
+
+  'GET /api/products': ['quote:manage'],
+  'POST /api/products/mine': ['quote:manage'],
+  'PATCH /api/products/{id}': ['quote:manage'],
+  'DELETE /api/products/{id}': ['quote:manage'],
+  'POST /api/products/{id}/copy-to-mine': ['quote:manage'],
+  'GET /api/categories': ['quote:manage'],
+  'POST /api/categories/mine': ['quote:manage'],
+  'DELETE /api/categories/{id}': ['quote:manage'],
+  'POST /api/products/ai-process': ['content:generate'],
+
+  'GET /api/orders': ['order:manage'],
+  'POST /api/orders': ['order:manage'],
+  'GET /api/orders/{id}': ['order:manage'],
+  'PATCH /api/orders/{id}': ['order:manage'],
+  'DELETE /api/orders/{id}': ['order:manage'],
+  'POST /api/orders/intake': ['order:manage'],
+  'PATCH /api/orders/{id}/status': ['order:manage'],
+  'POST /api/orders/{id}/notes': ['order:manage'],
+  'POST /api/orders/{id}/followup': ['order:manage'],
+
+  'GET /api/plans': ['content:generate'],
+  'POST /api/plans': ['content:generate'],
+  'GET /api/plans/{id}': ['content:generate'],
+  'PATCH /api/plans/{id}/floorplan': ['content:generate'],
+  'PATCH /api/plans/{id}/pages/{index}': ['content:generate'],
+  'POST /api/plans/{id}/render-floorplan': ['content:generate'],
+  'DELETE /api/plans/{id}': ['content:generate'],
+  'GET /api/plans/{token}': [],
+  'GET /api/plans/{token}/floorplan': [],
+  'GET /api/plans/{token}/rendered-floorplan': [],
+
+  'GET /api/layouts': ['content:generate'],
+  'POST /api/layouts': ['content:generate'],
+  'GET /api/layouts/{id}': ['content:generate'],
+  'PATCH /api/layouts/{id}': ['content:generate'],
+  'DELETE /api/layouts/{id}': ['content:generate'],
+  'GET /api/layouts/{id}/summary': ['quote:manage'],
+
+  'GET /api/lighting': ['content:generate'],
+  'POST /api/lighting': ['content:generate'],
+  'GET /api/lighting/{id}': ['content:generate'],
+  'PATCH /api/lighting/{id}': ['content:generate'],
+  'DELETE /api/lighting/{id}': ['content:generate'],
+
+  'GET /api/canvas/conversations': ['content:generate'],
+  'POST /api/canvas/conversations': ['content:generate'],
+  'GET /api/canvas/conversations/{id}': ['content:generate'],
+  'PATCH /api/canvas/conversations/{id}': ['content:generate'],
+  'DELETE /api/canvas/conversations/{id}': ['content:generate'],
+  'POST /api/canvas/conversations/{id}/turns': ['content:generate'],
+  'PATCH /api/canvas/turns/{id}': ['content:generate'],
+  'DELETE /api/canvas/turns/{id}': ['content:generate'],
+  'GET /api/canvas/jobs/{id}': ['content:generate'],
+  'POST /api/canvas/jobs/{id}/run': ['content:generate'],
+  'GET /api/canvas/tasks': ['content:generate'],
+  'DELETE /api/canvas/tasks/finished': ['content:generate'],
+
+  'POST /api/media/uploads': ['content:generate'],
+  'GET /api/media/assets': ['content:generate'],
+  'GET /api/media/assets/{id}/file': ['content:generate'],
+  'PATCH /api/media/assets/{id}': ['content:generate'],
+  'DELETE /api/media/assets/{id}': ['content:generate'],
+  'POST /api/media/images': ['content:generate'],
+  'POST /api/media/images/reverse-prompt': ['content:generate'],
+  'POST /api/media/videos': ['content:generate'],
+  'POST /api/media/materials/upload': ['content:generate'],
+  'POST /api/media/materials/submissions': ['content:generate'],
+  'GET /api/media/materials/submissions': ['content:generate'],
+  'POST /api/media/materials/purchase': ['content:generate'], // 会扣 100 token，此前无守卫是个漏洞
+
+  'GET /api/agents': ['content:generate'],
+  'POST /api/agents': ['content:generate'],
+  'PATCH /api/agents/{id}': ['content:generate'],
+  'DELETE /api/agents/{id}': ['content:generate'],
+
+  'GET /api/knowledge/external': ['knowledge:manage'],
+  'PUT /api/knowledge/external': ['knowledge:manage'],
+  'DELETE /api/knowledge/external': ['knowledge:manage'],
+  'POST /api/knowledge/external/search': ['knowledge:manage'],
+  'POST /api/knowledge/external/test': ['knowledge:manage'],
+
+  'GET /api/content/extractions': ['content:extract'],
+  'GET /api/content/extractions/{id}': ['content:extract'],
+  'POST /api/content/extractions/upload': ['content:extract'],
+  'POST /api/content/extractions/transcript': ['content:extract'],
+  'POST /api/content/extractions/url': ['content:extract'],
+  'POST /api/content/extractions/{id}/confirm': ['content:extract'],
+  'GET /api/content/extractions/documents': ['content:extract'],
+  'DELETE /api/content/extractions/documents/{id}': ['content:extract'],
+
+  'GET /api/feedback': ['cs:manage'],
+  'POST /api/feedback': ['cs:manage'],
+  'GET /api/feedback/{id}': ['cs:manage'],
+  'PATCH /api/feedback/{id}': ['platform:billing:manage'], // 管理员回复，不是普通提反馈
+  'DELETE /api/feedback/{id}': ['cs:manage'],
+
+  'POST /api/llm/chat': ['content:generate'],
+
+  'GET /api/tenants/current': [],
+  'GET /api/tenants/current/tokens': [],
+  'GET /api/tenants/current/tokens/ledger': [],
+  'POST /api/tenants/current/tokens/grant': ['tenant:token:grant'],
+  'GET /api/tenants/mine': [],
+
+  'GET /api/admin/backup': ['platform:billing:manage'],
+  'GET /api/admin/storage': ['platform:billing:manage'],
+  'POST /api/admin/storage/cleanup': ['platform:billing:manage'],
+  'GET /api/admin/model-config': ['platform:billing:manage'],
+  'PUT /api/admin/model-config/chat': ['platform:billing:manage'],
+  'PUT /api/admin/model-config/image': ['platform:billing:manage'],
+  'PUT /api/admin/model-config/video': ['platform:billing:manage'],
+  'GET /api/admin/model-config/profiles': ['platform:billing:manage'],
+  'POST /api/admin/model-config/profiles/save': ['platform:billing:manage'],
+  'POST /api/admin/model-config/profiles/{id}/activate': ['platform:billing:manage'],
+  'DELETE /api/admin/model-config/profiles/{id}': ['platform:billing:manage'],
+  'POST /api/admin/model-config/test-chat': ['platform:billing:manage'],
+  'POST /api/admin/model-config/test-image': ['platform:billing:manage'],
+  'POST /api/admin/model-config/test-video': ['platform:billing:manage'],
+  'POST /api/admin/model-config/test-comfy': ['platform:billing:manage'],
+  'GET /api/admin/model-config/agent-skillpack': ['platform:billing:manage'],
+  'DELETE /api/admin/model-config/{scope}': ['platform:billing:manage'],
+
+  // 自身机器接入里无守卫的部分（快照与还原走成员身份，不额外要权限）
+  'GET /api/agent/manifest': [],
+  'POST /api/agent/snapshots': [],
+  'GET /api/agent/snapshots': [],
+  'POST /api/agent/snapshots/{id}/restore': [],
+};
+
 export interface ManifestOp {
   m: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   p: string;
@@ -217,6 +383,22 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'POST', p: '/api/agents', d: '建智能体', risk: W, q: { systemPrompt: '人设，决定它以什么身份回答', starterPrompt: '点开时预填的第一条任务' } },
       { m: 'PATCH', p: '/api/agents/{id}', d: '改智能体', risk: W },
       { m: 'DELETE', p: '/api/agents/{id}', d: '删智能体', risk: D },
+    ],
+  },
+  {
+    id: 'team',
+    name: '团队成员与角色模板',
+    about: '给同事开账号、定角色权限；角色是成品模板，不逐项勾权限 action。需要 tenant:member:manage。',
+    ops: [
+      { m: 'GET', p: '/api/team/role-templates', d: '角色模板列表（含每个模板的权限明细与适用人群）', risk: R },
+      { m: 'GET', p: '/api/team/members', d: '本租户成员列表（含角色与权限）', risk: R },
+      { m: 'POST', p: '/api/team/members', d: '★ 建成员：手机号+姓名+角色模板+初始密码。初始密码需线下告知本人', risk: W, q: { roleKey: 'super_admin|tenant_admin|designer|operator|viewer', password: '至少 8 位且含字母与数字' } },
+      { m: 'PATCH', p: '/api/team/members/{userId}', d: '改成员角色模板。降级最后一个管理员会被拒', risk: W },
+      { m: 'DELETE', p: '/api/team/members/{userId}', d: '把成员移出本租户（不删其全局账号）。其 API Key 同时失效', risk: D },
+      { m: 'POST', p: '/api/team/roles', d: '★ 新建自定义角色：勾权限组合成新岗位。只能授予自己已有的权限，越权会被 403 拒', risk: W, q: { permissions: '权限 action 数组，必须是调用方自己拥有的那些' } },
+      { m: 'PATCH', p: '/api/team/roles/{id}', d: '改自定义角色的名称/说明/权限。系统模板不可改', risk: W },
+      { m: 'DELETE', p: '/api/team/roles/{id}', d: '删自定义角色。还有成员在用会被拒', risk: D },
+      { m: 'GET', p: '/api/team/service-accounts', d: '本租户的机器账号', risk: R },
     ],
   },
   {

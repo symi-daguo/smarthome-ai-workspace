@@ -90,8 +90,7 @@ export class AgentService {
     phone: string;
     note: string;
   }> {
-    const role = await this.prisma.role.findUnique({ where: { key: roleKey } });
-    if (!role) throw new BadRequestException('ROLE_NOT_FOUND');
+    const role = await this.resolveRole(tenantId, roleKey);
 
     // 手机号位用 svc_ 前缀的 uuid：登录接口只接受手机号格式，因此这个账号天然登不进来
     const phone = `svc_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
@@ -112,6 +111,21 @@ export class AgentService {
       phone,
       note: '该账号没有可用密码，只能通过 API Key 访问；请把 Key 存在安全的地方，平台不再二次展示。',
     };
+  }
+
+  /** 取这枚 Key 归属的租户，供 TenantGuard 做跨租户拦截 */
+  async keyTenant(id: string): Promise<string | null> {
+    const key = await this.prisma.apiKey.findUnique({ where: { id }, select: { tenantId: true } });
+    return key?.tenantId ?? null;
+  }
+
+  /** 系统模板用可读 key、自定义角色用 uuid —— 与团队成员分配角色同一套解析规则 */
+  private async resolveRole(tenantId: string, keyOrId: string): Promise<{ id: string; key: string }> {
+    const role = /^[0-9a-f-]{36}$/i.test(keyOrId)
+      ? await this.prisma.role.findFirst({ where: { id: keyOrId, tenantId, isSystem: false } })
+      : await this.prisma.role.findFirst({ where: { key: keyOrId, isSystem: true } });
+    if (!role) throw new BadRequestException(`ROLE_NOT_FOUND: ${keyOrId}`);
+    return role;
   }
 
   async listServiceAccounts(tenantId: string): Promise<{ id: string; name: string; roleKey: string; phone: string; keys: number }[]> {
@@ -185,7 +199,8 @@ export class AgentService {
     return { ok: true, id };
   }
 
-  /** JWT 校验链路调用：确认这枚 Key 仍然有效，并顺手记 lastUsedAt */
+  /** JWT 校验链路调用：确认这枚 Key 仍然有效，并顺手记 lastUsedAt。
+   *  跨租户校验不在这里做 —— validate() 拿不到请求，交给 TenantGuard 用 apiKeyTenantId 判。 */
   async verifyApiKey(id: string): Promise<boolean> {
     const key = await this.prisma.apiKey.findUnique({ where: { id } });
     if (!key) return false;

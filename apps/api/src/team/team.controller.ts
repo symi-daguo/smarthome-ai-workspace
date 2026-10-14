@@ -1,0 +1,102 @@
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import type { AuthProfile } from '../auth/auth.service.js';
+import { CurrentUser } from '../auth/current-user.decorator.js';
+import { ZodValidationPipe } from '../common/zod.pipe.js';
+import { PermissionsGuard } from '../rbac/permissions.guard.js';
+import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
+import { TenantGuard } from '../tenants/tenant.guard.js';
+import { createMemberSchema, updateMemberSchema, type CreateMemberDto, type UpdateMemberDto } from './team.schemas.js';
+import { createRoleSchema, updateRoleSchema, type CreateRoleDto, type UpdateRoleDto } from './role.schemas.js';
+import { TeamService } from './team.service.js';
+
+/**
+ * 团队成员与角色模板（0.1.54）
+ *
+ * 全部走 `tenant:member:manage`（租户管理员自带），与「发 API Key」同一档权限 ——
+ * 能给人开账号的人，也就能给人开机器账号，这两件事的风险级别本来就一样。
+ */
+@UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
+@RequirePermissions('tenant:member:manage')
+@Controller('team')
+export class TeamController {
+  constructor(private readonly team: TeamService) {}
+
+  /** 角色清单：系统模板 + 本租户自定义角色，界面照着它渲染可点选的卡片 */
+  @Get('role-templates')
+  roleTemplates(@CurrentUser() user: AuthProfile): Promise<unknown> {
+    return this.team.roleTemplates(user.activeTenantId as string);
+  }
+
+  /**
+   * 新建自定义角色（勾选权限组合）。
+   * 防提权：只能授予自己已经拥有的权限，规则在 service 里，不靠前端拦。
+   */
+  @Post('roles')
+  createRole(
+    @CurrentUser() user: AuthProfile,
+    @Body(new ZodValidationPipe(createRoleSchema)) dto: CreateRoleDto,
+  ): Promise<unknown> {
+    return this.team.createRole(
+      user.activeTenantId as string,
+      { id: user.id, permissions: this.ownPermissions(user) },
+      dto,
+    );
+  }
+
+  @Patch('roles/:id')
+  updateRole(
+    @CurrentUser() user: AuthProfile,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateRoleSchema)) dto: UpdateRoleDto,
+  ): Promise<unknown> {
+    return this.team.updateRole(
+      user.activeTenantId as string, id,
+      { id: user.id, permissions: this.ownPermissions(user) },
+      dto,
+    );
+  }
+
+  @Delete('roles/:id')
+  removeRole(@CurrentUser() user: AuthProfile, @Param('id') id: string): Promise<unknown> {
+    return this.team.removeRole(user.activeTenantId as string, id);
+  }
+
+  /** 当前用户在本租户拥有的权限，防提权校验要用 */
+  private ownPermissions(user: AuthProfile): string[] {
+    return user.memberships.find((m) => m.tenantId === user.activeTenantId)?.permissions ?? [];
+  }
+
+  @Get('members')
+  members(@CurrentUser() user: AuthProfile): Promise<unknown> {
+    return this.team.members(user.activeTenantId as string);
+  }
+
+  @Post('members')
+  createMember(
+    @CurrentUser() user: AuthProfile,
+    @Body(new ZodValidationPipe(createMemberSchema)) dto: CreateMemberDto,
+  ): Promise<unknown> {
+    return this.team.createMember(user.activeTenantId as string, dto, user.id);
+  }
+
+  @Patch('members/:userId')
+  updateMember(
+    @CurrentUser() user: AuthProfile,
+    @Param('userId') userId: string,
+    @Body(new ZodValidationPipe(updateMemberSchema)) dto: UpdateMemberDto,
+  ): Promise<unknown> {
+    return this.team.updateMemberRole(user.activeTenantId as string, userId, dto.roleKey, user.id);
+  }
+
+  @Delete('members/:userId')
+  removeMember(@CurrentUser() user: AuthProfile, @Param('userId') userId: string): Promise<unknown> {
+    return this.team.removeMember(user.activeTenantId as string, userId, user.id);
+  }
+
+  /** 机器账号（与人类成员分开，避免误删） */
+  @Get('service-accounts')
+  serviceAccounts(@CurrentUser() user: AuthProfile): Promise<unknown> {
+    return this.team.serviceAccounts(user.activeTenantId as string);
+  }
+}

@@ -6,11 +6,21 @@ import { z } from 'zod';
  * 一律走 zod（与全项目一致，不引入 class-validator）。
  */
 
+/**
+ * 角色标识。
+ *
+ * 刻意**不用 z.enum**：枚举一旦写死，seed 里加一个角色就必须在多处同步，
+ * 否则界面能选、接口却 400 —— 权限模型出现多个真相来源。
+ * 这里只做形状校验，「角色是否存在」交给 service 查 Role 表判定（不存在则 ROLE_NOT_FOUND）。
+ * 同理接受自定义角色的 id。
+ */
+export const roleRefSchema = z.string().trim().min(1).max(64);
+
 export const serviceAccountSchema = z.object({
   /** 展示名，如「数据分析 Agent」 */
   name: z.string().trim().min(1).max(60),
-  /** 角色决定权限，走现有 RBAC；默认 tenant_admin。viewer=只读 */
-  roleKey: z.enum(['super_admin', 'tenant_admin', 'designer', 'operator', 'viewer']).default('tenant_admin'),
+  /** 角色决定权限，走现有 RBAC；默认 tenant_admin（最小权限应显式选 viewer） */
+  roleKey: roleRefSchema.default('tenant_admin'),
 });
 
 export const apiKeySchema = z.object({

@@ -9,6 +9,7 @@ import { MainLayout } from './layouts/MainLayout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { TokenCenter } from './pages/TokenCenter';
+import { TeamPage } from './pages/TeamPage';
 import { ModelConfig } from './pages/ModelConfig';
 import { ContentExtract } from './pages/ContentExtract';
 import { AgentMarket } from './pages/AgentMarket';
@@ -58,6 +59,7 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="knowledge" element={<KnowledgeBase />} />
             <Route path="works" element={<MyAssets />} />
             <Route path="content" element={<ContentExtract />} />
+            <Route path="team" element={<TeamPage />} />
             <Route path="tokens" element={<TokenCenter />} />
             <Route path="model-config" element={<ModelConfig />} />
             {/* 未知路径兜底回首页：没有它的话，旧收藏/手输错字会渲染出整页空白 */}

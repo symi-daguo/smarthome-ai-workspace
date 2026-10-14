@@ -60,6 +60,7 @@ model Tenant {
   ledgers     TokenLedger[]
   apiKeys     ApiKey[]
   snapshots   ChangeSnapshot[]
+  customRoles Role[]
 }
 
 model User {
@@ -84,15 +85,27 @@ model User {
 }
 
 model Role {
-  id        String    @id @default(uuid())
-  key       String    @unique
-  name      String
-  scope     RoleScope
-  isSystem  Boolean   @default(true)
-  createdAt DateTime  @default(now())
+  id    String @id @default(uuid())
+  // 系统模板用可读 key（tenant_admin…）；自定义角色是机器生成的短码，界面只显示 name
+  key   String @unique
+  name  String
+  scope RoleScope
+  // true=预置模板（全局共享，改动影响所有租户）；false=本租户自定义
+  isSystem Boolean @default(true)
+  /**
+   * 自定义角色归属的租户；系统模板为 null。
+   * key 仍是全局唯一，因此自定义角色的 key 生成时带租户前缀，避免两个租户撞名。
+   */
+  tenantId   String?
+  /** 自定义角色的一句话说明：这个岗位具体干什么 */
+  description String?
+  createdAt   DateTime  @default(now())
 
   rolePermissions RolePermission[]
   memberships     Membership[]
+  tenant          Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 model Permission {

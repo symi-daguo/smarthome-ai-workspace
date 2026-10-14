@@ -12,7 +12,7 @@ import { TenantGuard } from '../tenants/tenant.guard.js';
 import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
 import { PrismaService } from '../prisma/prisma.module.js';
-import { COMMON_NOTES, MANIFEST, destructiveOps } from './manifest.js';
+import { COMMON_NOTES, MANIFEST, OP_PERMISSIONS, destructiveOps } from './manifest.js';
 
 /**
  * Agent 机器接入端点（0.1.53）
@@ -42,21 +42,53 @@ export class AgentController {
    *   ?full=1       → 全量（114 条，约 3.4k token），只在通盘了解时用
    */
   @Get('manifest')
-  manifest(@Query('group') group?: string, @Query('full') full?: string): unknown {
-    if (full === '1') return { version: 1, notes: COMMON_NOTES, groups: MANIFEST };
+  manifest(
+    @CurrentUser() user: AuthProfile,
+    @Query('group') group?: string,
+    @Query('full') full?: string,
+    @Query('risk') risk?: string,
+    @Query('effective') effective?: string,
+  ): unknown {
+    const own = user.memberships.find((m) => m.tenantId === user.activeTenantId)?.permissions ?? [];
+    /** 只列出该调用者真正调得动的操作 —— 清单不能对只读 Key 谎称它能删产品 */
+    const allowed = (m: string, p: string): boolean => {
+      const req = OP_PERMISSIONS[`${m} ${p}`];
+      return !req || req.every((r) => own.includes(r));
+    };
+
+    if (effective === '1') {
+      return {
+        version: 1,
+        notes: COMMON_NOTES,
+        roleKey: user.memberships.find((m) => m.tenantId === user.activeTenantId)?.roleKey ?? 'unknown',
+        yourPermissions: own,
+        hint: '这是**以你的权限过滤后**的清单：不在其中的操作你调用会得到 403。',
+        groups: MANIFEST.map((g) => ({ ...g, ops: g.ops.filter((o) => allowed(o.m, o.p)) })).filter((g) => g.ops.length > 0),
+      };
+    }
+
+    if (full === '1') {
+      return {
+        version: 1, notes: COMMON_NOTES,
+        groups: MANIFEST.map((g) => ({ ...g, ops: g.ops.map((o) => ({ ...o, required: OP_PERMISSIONS[`${o.m} ${o.p}`] ?? [] })) })),
+      };
+    }
     if (group) {
       const g = MANIFEST.find((x) => x.id === group);
       if (!g) {
         return { error: 'GROUP_NOT_FOUND', available: MANIFEST.map((x) => ({ id: x.id, name: x.name, ops: x.ops.length })) };
       }
-      return { notes: COMMON_NOTES, group: g };
+      return { notes: COMMON_NOTES, group: g, destructive: destructiveOps().filter((d) => d.group === g.id) };
     }
+    if (risk === '1') return { destructive: destructiveOps() };
+    // 索引刻意做到极小：破坏性操作全表（30+ 条，每条带说明）比索引本身还大，
+    // 混进来会让「每次取清单」都多付这笔 token。加了 team 组后实测 1229 → 约 250。
     return {
       version: 1,
       notes: COMMON_NOTES,
-      hint: '加 ?group=<id> 取单组详情；加 ?full=1 取全量。',
-      groups: MANIFEST.map((g) => ({ id: g.id, name: g.name, about: g.about, ops: g.ops.length })),
-      destructive: destructiveOps(),
+      hint: '加 ?group=<id> 取单组详情（含该组风险等级）；加 ?risk=1 取破坏性操作全表；加 ?full=1 取全量。',
+      groups: MANIFEST.map((g) => ({ id: g.id, name: g.name, ops: g.ops.length })),
+      destructiveCount: destructiveOps().length,
     };
   }
 

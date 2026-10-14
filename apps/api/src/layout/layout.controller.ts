@@ -23,24 +23,26 @@ import {
 } from './layout.schemas.js';
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
-@RequirePermissions('content:generate')
 @Controller()
 export class LayoutController {
   constructor(private readonly layout: LayoutService) {}
 
   /** 产品目录（公共库+我的库合并，布点/报价选品数据源） */
+  @RequirePermissions('quote:manage')
   @Get('products')
   products(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.layout.products(user.activeTenantId);
   }
 
   /** 品类字典（预置 24 类 + 本租户自定义） */
+  @RequirePermissions('quote:manage')
   @Get('categories')
   categories(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.layout.categories(user.activeTenantId);
   }
 
   /** 新增自定义品类（同名幂等） */
+  @RequirePermissions('quote:manage')
   @Post('categories/mine')
   createCategory(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -50,12 +52,14 @@ export class LayoutController {
   }
 
   /** 删除自定义品类（预置不可删，在用拒绝） */
+  @RequirePermissions('quote:manage')
   @Delete('categories/:id')
   removeCategory(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.removeCategory(user.activeTenantId as string, id);
   }
 
   /** 我的产品库：新增 */
+  @RequirePermissions('quote:manage')
   @Post('products/mine')
   createProduct(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -65,12 +69,14 @@ export class LayoutController {
   }
 
   /** 公共库产品复制到我的库 */
+  @RequirePermissions('quote:manage')
   @Post('products/:id/copy-to-mine')
   copyProduct(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.copyProductToMine(user.activeTenantId as string, id);
   }
 
   /** 我的产品库：编辑（仅本租户行） */
+  @RequirePermissions('quote:manage')
   @Patch('products/:id')
   updateProduct(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -81,12 +87,14 @@ export class LayoutController {
   }
 
   /** 我的产品库：删除（仅本租户行） */
+  @RequirePermissions('quote:manage')
   @Delete('products/:id')
   removeProduct(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.removeProduct(user.activeTenantId as string, id);
   }
 
   /** agent 批量处理产品：补全文案 + 批量生成产品图（勾选行，含公共库） */
+  @RequirePermissions('content:generate')
   @Post('products/ai-process')
   aiProcess(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -95,6 +103,7 @@ export class LayoutController {
     return this.layout.aiProcessProducts(user.activeTenantId as string, user.id, dto.ids);
   }
 
+  @RequirePermissions('content:generate')
   @Post('layouts')
   create(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -103,21 +112,25 @@ export class LayoutController {
     return this.layout.create(user.activeTenantId as string, user.id, dto);
   }
 
+  @RequirePermissions('content:generate')
   @Get('layouts')
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.layout.list(user.activeTenantId as string);
   }
 
+  @RequirePermissions('content:generate')
   @Get('layouts/:id')
   detail(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.detail(user.activeTenantId as string, id);
   }
 
+  @RequirePermissions('quote:manage')
   @Get('layouts/:id/summary')
   summary(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.summary(user.activeTenantId as string, id);
   }
 
+  @RequirePermissions('content:generate')
   @Patch('layouts/:id')
   update(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -127,6 +140,7 @@ export class LayoutController {
     return this.layout.update(user.activeTenantId as string, id, dto);
   }
 
+  @RequirePermissions('content:generate')
   @Delete('layouts/:id')
   remove(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.remove(user.activeTenantId as string, id);

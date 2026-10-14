@@ -10,7 +10,58 @@ import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
-import { manifestRouteKeys, destructiveOps } from '../src/agent/manifest.js';
+import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
+import { PERMISSIONS } from '../src/rbac/permissions.js';
+
+const MANIFEST_KEYS = MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
+
+/**
+ * 从控制器源码静态抽取「每个端点真实的 @RequirePermissions」。
+ *
+ * 为什么要静态抽而不是运行时反射：Nest 不提供稳定的路由遍历接口，
+ * 而 PermissionsGuard 用的 Reflector 只能在请求上下文里读到单个 handler。
+ * 静态抽取 + 与声明表比对，效果等价且能在门禁里跑。
+ *
+ * 覆盖三种写法：方法级守卫、类级守卫（作用于该控制器全部端点）、无参装饰器（@Get() / @Post()）。
+ */
+function extractGuards(root: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!e.name.endsWith('.controller.ts')) continue;
+      const src = readFileSync(p, 'utf8');
+      const base = (src.match(/@Controller\(\s*'([^']*)'/)?.[1] ?? '').replace(/^\//, '').replace(/\/$/, '');
+      const lines = src.split('\n');
+      // 类级守卫：@RequirePermissions 出现在 @Controller 之前的几行内
+      let classPerm: string[] = [];
+      const cIdx = lines.findIndex((l) => l.includes('@Controller('));
+      for (let i = Math.max(0, cIdx - 4); i < cIdx; i += 1) {
+        const m = lines[i].match(/@RequirePermissions\('([a-z:]+)'\)/);
+        if (m) classPerm = [m[1]];
+      }
+      for (let i = 0; i < lines.length; i += 1) {
+        const mm = lines[i].match(/^\s*@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)')?\s*\)/);
+        if (!mm) continue;
+        let perm = classPerm;
+        // 向上找方法级守卫，但**遇到空行必须停**：装饰器总是紧贴 handler，
+        // 不设边界的话会把上一个端点的守卫当成这一个的（曾经因此误判 materials/purchase）
+        for (let j = i - 1; j >= 0; j -= 1) {
+          if (lines[j].trim() === '') break;
+          const pm = lines[j].match(/@RequirePermissions\('([a-z:]+)'\)/);
+          if (pm) { perm = [pm[1]]; break; }
+        }
+        const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
+        const full = ('/api/' + base + (sub ? '/' + sub : '')).replace(/\/\/+/g, '/');
+        out.set(`${mm[1].toUpperCase()} ${full}`, perm);
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+const PERMISSION_SET = new Set<string>(PERMISSIONS);
 
 const checks: [string, boolean][] = [];
 
@@ -1454,25 +1505,36 @@ async function main(): Promise<void> {
   // ---------- 能力清单：索引模式必须足够小，否则省 token 的目的就落空了 ----------
   {
     const idx = await request<{
-      groups: { id: string; ops: number }[];
-      destructive: { p: string }[];
+      groups: { id: string; name: string; ops: number }[];
+      destructiveCount: number;
       hint: string;
     }>(base, '/api/agent/manifest', authA);
-    // 大致 300 token 的量级：1200 token 足以覆盖，500 以下说明索引太啰嗦没起到筛选作用
+    // 索引必须足够小，否则「按需取」就失去意义：1200 token 足以覆盖，500 以下说明它真的在筛选
     const idxTokens = Math.ceil(JSON.stringify(idx.body).length / 3);
     check(
       `能力清单索引可取且足够精简（${idxTokens} tokens，含 ${idx.body.groups?.length} 组）`,
       idx.status === 200 && idxTokens > 0 && idxTokens < 1200,
     );
+    check('索引带得出破坏性操作数量（想细看可单独拉全表）', (idx.body.destructiveCount ?? 0) >= 15);
+
+    // 破坏性操作全表单独取：它比索引本身还大，混进索引会让每次取清单都多付这笔 token
+    const risk = await request<{ destructive: { p: string; group: string }[] }>(base, '/api/agent/manifest?risk=1', authA);
     check(
-      '索引里带得出全部破坏性操作（防误操作的前提）',
-      (idx.body.destructive?.length ?? 0) >= 15 && idx.body.destructive.every((d) => d.p.startsWith('/api/')),
+      '破坏性操作可单独取全表（防误操作的前提）',
+      risk.status === 200 && (risk.body.destructive?.length ?? 0) >= 15
+        && risk.body.destructive.every((d) => d.p.startsWith('/api/') && typeof d.group === 'string'),
     );
 
-    const one = await request<{ group: { id: string; ops: unknown[] } }>(base, '/api/agent/manifest?group=quote', authA);
+    const one = await request<{ group: { id: string; ops: unknown[] }; destructive: { group: string }[] }>(
+      base, '/api/agent/manifest?group=quote', authA,
+    );
     check(
       '能力清单支持按组取详情',
       one.status === 200 && one.body.group?.id === 'quote' && one.body.group.ops.length > 0,
+    );
+    check(
+      '单组详情带得出该组的破坏性操作',
+      Array.isArray(one.body.destructive) && one.body.destructive.every((d) => d.group === 'quote'),
     );
     const oneTokens = Math.ceil(JSON.stringify(one.body).length / 3);
     check(`单组详情比全量省 token（单组 ${oneTokens} tokens vs 索引 ${idxTokens}）`, oneTokens < idxTokens * 3);
@@ -1682,6 +1744,266 @@ async function main(): Promise<void> {
       ...authA,
     });
     check('客户端自带的 X-Request-Id 能把一串动作串成一次任务', traced.status === 200 && traced.body.rows.length > 0);
+  }
+
+  // ================= 团队成员与角色模板（0.1.54） =================
+  {
+    // 角色模板必须是「点选就能用」的成品，不能要求管理员逐项勾 15 个权限 action
+    const tpl = await request<{ key: string; id: string; name: string; permissions: string[]; description: string; isSystem: boolean; permissionCount: number }[]>(
+      base, '/api/team/role-templates', authA,
+    );
+    check(
+      `角色模板可取且每个都带人话说明与权限明细（${tpl.body?.length ?? 0} 个模板）`,
+      tpl.status === 200 && Array.isArray(tpl.body) && tpl.body.length >= 10
+        && tpl.body.every((t) => typeof t.description === 'string' && t.description.length > 0
+          && t.permissionCount === t.permissions.length && typeof t.isSystem === 'boolean'),
+    );
+    // 展示顺序必须是从高权限到低权限，不能按 key 字母排
+    const order = tpl.body.map((t) => t.key);
+    check(
+      `角色模板按权限从高到低排列（${order.join(' → ')}）`,
+      order.indexOf('super_admin') < order.indexOf('tenant_admin')
+        && order.indexOf('tenant_admin') < order.indexOf('viewer'),
+    );
+    const adminTpl = tpl.body.find((t) => t.key === 'tenant_admin');
+    check('租户管理员模板含成员管理权限（否则没人能建账号）', (adminTpl?.permissions ?? []).includes('tenant:member:manage'));
+
+    // 建成员 → 能登录 → 权限真的按角色生效
+    const phoneM = randomPhone();
+    const made = await request<{ id: string; roleKey: string }>(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: phoneM, displayName: '冒烟店员', roleKey: 'operator', password: 'Smoke12345' }),
+    });
+    check('管理员可按角色模板建成员', made.status === 201 && made.body.roleKey === 'operator');
+
+    const loginM = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: phoneM, password: 'Smoke12345' }),
+    });
+    check('新成员能用管理员给的初始密码登录', loginM.status === 201 && typeof loginM.body.token === 'string');
+    const mAuth = { headers: { Authorization: `Bearer ${loginM.body.token}` } };
+
+    // 角色模板承诺 operator 能「跑接待与报价的日常动作」——断言必须照承诺写，
+    // 否则模板就只是好看的文案，承诺与实际权限脱节比没有模板更糟
+    const ordersOk = await request(base, '/api/orders', mAuth);
+    const productsOk = await request(base, '/api/products', mAuth);
+    check(
+      'operator 能进接单与报价产品库（与角色模板承诺一致）',
+      ordersOk.status === 200 && productsOk.status === 200,
+    );
+    const teamDenied = await request(base, '/api/team/members', mAuth);
+    const backupDenied = await request(base, '/api/admin/backup', mAuth);
+    check(
+      'operator 碰不到团队管理与数据备份（与角色模板承诺一致）',
+      teamDenied.status === 403 && backupDenied.status === 403,
+    );
+
+    // 改角色后权限要跟着变
+    const toViewer = await request<{ roleKey: string }>(base, `/api/team/members/${made.body.id}`, {
+      method: 'PATCH', ...authA, body: JSON.stringify({ roleKey: 'viewer' }),
+    });
+    const ordersAfter = await request(base, '/api/orders', mAuth);
+    check(
+      '降级为只读成员后立刻失去接单权限',
+      toViewer.status === 200 && toViewer.body.roleKey === 'viewer' && ordersAfter.status === 403,
+    );
+
+    // 最后一个管理员不能被降级/移除，否则这个租户就再也没人能管成员了
+    const meId = me.body.id;
+    const demoteSelf = await request<{ message?: string }>(base, `/api/team/members/${meId}`, {
+      method: 'PATCH', ...authA, body: JSON.stringify({ roleKey: 'viewer' }),
+    });
+    check(
+      '最后一个管理员不能被降级（否则再没人能管成员）',
+      demoteSelf.status === 403 && /LAST_ADMIN/.test(demoteSelf.body.message ?? ''),
+    );
+    const removeSelf = await request<{ message?: string }>(base, `/api/team/members/${meId}`, { method: 'DELETE', ...authA });
+    check('不能把自己移出团队', removeSelf.status === 403);
+
+    // 重复建同一个人要被拒
+    const dup = await request<{ message?: string }>(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: phoneM, displayName: '重复', roleKey: 'viewer', password: 'Smoke12345' }),
+    });
+    check('同一个人不能重复加进同一租户', dup.status === 409);
+
+    // 弱密码被拒
+    const weak = await request(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: randomPhone(), displayName: '弱密码', roleKey: 'viewer', password: 'abcdefgh' }),
+    });
+    check('初始密码必须含数字（纯字母太弱，直接拒）', weak.status === 400);
+
+    // 移出后其登录身份失效在本租户
+    const removed = await request(base, `/api/team/members/${made.body.id}`, { method: 'DELETE', ...authA });
+    check('可把成员移出团队', removed.status === 200);
+  }
+
+  // ---------- 自定义角色：能勾权限，但不能靠建角色提权 ----------
+  {
+    const made2 = await request<{ id: string; roleKey: string }>(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: randomPhone(), displayName: '自定义角色验证', roleKey: 'viewer', password: 'Smoke12345' }),
+    });
+    // viewer 登录回来，用它建角色 —— 必然越权
+    const viewerPhone = randomPhone();
+    await request(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: viewerPhone, displayName: '只读验证', roleKey: 'viewer', password: 'Smoke12345' }),
+    });
+    const vLogin = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: viewerPhone, password: 'Smoke12345' }),
+    });
+    check('只读成员可登录（用于验证提权防护）', vLogin.status === 201);
+
+    // 分两层看：viewer 连建角色的资格都没有（PermissionsGuard 先拦），
+    // 这跟「有资格但想给超出的权限」是两回事，断言要分开写，否则测到的不是真正的提权防护
+    const vAuth = { headers: { Authorization: `Bearer ${vLogin.body.token}` } };
+    const noRight = await request<{ message?: string }>(base, '/api/team/roles', {
+      method: 'POST', ...vAuth,
+      body: JSON.stringify({ name: '没资格建', permissions: ['knowledge:read'] }),
+    });
+    check(
+      '没有成员管理权限的角色连自定义角色都建不了',
+      noRight.status === 403 && /PERMISSION_DENIED/.test(noRight.body.message ?? ''),
+    );
+
+    // 真正的提权场景：租户管理员**有**建角色资格，但他手上只有 14 项权限（缺 platform:tenant:manage），
+    // 想造一个含这项的角色塞给自己 —— 必须被 service 层的防提权守卫挡住
+    const escalate = await request<{ message?: string }>(base, '/api/team/roles', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ name: '越权角色', permissions: ['platform:tenant:manage', 'quote:manage'] }),
+    });
+    check(
+      '有建角色资格也不能授予自己没有的权限（防提权）',
+      escalate.status === 403 && /PRIVILEGE_ESCALATION/.test(escalate.body.message ?? ''),
+    );
+    // 管理员可以建自定义角色
+    const custom = await request<{ id: string; name: string; permissions: string[] }>(base, '/api/team/roles', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ name: '冒烟自定义岗', description: '由冒烟测试创建', permissions: ['quote:manage', 'knowledge:read'] }),
+    });
+    check('管理员可勾权限创建自定义角色', custom.status === 201 && (custom.body?.permissions?.length ?? 0) === 2);
+
+    // 自定义角色出现在清单里且标为自定义
+    const tpl2 = await request<{ id: string; isSystem: boolean; name: string }[]>(base, '/api/team/role-templates', authA);
+    check(
+      '自定义角色与系统模板一起出现在角色清单里',
+      tpl2.status === 200 && tpl2.body.some((r) => r.id === custom.body.id && r.isSystem === false),
+    );
+    check(
+      '预置岗位模板覆盖智能家居门店常见岗位',
+      ['super_admin', 'tenant_admin', 'sales', 'designer', 'delivery', 'finance', 'purchase', 'marketing', 'service', 'viewer']
+        .every((k) => tpl2.body.some((r) => (r as unknown as { key: string }).key === k)),
+    );
+
+    // 成员可以改用自定义角色
+    const toCustom = await request<{ roleKey: string; roleId: string }>(base, `/api/team/members/${made2.body.id}`, {
+      method: 'PATCH', ...authA, body: JSON.stringify({ roleKey: custom.body.id }),
+    });
+    check(
+      '成员可改用自定义角色（按 id 引用）',
+      toCustom.status === 200 && toCustom.body?.roleId === custom.body.id,
+    );
+
+    // 还有人在用的角色不能删
+    const delUsed = await request<{ message?: string }>(base, `/api/team/roles/${custom.body.id}`, { method: 'DELETE', ...authA });
+    check('还在用的自定义角色不能删（否则 Membership 悬空）', delUsed.status === 400 && /ROLE_IN_USE/.test(delUsed.body.message ?? ''));
+
+    // 系统模板不可被改/删
+    const sysDel = await request(base, '/api/team/roles/tenant_admin', { method: 'DELETE', ...authA });
+    check('系统模板角色不可删除', sysDel.status >= 400);
+
+    // 换回系统角色后可以删
+    await request(base, `/api/team/members/${made2.body.id}`, { method: 'PATCH', ...authA, body: JSON.stringify({ roleKey: 'viewer' }) });
+    const delFree = await request(base, `/api/team/roles/${custom.body.id}`, { method: 'DELETE', ...authA });
+    check('没人用的自定义角色可以删', delFree.status === 200);
+
+    // 空权限被拒
+    const empty = await request(base, '/api/team/roles', {
+      method: 'POST', ...authA, body: JSON.stringify({ name: '空角色', permissions: [] }),
+    });
+    check('空权限的自定义角色被拒（否则等于建了个什么都做不了的角色）', empty.status === 400);
+  }
+
+  // ---------- 清单必须如实反映调用者的权限 ----------
+  {
+    // ① 声明完整性：清单里的每条都要有权限声明，否则过滤时会被当成「无要求」而对谁都显示
+    const allOps = MANIFEST_KEYS;
+    const missingPerm = allOps.filter((k) => !(k in OP_PERMISSIONS));
+    check(
+      `能力清单每条操作都声明了所需权限（漏 ${missingPerm.length} 条${missingPerm.length ? '：' + missingPerm.slice(0, 4).join(' / ') : ''}）`,
+      allOps.length > 0 && missingPerm.length === 0,
+    );
+    // ② 权限名必须是真实存在的 action，否则等于永远 403
+    const badPerm = [...new Set(Object.values(OP_PERMISSIONS).flat())].filter((a) => !PERMISSION_SET.has(a));
+    check(`声明的权限名都真实存在（异常 ${badPerm.length} 个）`, badPerm.length === 0);
+
+    // ②b **声明必须与守卫装饰器一致**。这张表是手写的，不校验迟早会和 @RequirePermissions 漂移 ——
+    //     本轮已经漂过一次（knowledge/external 实际要 knowledge:manage，声明写成了 knowledge:read），
+    //     会让只读 Key 的过滤清单漏出它调不动的操作。这里从源码静态抽取真实守卫逐条比对。
+    const realPerms = extractGuards(join(process.cwd(), 'src'));
+    const mismatch = allOps.filter((k) => {
+      const actual = realPerms.get(k);
+      if (actual === undefined) return false; // 抽不到（如继承来的）不误判
+      const declared = OP_PERMISSIONS[k];
+      return declared.length !== actual.length || declared.some((d) => !actual.includes(d));
+    });
+    check(
+      `清单声明的权限与 @RequirePermissions 装饰器一致（不一致 ${mismatch.length} 条${mismatch.length ? '：' + mismatch.slice(0, 4).join(' / ') : ''}）`,
+      realPerms.size > 50 && mismatch.length === 0,
+    );
+    // 反向：源码里挂了守卫但清单没声明的，清单会把它当成「无要求」而对谁都显示
+    const notDeclared = [...realPerms.keys()].filter((k) => !(k in OP_PERMISSIONS) && allOps.includes(k));
+    check(`源码里所有端点都在清单中声明了权限（漏 ${notDeclared.length} 条）`, notDeclared.length === 0);
+
+    // ③ 只读 Key 读到的清单里，不能出现它实际调不动的操作
+    const phoneRO = randomPhone();
+    await request(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: phoneRO, displayName: '清单验证只读', roleKey: 'viewer', password: 'Smoke12345' }),
+    });
+    const roLogin = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: phoneRO, password: 'Smoke12345' }),
+    });
+    const roAuth = { headers: { Authorization: `Bearer ${roLogin.body.token}` } };
+    const eff = await request<{ groups: { ops: { m: string; p: string }[] }[]; yourPermissions: string[] }>(
+      base, '/api/agent/manifest?effective=1', roAuth,
+    );
+    const promised = (eff.body.groups ?? []).flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
+    const overPromised = promised.filter((k) => (OP_PERMISSIONS[k] ?? []).some((r) => !(eff.body.yourPermissions ?? []).includes(r)));
+    check(
+      `按权限过滤后的清单不承诺调用者做不到的操作（越权 ${overPromised.length} 条）`,
+      eff.status === 200 && overPromised.length === 0 && promised.length < allOps.length,
+    );
+    check(
+      '只读 Key 的清单里确实看不到团队管理与数据备份',
+      !promised.some((k) => k.includes('/api/team/members') || k.includes('/api/admin/backup')),
+    );
+    // 扣费类操作必须出现在声明表里，且需要权限 —— 曾经 materials/purchase 扣 100 token 却无守卫
+    const charging = ['POST /api/media/materials/purchase', 'POST /api/tenants/current/tokens/grant', 'POST /api/media/videos'];
+    check(
+      '会扣额度的操作都在权限声明里且要求权限',
+      charging.every((k) => (OP_PERMISSIONS[k] ?? []).length > 0),
+    );
+
+    // ④ 清单承诺与守卫实际行为一致：挑几条实际打一下，越权必须真的是 403
+    // 只读成员只有 knowledge:read 与 cs:manage。抽查三条：有权限的能进、没权限的进不去。
+    const realChecks: [string, boolean][] = [
+      ['GET /api/feedback (有 cs:manage)', (await request(base, '/api/feedback', roAuth)).status === 200],
+      ['GET /api/products (无 quote:manage)', (await request(base, '/api/products', roAuth)).status === 403],
+      ['GET /api/admin/backup (无 platform:billing:manage)', (await request(base, '/api/admin/backup', roAuth)).status === 403],
+    ];
+    check(
+      '清单声明的权限与守卫实际拦截一致（抽查 3 条）',
+      realChecks.every(([, ok]) => ok),
+    );
+    for (const [name, ok] of realChecks) {
+      if (!ok) console.error(`  抽查不符: ${name}`);
+    }
+
+    const roMember = (await request<{ id: string; phone: string }[]>(base, '/api/team/members', authA)).body
+      .find((m) => m.phone === phoneRO);
+    if (roMember) await request(base, `/api/team/members/${roMember.id}`, { method: 'DELETE', ...authA });
   }
 
   await app.close();

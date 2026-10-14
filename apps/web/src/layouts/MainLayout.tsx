@@ -22,7 +22,7 @@ import {
   ThunderboltOutlined,
   ToolOutlined,
   VideoCameraOutlined,
-  WalletOutlined, ApartmentOutlined,
+  WalletOutlined, ApartmentOutlined, TeamOutlined,
 } from '@ant-design/icons';
 import {
   Avatar,
@@ -82,6 +82,15 @@ const THEME_ITEMS: { key: ThemeMode; label: string }[] = [
   { key: 'light', label: '浅色模式' },
   { key: 'dark', label: '深色模式' },
 ];
+
+/** 顶栏额度/会员卡片的显示开关（0.1.54）。默认不显示 */
+const SHOW_BILLING_KEY = 'show_billing';
+export const SHOW_BILLING_EVENT = 'billing-visibility-changed';
+/** 供设置页调用：写 localStorage 并广播（同标签页 storage 事件不触发） */
+export function setShowBilling(next: boolean): void {
+  localStorage.setItem(SHOW_BILLING_KEY, next ? '1' : '0');
+  window.dispatchEvent(new Event(SHOW_BILLING_EVENT));
+}
 
 /** 顶栏额度胶囊（紫点 + 数字） */
 function TokenPill(): ReactNode {
@@ -153,6 +162,25 @@ export function MainLayout(): ReactNode {
   const [collapsed, setCollapsed] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [plans, setPlans] = useState<PlanSidebarItem[]>([]);
+  /**
+   * 额度胶囊与「会员与额度」按钮：**默认隐藏**（0.1.54）。
+   * 项目定位是开源免费自部署，这两个数字对使用者没有实际意义，却占着顶栏最显眼的位置，
+   * 还容易被误读成「要先充值才能用」。留一个开关，需要看账的人可以在个人中心打开。
+   */
+  const [showBilling, setShowBilling] = useState(() => localStorage.getItem(SHOW_BILLING_KEY) === '1');
+  useEffect(() => {
+    const onStorage = (e: StorageEvent): void => {
+      if (e.key === SHOW_BILLING_KEY) setShowBilling(e.newValue === '1');
+    };
+    window.addEventListener('storage', onStorage);
+    // 同标签页内自定义事件（设置页改的是同一个窗口，storage 事件不跨标签页触发）
+    const onToggle = (): void => setShowBilling(localStorage.getItem(SHOW_BILLING_KEY) === '1');
+    window.addEventListener(SHOW_BILLING_EVENT, onToggle);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(SHOW_BILLING_EVENT, onToggle);
+    };
+  }, []);
 
   // 侧栏历史列表需要方案记录；在路由切换时刷新，保证生成/编辑后及时更新
   useEffect(() => {
@@ -227,7 +255,10 @@ export function MainLayout(): ReactNode {
       ],
     };
     // 个人中心人人可见；模型配置仅具备平台配置权限（开源自部署默认 tenant_admin 即有）时追加
-    const systemChildren: NonNullable<MenuProps['items']> = [{ key: '/tokens', icon: <WalletOutlined />, label: '个人中心' }];
+    const systemChildren: NonNullable<MenuProps['items']> = [
+      { key: '/team', icon: <TeamOutlined />, label: '团队与接入' },
+      { key: '/tokens', icon: <WalletOutlined />, label: '个人中心' },
+    ];
     if (canManageModels) systemChildren.push({ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' });
     const system: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
@@ -241,7 +272,7 @@ export function MainLayout(): ReactNode {
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
-    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/tokens', '/model-config', '/lighting', '/feedback', '/vip']) {
+    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/team', '/tokens', '/model-config', '/lighting', '/feedback', '/vip']) {
       if (p.startsWith(k)) return k;
     }
     return '/';
@@ -612,7 +643,7 @@ export function MainLayout(): ReactNode {
 
           <div style={{ flex: 1 }} />
 
-          <TokenPill />
+          {showBilling && <TokenPill />}
           {/* 主题切换：常驻顶栏，不再只藏在头像菜单里。
               明暗两套的卡片配色由 AntD 算法派生，这里只提供入口与当前态指示。 */}
           <Segmented
@@ -670,19 +701,21 @@ export function MainLayout(): ReactNode {
               充值与开票请联系平台助理；一个公司可开通多个员工账号，共享会员权益与额度，个人对话与资料相互隔离。
             </Text>
           </Modal>
-          <Button
-            size="small"
-            onClick={() => navigate('/vip')}
-            style={{
-              borderRadius: 16,
-              background: BRAND_GRADIENT,
-              border: 'none',
-              color: '#ffffff',
-              display: isDesktop ? 'inline-flex' : 'none',
-            }}
-          >
-            会员与额度
-          </Button>
+          {showBilling && (
+            <Button
+              size="small"
+              onClick={() => navigate('/vip')}
+              style={{
+                borderRadius: 16,
+                background: BRAND_GRADIENT,
+                border: 'none',
+                color: '#ffffff',
+                display: isDesktop ? 'inline-flex' : 'none',
+              }}
+            >
+              会员与额度
+            </Button>
+          )}
 
           <Dropdown menu={userMenu} trigger={['click']} placement="bottomRight">
             <Button

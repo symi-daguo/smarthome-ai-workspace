@@ -123,6 +123,10 @@ export class MediaController {
     return this.media.listMySubmissions(user.activeTenantId as string, user.id);
   }
 
+  // 这个接口会 consume 100 token。此前**没有挂任何守卫**，等于连只读成员都能花租户额度 ——
+  // 已由「清单声明与守卫装饰器一致性」检查抓出（声明 []，但它确实在扣费）。
+  // 按模块惯例归到 content:generate：它同样会创建 mediaAsset。
+  @RequirePermissions('content:generate')
   @Post('materials/purchase')
   purchase(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

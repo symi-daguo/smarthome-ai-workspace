@@ -21,7 +21,7 @@ import {
   Progress,
   Radio,
   Row,
-  Space,
+  Space, Switch,
   Table,
   Tag,
   Typography,
@@ -33,6 +33,7 @@ import { api, tokenStore } from '../lib/api';
 import { tokenToYuan } from '../lib/money';
 import { PageHeader } from '../components/PageHeader';
 import { useAuth, type UserProfile } from '../store/AuthContext';
+import { setShowBilling } from '../layouts/MainLayout';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
 import { BRAND_GRADIENT, INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
@@ -116,6 +117,7 @@ export function TokenCenter(): ReactNode {
   const { token } = useToken();
   const { user, logout, refresh, renewToken } = useAuth();
   const { mode, setMode } = useTheme();
+  const [showBilling, setShowBillingState] = useState(() => localStorage.getItem('show_billing') === '1');
   const [renewing, setRenewing] = useState(false);
   const [balance, setBalance] = useState<TokenBalance | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
@@ -362,7 +364,14 @@ export function TokenCenter(): ReactNode {
                 options={THEME_OPTIONS}
                 block
               />
-              <Button type="primary" loading={profileSaving} onClick={() => void saveProfile()} block>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
+                <Space direction="vertical" size={0}>
+                  <Text style={{ fontSize: 13 }}>顶栏显示额度与会员</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>默认隐藏，开源免费使用下这两项没有实际意义</Text>
+                </Space>
+                <Switch checked={showBilling} onChange={(v) => { setShowBillingState(v); setShowBilling(v); }} />
+              </div>
+              <Button type="primary" loading={profileSaving} onClick={() => void saveProfile()} block style={{ marginTop: 8 }}>
                 保存资料
               </Button>
             </Form>

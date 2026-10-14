@@ -21,6 +21,7 @@ import { FeedbackModule } from './feedback/feedback.module.js';
 import { LightingModule } from './lighting/lighting.module.js';
 import { CanvasModule } from './canvas/canvas.module.js';
 import { AgentModule } from './agent/agent.module.js';
+import { TeamModule } from './team/team.module.js';
 import { AuditInterceptor } from './agent/audit.interceptor.js';
 
 @Module({
@@ -53,6 +54,8 @@ import { AuditInterceptor } from './agent/audit.interceptor.js';
     CanvasModule,
     // 0.1.53：机器接入（API Key / 能力清单 / 快照还原）+ 全量审计
     AgentModule,
+    // 0.1.54：团队成员与角色模板
+    TeamModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

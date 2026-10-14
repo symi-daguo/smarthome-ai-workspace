@@ -140,6 +140,8 @@ export interface AuthProfile {
   avatarColor?: string | null;
   /** 机器账号：只经 API Key 访问。审计据此把操作归类为 AGENT 而非 USER */
   isServiceAccount?: boolean;
+  /** 由 JwtStrategy 写入：这枚 API Key 归属的租户。TenantGuard 用它拒绝「拿 A 的 Key 访问 B」 */
+  apiKeyTenantId?: string;
   /** 由 TenantGuard 写入：当前生效租户 */
   activeTenantId?: string;
   memberships: {

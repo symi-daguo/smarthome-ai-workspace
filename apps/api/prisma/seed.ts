@@ -15,8 +15,8 @@ if (!process.env.DATABASE_URL) {
 
 const prisma = new PrismaClient({ adapter: createPgAdapter() });
 
-const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; permissions: string[] }[] = [
-  { key: 'super_admin', name: '超级管理员', scope: 'PLATFORM', permissions: [...PERMISSIONS] },
+const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; permissions: string[]; description: string }[] = [
+  { key: 'super_admin', name: '超级管理员', scope: 'PLATFORM', permissions: [...PERMISSIONS], description: '平台级最高权限，可跨租户' },
   {
     key: 'tenant_admin',
     name: '租户管理员',
@@ -29,8 +29,6 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
       // 开源自部署：每个部署者都要配置自己的 API Key/本地模型，
       // 模型配置中心默认对租户管理员开放（会员机制保留，权限不锁死）
       'platform:billing:manage',
-      // 0.1.53：Agent 全量审计上线后，租户管理员必须能看到「谁在什么时候用哪个接口改了什么」，
-      // 否则追溯能力建了也没人用得上
       'platform:audit:view',
       'content:generate',
       'content:extract',
@@ -41,22 +39,70 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
       'publish:manage',
       'cs:manage',
     ],
+    description: '本团队全部操作权：报价、接单、方案、成员管理、模型配置、数据备份',
+  },
+  // —— 以下按门店/家装公司的真实岗位划分 ——
+  // 每个岗位只拿自己每天真正要用的动作，权限越窄误操作面越小。
+  {
+    key: 'sales',
+    name: '销售顾问',
+    scope: 'TENANT',
+    permissions: ['order:manage', 'quote:manage', 'content:extract', 'knowledge:read', 'cs:manage'],
+    description: '接待客户、报价、出报价单；不能改团队设置，也看不到模型配置',
   },
   {
     key: 'designer',
     name: '设计师',
     scope: 'TENANT',
-    permissions: ['content:generate', 'content:extract', 'knowledge:manage', 'knowledge:read', 'cs:manage'],
+    permissions: ['content:generate', 'content:extract', 'knowledge:manage', 'knowledge:read', 'publish:manage', 'cs:manage'],
+    description: '做方案与出图、渲染户型图、维护知识库；不碰客户报价与接单',
+  },
+  {
+    key: 'delivery',
+    name: '施工交付',
+    scope: 'TENANT',
+    permissions: ['order:manage', 'content:generate', 'content:extract', 'knowledge:read', 'cs:manage'],
+    description: '跟单交付、上传现场图与户型图、在产品库里查规格；不改价格',
+  },
+  {
+    key: 'finance',
+    name: '财务',
+    scope: 'TENANT',
+    permissions: ['tenant:billing:view', 'quote:manage', 'knowledge:read', 'cs:manage'],
+    description: '看额度账本与报价金额、做收款记录；不参与接待与出图',
+  },
+  {
+    key: 'purchase',
+    name: '采购仓管',
+    scope: 'TENANT',
+    permissions: ['quote:manage', 'knowledge:read', 'cs:manage'],
+    description: '维护产品库、录入与调价；不接客户单、不出图',
+  },
+  {
+    key: 'marketing',
+    name: '市场运营',
+    scope: 'TENANT',
+    permissions: ['publish:manage', 'content:generate', 'content:extract', 'knowledge:manage', 'knowledge:read', 'cs:manage'],
+    description: '发朋友圈/小红书、做短视频与海报；不碰客户报价与接单',
+  },
+  {
+    key: 'service',
+    name: '客服售后',
+    scope: 'TENANT',
+    permissions: ['order:manage', 'knowledge:manage', 'knowledge:read', 'cs:manage'],
+    description: '跟进老客户、应答售后问题、维护知识库；不出方案也不报价',
   },
   {
     key: 'operator',
     name: '运营',
     scope: 'TENANT',
     permissions: ['order:manage', 'quote:manage', 'publish:manage', 'cs:manage', 'content:extract', 'knowledge:read'],
+    description: '接待、报价、发布三样都沾的混合岗；职责单一时装销售顾问或市场运营，权限更窄更安全',
   },
   // 只读成员也要能提反馈：遇到问题的人恰恰常常是权限最低的人，反馈入口不能因角色低而关闭
-  { key: 'viewer', name: '只读成员', scope: 'TENANT', permissions: ['knowledge:read', 'cs:manage'] },
+  { key: 'viewer', name: '只读成员', scope: 'TENANT', permissions: ['knowledge:read', 'cs:manage'], description: '只看不能改，但可以提反馈与查知识库' },
 ];
+
 
 async function main(): Promise<void> {
   for (const action of PERMISSIONS) {
@@ -85,8 +131,10 @@ async function main(): Promise<void> {
   for (const def of ROLE_DEFS) {
     const role = await prisma.role.upsert({
       where: { key: def.key },
-      update: { name: def.name, scope: def.scope },
-      create: { key: def.key, name: def.name, scope: def.scope },
+      // description 一并同步：角色说明会显示在「团队与接入」的角色卡片上，
+      // 改了岗位定位却不同步说明，界面就会开始说谎
+      update: { name: def.name, scope: def.scope, description: def.description, isSystem: true, tenantId: null },
+      create: { key: def.key, name: def.name, scope: def.scope, description: def.description, isSystem: true },
     });
     await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
     await prisma.rolePermission.createMany({
@@ -221,6 +269,20 @@ async function main(): Promise<void> {
   const orphansUnknown = orphans.filter((p) => !knownNames.has(p.name));
   for (const o of orphansUnknown) {
     console.warn(`  ⚠ 公共库孤儿产品（不在 PRODUCT_DEFS 且 sku/model 为空）：${o.name}（${o.id}）`);
+  }
+
+  // 清理孤儿系统角色：从 ROLE_DEFS 里移除、且没有任何成员在用的系统角色必须删掉。
+  // 不清理的话它会带着过时说明继续出现在「团队与接入」的角色卡片上，
+  // 让人以为系统支持一个其实已经没人维护的岗位。
+  const staleRoles = await prisma.role.findMany({
+    where: { isSystem: true, key: { notIn: ROLE_DEFS.map((d) => d.key) } },
+    include: { _count: { select: { memberships: true } } },
+  });
+  for (const r of staleRoles) {
+    if (r._count.memberships === 0) {
+      await prisma.role.delete({ where: { id: r.id } });
+      console.log(`  · 清理孤儿系统角色 ${r.key}（无人使用）`);
+    }
   }
 
   console.log(
