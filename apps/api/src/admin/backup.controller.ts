@@ -27,6 +27,8 @@ const BACKUP_TABLES = [
   'imageConversation', 'imageTurn', 'generationJob',
   // 0.1.45 素材库投稿
   'materialSubmission',
+  // 0.1.53 Agent 机器接入：机器账号与 API Key 丢了就得全部重新签发，快照丢了就再也回不到操作前
+  'apiKey', 'changeSnapshot',
 ] as const;
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)

@@ -80,6 +80,8 @@ export class AuthService {
       phone: user.phone,
       displayName: user.displayName,
       avatarColor: user.avatarColor,
+      // 审计要能区分「人点的」与「Agent 跑的」，机器账号没有可用密码，标记只能来自库里
+      isServiceAccount: user.isServiceAccount,
       memberships: user.memberships.map((m) => ({
         tenantId: m.tenant.id,
         tenantName: m.tenant.name,
@@ -136,6 +138,8 @@ export interface AuthProfile {
   phone: string;
   displayName: string;
   avatarColor?: string | null;
+  /** 机器账号：只经 API Key 访问。审计据此把操作归类为 AGENT 而非 USER */
+  isServiceAccount?: boolean;
   /** 由 TenantGuard 写入：当前生效租户 */
   activeTenantId?: string;
   memberships: {

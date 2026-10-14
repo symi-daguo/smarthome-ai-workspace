@@ -1,0 +1,326 @@
+/**
+ * Agent 能力清单（0.1.53）
+ *
+ * 为什么要有它：Agent 要摸清「这个系统能干什么」，最省钱的办法不是读源码（几十万 token），
+ * 而是先读一份结构化的清单。设计目标是**按需取**：
+ *   GET /api/agent/manifest            → 极小的索引（分组 + 危险操作清单），约 300 token
+ *   GET /api/agent/manifest?group=quote → 只取报价这一组的详细操作，约 300 token
+ * 全量取（约 3.4k token）只在需要通盘了解时用。
+ *
+ * 漂移防护：apps/api/test/smoke.ts 会用真实路由表逐条比对，
+ * 新增接口忘了写进清单 → 门禁 FAIL。清单漏项不会被静默放过。
+ *
+ * risk 含义：
+ *   write       会改数据
+ *   destructive 会删数据或不可逆。调用前应先打快照（见 notes.snapshotProtocol）
+ */
+
+/** 跨接口通用约定，写一次、在每组开头重复引用，避免 Agent 逐条重读 */
+export const COMMON_NOTES = {
+  auth: '所有 /api/*（除 /api/auth/* 与 /api/public/*）都需要 `Authorization: Bearer <token>`。Agent 用 API Key 即可，它本身就是一枚 JWT。',
+  tenant: '多租户：默认用 token 里的首个成员身份；跨租户时带 `X-Tenant-Id: <tenantId>`。',
+  errors: '错误体 `{ statusCode, message, error }`。message 是稳定的英文错误码，可据此分支，不要匹配中文文案。',
+  idempotency: '写操作建议带 `X-Request-Id`，审计日志按它串联成一次动作，便于回溯。',
+  snapshotProtocol: [
+    '动数据前：`POST /api/agent/snapshots {label}` 拿 id（label 写清楚这一步要干什么）。',
+    '破坏性操作（risk=destructive）若未带 `X-Snapshot-Id`，系统会自动打一份 auto 快照，仍会放行但请去 /api/agent/snapshots 确认。',
+    '出问题：`POST /api/agent/snapshots/{id}/restore {confirm:"<id前8位>"}` 还原到操作前。',
+    '撤不回：已花掉的模型调用费、已生成的图片/视频、已发出的通知。',
+  ].join('\n'),
+} as const;
+
+export type Risk = 'read' | 'write' | 'destructive';
+
+export interface ManifestOp {
+  m: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  p: string;
+  /** 一句话：这条接口干什么 */
+  d: string;
+  risk: Risk;
+  /** 只列「容易填错」的关键参数，其余靠 DTO 校验 */
+  q?: Record<string, string>;
+}
+
+export interface ManifestGroup {
+  id: string;
+  name: string;
+  /** 这组解决什么业务问题 */
+  about: string;
+  ops: ManifestOp[];
+}
+
+const R = 'read' as const;
+const W = 'write' as const;
+const D = 'destructive' as const;
+
+export const MANIFEST: ManifestGroup[] = [
+  {
+    id: 'agent',
+    name: 'Agent 自身（机器接入）',
+    about: '签发/吊销 API Key、管理服务账号、打快照与还原、看审计。你用这套接入本系统。',
+    ops: [
+      { m: 'GET', p: '/api/agent/manifest', d: '本清单。?index=1 取索引，?group=xxx 取单组详情', risk: R },
+      { m: 'POST', p: '/api/agent/service-accounts', d: '建机器账号（无可用密码，只能用 Key 登录）', risk: W, q: { name: '展示名', roleKey: 'super_admin|tenant_admin|designer|operator|viewer' } },
+      { m: 'GET', p: '/api/agent/service-accounts', d: '列本租户的机器账号', risk: R },
+      { m: 'POST', p: '/api/agent/keys', d: '签发 API Key。只返回一次，平台不留存密钥材料', risk: W, q: { name: '用途标签', ttlDays: '1-365，默认 90', serviceAccountId: '不给则给当前用户自己建' } },
+      { m: 'GET', p: '/api/agent/keys', d: '列 Key（只有前 12 位与状态，无明文）', risk: R },
+      { m: 'POST', p: '/api/agent/keys/{id}/revoke', d: '吊销 Key，立即生效', risk: W },
+      { m: 'POST', p: '/api/agent/snapshots', d: '动数据前打快照，整租户相关表存 JSON', risk: W, q: { label: '写清这一步要干什么', trigger: 'manual|auto' } },
+      { m: 'GET', p: '/api/agent/snapshots', d: '列快照（不拉数据体）', risk: R },
+      { m: 'POST', p: '/api/agent/snapshots/{id}/restore', d: '还原到该快照。撤不回已花掉的额度与已生成的媒体', risk: D, q: { confirm: '必须是快照 id 前 8 位，防手滑', dropNewer: '默认 true，连快照后新增的数据一起删' } },
+      { m: 'GET', p: '/api/agent/audit', d: '查审计。?actorKind=agent 只看机器操作', risk: R, q: { requestId: '精确追一次动作', limit: '默认 100' } },
+    ],
+  },
+  {
+    id: 'auth',
+    name: '登录与身份',
+    about: '人用的登录接口。Agent 不要走这里，用 /api/agent/keys。',
+    ops: [
+      { m: 'POST', p: '/api/auth/register', d: '注册新租户（开箱即用的第一条路）', risk: W },
+      { m: 'POST', p: '/api/auth/login', d: '手机号+密码换 JWT', risk: R },
+      { m: 'GET', p: '/api/auth/me', d: '当前身份与权限列表', risk: R },
+      { m: 'POST', p: '/api/auth/refresh', d: '用旧 token 换新 token', risk: R },
+      { m: 'PATCH', p: '/api/auth/profile', d: '改昵称/头像底色', risk: W },
+      { m: 'POST', p: '/api/auth/change-password', d: '改密码。会自增令牌版本，旧 token 全部立即失效', risk: W },
+    ],
+  },
+  {
+    id: 'tenant',
+    name: '租户与额度',
+    about: '额度账本。你在界面上看到的「¥xxx」就是这个余额。',
+    ops: [
+      { m: 'GET', p: '/api/tenants/current', d: '当前租户信息', risk: R },
+      { m: 'GET', p: '/api/tenants/mine', d: '我加入的所有租户', risk: R },
+      { m: 'GET', p: '/api/tenants/current/tokens', d: '额度余额', risk: R },
+      { m: 'GET', p: '/api/tenants/current/tokens/ledger', d: '额度流水（发放/消耗）', risk: R },
+      { m: 'POST', p: '/api/tenants/current/tokens/grant', d: '发放额度', risk: W },
+    ],
+  },
+  {
+    id: 'quote',
+    name: '智能报价',
+    about: '从产品库选品配单、算总价、导出报价单。门店报价主流程。',
+    ops: [
+      { m: 'GET', p: '/api/products', d: '产品库列表（可按分类/关键词过滤）', risk: R },
+      { m: 'POST', p: '/api/products/mine', d: '加一个自建产品', risk: W },
+      { m: 'PATCH', p: '/api/products/{id}', d: '改产品', risk: W },
+      { m: 'DELETE', p: '/api/products/{id}', d: '删产品', risk: D },
+      { m: 'POST', p: '/api/products/{id}/copy-to-mine', d: '把公共库产品复制一份到我的库（可改价改规格）', risk: W },
+      { m: 'POST', p: '/api/products/ai-process', d: '用 AI 从一段描述抽取产品参数并落库', risk: W },
+      { m: 'GET', p: '/api/categories', d: '品类字典', risk: R },
+      { m: 'POST', p: '/api/categories/mine', d: '加自定义品类', risk: W },
+      { m: 'DELETE', p: '/api/categories/{id}', d: '删自定义品类', risk: D },
+    ],
+  },
+  {
+    id: 'order',
+    name: '开始接单',
+    about: '销售接待工作台：粘贴客户原话 → AI 结构化建档 → 跟进到成交。',
+    ops: [
+      { m: 'GET', p: '/api/orders', d: '接单列表', risk: R },
+      { m: 'POST', p: '/api/orders', d: '新建接单', risk: W },
+      { m: 'GET', p: '/api/orders/{id}', d: '接单详情', risk: R },
+      { m: 'PATCH', p: '/api/orders/{id}', d: '改接单', risk: W },
+      { m: 'DELETE', p: '/api/orders/{id}', d: '删接单（含其跟进记录）', risk: D },
+      { m: 'POST', p: '/api/orders/intake', d: '★ AI 解析建档：喂客户原始描述，出结构化需求。会真实调用模型并扣额度', risk: W, q: { text: '客户原话', '会消耗额度': 'true' } },
+      { m: 'PATCH', p: '/api/orders/{id}/status', d: '推进/回退接单状态', risk: W },
+      { m: 'POST', p: '/api/orders/{id}/notes', d: '加跟进记录', risk: W },
+      { m: 'POST', p: '/api/orders/{id}/followup', d: '生成下一步跟进建议（调模型，扣额度）', risk: W },
+    ],
+  },
+  {
+    id: 'plan',
+    name: '智能方案',
+    about: '生成方案 PPT/PDF、逐页编辑、渲染户型图，客户分享页靠 token 免登录访问。',
+    ops: [
+      { m: 'GET', p: '/api/plans', d: '方案列表', risk: R },
+      { m: 'POST', p: '/api/plans', d: '新建方案', risk: W },
+      { m: 'GET', p: '/api/plans/{id}', d: '方案详情（含分页内容）', risk: R },
+      { m: 'DELETE', p: '/api/plans/{id}', d: '删方案', risk: D },
+      { m: 'PATCH', p: '/api/plans/{id}/pages/{index}', d: '改某一页的内容', risk: W },
+      { m: 'PATCH', p: '/api/plans/{id}/floorplan', d: '设置户型图与点位', risk: W },
+      { m: 'POST', p: '/api/plans/{id}/render-floorplan', d: '渲染户型图（消耗算力）', risk: W },
+      { m: 'GET', p: '/api/plans/{token}', d: '★ 免鉴权：客户分享页读方案（微信直开用）', risk: R },
+      { m: 'GET', p: '/api/plans/{token}/floorplan', d: '★ 免鉴权：分享页的原始户型图', risk: R },
+      { m: 'GET', p: '/api/plans/{token}/rendered-floorplan', d: '★ 免鉴权：分享页的渲染后户型图', risk: R },
+    ],
+  },
+  {
+    id: 'layout',
+    name: '设备点位布局',
+    about: '上传户型平面图，从产品库点选设备布点，导出点位表。',
+    ops: [
+      { m: 'GET', p: '/api/layouts', d: '布局列表', risk: R },
+      { m: 'POST', p: '/api/layouts', d: '新建布局', risk: W },
+      { m: 'GET', p: '/api/layouts/{id}', d: '布局详情（含点位坐标）', risk: R },
+      { m: 'PATCH', p: '/api/layouts/{id}', d: '改点位/改布局', risk: W },
+      { m: 'DELETE', p: '/api/layouts/{id}', d: '删布局', risk: D },
+      { m: 'GET', p: '/api/layouts/{id}/summary', d: '点位汇总（按品类聚合，用于报价）', risk: R },
+    ],
+  },
+  {
+    id: 'lighting',
+    name: '智能灯光场景',
+    about: '上传效果图 → 编排每盏灯（含电气回路）→ 关键帧时间轴 → 出片。',
+    ops: [
+      { m: 'GET', p: '/api/lighting', d: '灯光场景列表', risk: R },
+      { m: 'POST', p: '/api/lighting', d: '保存场景（灯具坐标已归一化 0-1）', risk: W, q: { 'fixtures[].circuit': '所属电气回路 id，空串=未归组' } },
+      { m: 'GET', p: '/api/lighting/{id}', d: '场景详情', risk: R },
+      { m: 'PATCH', p: '/api/lighting/{id}', d: '改场景', risk: W },
+      { m: 'DELETE', p: '/api/lighting/{id}', d: '删场景', risk: D },
+    ],
+  },
+  {
+    id: 'canvas',
+    name: 'AI 画布',
+    about: '像聊天一样连续出图：每轮可出多个变体，支持圈选局部重绘。',
+    ops: [
+      { m: 'GET', p: '/api/canvas/conversations', d: '画布对话列表', risk: R },
+      { m: 'POST', p: '/api/canvas/conversations', d: '新建对话线', risk: W },
+      { m: 'GET', p: '/api/canvas/conversations/{id}', d: '对话线详情（含全部轮次与变体）', risk: R },
+      { m: 'PATCH', p: '/api/canvas/conversations/{id}', d: '改对话线', risk: W },
+      { m: 'DELETE', p: '/api/canvas/conversations/{id}', d: '删整条对话线（含轮次与作业）', risk: D },
+      { m: 'POST', p: '/api/canvas/conversations/{id}/turns', d: '★ 发一轮出图。会真实调模型、扣额度。接新轮次必须带 parentId', risk: W, q: { parentId: '续轮必传；不传会变成新的根轮次导致界面不显示' } },
+      { m: 'PATCH', p: '/api/canvas/turns/{id}', d: '改一轮的描述', risk: W },
+      { m: 'DELETE', p: '/api/canvas/turns/{id}', d: '删一轮', risk: D },
+      { m: 'GET', p: '/api/canvas/jobs/{id}', d: '查某个出图作业状态', risk: R },
+      { m: 'POST', p: '/api/canvas/jobs/{id}/run', d: '手动触发待执行作业', risk: W },
+      { m: 'GET', p: '/api/canvas/tasks', d: '进行中的任务', risk: R },
+      { m: 'DELETE', p: '/api/canvas/tasks/finished', d: '清掉已完成的作业记录', risk: D },
+    ],
+  },
+  {
+    id: 'media',
+    name: '素材与生成',
+    about: '上传落库、生图、生视频、素材库投稿。★ 生成类接口会真实扣额度。',
+    ops: [
+      { m: 'POST', p: '/api/media/uploads', d: '上传一个文件（multipart），返回 assetId 供后续引用', risk: W },
+      { m: 'GET', p: '/api/media/assets', d: '素材库列表', risk: R },
+      { m: 'GET', p: '/api/media/assets/{id}/file', d: '取文件本体', risk: R, q: { '鉴权': 'img/video 链接不能带 Authorization 头，用 ?token= 查询参数' } },
+      { m: 'PATCH', p: '/api/media/assets/{id}', d: '改素材元信息', risk: W },
+      { m: 'DELETE', p: '/api/media/assets/{id}', d: '删素材（行+文件）', risk: D },
+      { m: 'POST', p: '/api/media/images', d: '★ 生图。会调模型、扣额度', risk: W },
+      { m: 'POST', p: '/api/media/images/reverse-prompt', d: '★ 反推提示词。会调模型、扣额度', risk: W },
+      { m: 'POST', p: '/api/media/videos', d: '★ 生视频。会调模型、扣额度', risk: W },
+      { m: 'POST', p: '/api/media/materials/upload', d: '素材库投稿上传', risk: W },
+      { m: 'POST', p: '/api/media/materials/submissions', d: '提交素材投稿', risk: W },
+      { m: 'GET', p: '/api/media/materials/submissions', d: '我的投稿', risk: R },
+      { m: 'POST', p: '/api/media/materials/purchase', d: '购买素材授权', risk: W },
+    ],
+  },
+  {
+    id: 'agents',
+    name: '智能体',
+    about: '自建智能体（人设 + 首条任务），与预置的 13 个角色并存。',
+    ops: [
+      { m: 'GET', p: '/api/agents', d: '智能体列表', risk: R },
+      { m: 'POST', p: '/api/agents', d: '建智能体', risk: W, q: { systemPrompt: '人设，决定它以什么身份回答', starterPrompt: '点开时预填的第一条任务' } },
+      { m: 'PATCH', p: '/api/agents/{id}', d: '改智能体', risk: W },
+      { m: 'DELETE', p: '/api/agents/{id}', d: '删智能体', risk: D },
+    ],
+  },
+  {
+    id: 'knowledge',
+    name: '知识库',
+    about: '外部知识源接入与检索。',
+    ops: [
+      { m: 'GET', p: '/api/knowledge/external', d: '已接入的外部源', risk: R },
+      { m: 'PUT', p: '/api/knowledge/external', d: '接入/更新一个外部源', risk: W },
+      { m: 'DELETE', p: '/api/knowledge/external', d: '断开外部源', risk: D },
+      { m: 'POST', p: '/api/knowledge/external/search', d: '在外部源里检索', risk: R },
+      { m: 'POST', p: '/api/knowledge/external/test', d: '测连通性', risk: R },
+    ],
+  },
+  {
+    id: 'content',
+    name: '内容提取',
+    about: '上传文档/录音/URL，抽成结构化字段并人工确认。',
+    ops: [
+      { m: 'GET', p: '/api/content/extractions', d: '提取任务列表', risk: R },
+      { m: 'GET', p: '/api/content/extractions/{id}', d: '任务详情（含抽出的字段与缺失项）', risk: R },
+      { m: 'POST', p: '/api/content/extractions/upload', d: '上传文档并提取', risk: W },
+      { m: 'POST', p: '/api/content/extractions/transcript', d: '上传录音转写并提取', risk: W },
+      { m: 'POST', p: '/api/content/extractions/url', d: '按 URL 抓取并提取', risk: W },
+      { m: 'POST', p: '/api/content/extractions/{id}/confirm', d: '人工确认抽出的字段', risk: W },
+      { m: 'GET', p: '/api/content/extractions/documents', d: '已提取文档列表', risk: R },
+      { m: 'DELETE', p: '/api/content/extractions/documents/{id}', d: '删文档及其字段', risk: D },
+    ],
+  },
+  {
+    id: 'feedback',
+    name: '问题反馈',
+    about: '用户提的问题与官方回复。',
+    ops: [
+      { m: 'GET', p: '/api/feedback', d: '反馈列表', risk: R },
+      { m: 'POST', p: '/api/feedback', d: '提交反馈', risk: W },
+      { m: 'GET', p: '/api/feedback/{id}', d: '反馈详情', risk: R },
+      { m: 'PATCH', p: '/api/feedback/{id}', d: '回复/改反馈', risk: W },
+      { m: 'DELETE', p: '/api/feedback/{id}', d: '删反馈', risk: D },
+    ],
+  },
+  {
+    id: 'llm',
+    name: '模型直调',
+    about: '直接调对话模型。走这条不会经过平台的额度记账，慎用。',
+    ops: [
+      { m: 'POST', p: '/api/llm/chat', d: '直调对话模型', risk: W, q: { '⚠️': '不扣平台额度，等于绕过计费' } },
+    ],
+  },
+  {
+    id: 'model-config',
+    name: '模型配置（部署级）',
+    about: '配置各家模型接入与 API Key。属于部署者配置，Agent 一般不该动。',
+    ops: [
+      { m: 'GET', p: '/api/admin/model-config', d: '读配置（密钥只返回掩码）', risk: R },
+      { m: 'PUT', p: '/api/admin/model-config/chat', d: '改对话模型配置', risk: W, q: { apiKey: '传空串=保持原样；不传=不变' } },
+      { m: 'PUT', p: '/api/admin/model-config/image', d: '改生图模型配置', risk: W },
+      { m: 'PUT', p: '/api/admin/model-config/video', d: '改生视频模型配置', risk: W },
+      { m: 'GET', p: '/api/admin/model-config/profiles', d: '配置档列表', risk: R },
+      { m: 'POST', p: '/api/admin/model-config/profiles/save', d: '存配置档', risk: W },
+      { m: 'POST', p: '/api/admin/model-config/profiles/{id}/activate', d: '切换配置档', risk: W },
+      { m: 'DELETE', p: '/api/admin/model-config/profiles/{id}', d: '删配置档', risk: D },
+      { m: 'POST', p: '/api/admin/model-config/test-chat', d: '测对话模型连通（调模型）', risk: W },
+      { m: 'POST', p: '/api/admin/model-config/test-image', d: '测生图模型连通（调模型）', risk: W },
+      { m: 'POST', p: '/api/admin/model-config/test-video', d: '测生视频模型连通（调模型）', risk: W },
+      { m: 'POST', p: '/api/admin/model-config/test-comfy', d: '测 ComfyUI 连通', risk: W },
+      { m: 'GET', p: '/api/admin/model-config/agent-skillpack', d: '取给 Agent 用的技能包描述', risk: R },
+      { m: 'DELETE', p: '/api/admin/model-config/{scope}', d: '清掉某类模型配置（会连同密钥）', risk: D },
+    ],
+  },
+  {
+    id: 'admin',
+    name: '备份与存储治理（部署级）',
+    about: '全库备份、产物占用统计与清理。',
+    ops: [
+      { m: 'GET', p: '/api/admin/backup', d: '全库 JSON 快照下载（同时在 uploads/backups 留一份）', risk: R, q: { '⚠️': '含用户手机号等敏感数据，别外传' } },
+      { m: 'GET', p: '/api/admin/storage', d: '产物占用统计', risk: R },
+      { m: 'POST', p: '/api/admin/storage/cleanup', d: '清理 N 天前且未被引用的产物（行+文件）', risk: D, q: { beforeDays: '天阈值，传 0 只为实测连通性' } },
+    ],
+  },
+];
+
+/** 危险操作速查：只想要「别手滑」的清单时读这个 */
+export function destructiveOps(): { m: string; p: string; d: string; group: string }[] {
+  return MANIFEST.flatMap((g) => g.ops.filter((o) => o.risk === 'destructive').map((o) => ({ m: o.m, p: o.p, d: o.d, group: g.id })));
+}
+
+/** 清单里声明过的全部「METHOD /path」，smoke 用它跟真实路由比对做漂移检查 */
+export function manifestRouteKeys(): Set<string> {
+  return new Set(MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`)));
+}
+
+/**
+ * 破坏性操作的实际路径模板（Nest 风格 :param），供运行期按请求路径识别。
+ *
+ * 为什么要「识别」而不是给每个端点加守卫：逐个端点加标记，加漏一个就等于没防护，
+ * 而漏的那个恰好是最容易被误调的那个。清单是单一事实来源，转成运行时模式只有一个地方要对。
+ */
+export function destructivePatterns(): { method: string; pattern: RegExp }[] {
+  return MANIFEST.flatMap((g) =>
+    g.ops.filter((o) => o.risk === 'destructive').map((o) => ({
+      method: o.m,
+      // {id} → :id，再转成能匹配任意一段路径的捕获组
+      pattern: new RegExp(`^${o.p.replace(/\{[^}]+\}/g, '[^/]+').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+    })),
+  );
+}

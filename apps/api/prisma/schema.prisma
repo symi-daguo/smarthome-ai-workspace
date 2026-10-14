@@ -58,32 +58,38 @@ model Tenant {
 
   memberships Membership[]
   ledgers     TokenLedger[]
+  apiKeys     ApiKey[]
+  snapshots   ChangeSnapshot[]
 }
 
 model User {
-  id           String   @id @default(uuid())
-  phone        String   @unique
-  passwordHash String
-  displayName  String
+  id               String   @id @default(uuid())
+  phone            String   @unique
+  passwordHash     String
+  displayName      String
   // 侧栏头像底色（个人设置可改）
-  avatarColor  String?
+  avatarColor      String?
   // 令牌版本：改密/登出全部设备时自增，旧 JWT 内 tv 不匹配即失效
-  tokenVersion Int      @default(0)
-  status       Status   @default(ACTIVE)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  tokenVersion     Int      @default(0)
+  status           Status   @default(ACTIVE)
+  // 机器账号：由 Agent 服务账号接口创建，无可用密码（passwordHash 存不可登录的随机值），
+  // 只经 API Key 访问。不加这个标记就没法把「人点的操作」和「Agent 跑的操作」在审计里区分开。
+  isServiceAccount Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   memberships Membership[]
   ledgers     TokenLedger[]
+  apiKeys     ApiKey[]
 }
 
 model Role {
-  id       String    @id @default(uuid())
-  key      String    @unique
-  name     String
-  scope    RoleScope
-  isSystem Boolean   @default(true)
-  createdAt DateTime @default(now())
+  id        String    @id @default(uuid())
+  key       String    @unique
+  name      String
+  scope     RoleScope
+  isSystem  Boolean   @default(true)
+  createdAt DateTime  @default(now())
 
   rolePermissions RolePermission[]
   memberships     Membership[]
@@ -137,15 +143,130 @@ model TokenLedger {
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  tenantId  String?
-  actorId   String?
-  action    String
-  target    String?
-  ip        String?
-  createdAt DateTime @default(now())
+  id            String    @id @default(uuid())
+  tenantId      String?
+  actorId       String?
+  action        String
+  target        String?
+  ip            String?
+  // —— 0.1.53 全量审计：此前只有 llm/layout/knowledge 三处手写记录，
+  // 报价/接单/灯光/画布/方案/智能体/反馈一条都不记，等于无法追溯。
+  // 改由全局拦截器兜底写入，下面几列支撑「谁在什么时候用哪个接口改了什么」。
+  /**
+   * /** 贯穿一次请求的链路 ID：客户端可自带 x-request-id，便于把多条日志串成一次动作
+   */
+  requestId     String?
+  /**
+   * 操作者类型：user=人在界面点的，agent=机器凭证调的
+   */
+  actorKind     ActorKind @default(USER)
+  method        String?
+  path          String?
+  statusCode    Int?
+  /**
+   * 请求体的 SHA-256 摘要（不存明文：正文可能含客户信息与提示词）
+   */
+  payloadDigest String?
+  /**
+   * 关联的操作前快照 ID；restore 时可据此说明「从哪个快照回滚」
+   */
+  snapshotId    String?
+  durationMs    Int?
+  ok            Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  apiKeys   ApiKey[]
+  snapshots ChangeSnapshot[]
 
   @@index([tenantId, createdAt])
+  @@index([requestId])
+  @@index([actorKind, createdAt])
+}
+
+enum ActorKind {
+  USER
+  AGENT
+  SYSTEM
+}
+
+// ---------- Agent 机器接入（0.1.53）----------
+
+/**
+ * Agent API Key。
+ * 刻意**不在库里存密钥明文或哈希**：凭证本身就是一枚用 JWT_SECRET 签名的 JWT，
+ * payload 里带 ak=本行 id。校验时按 id 查库看 revokedAt/expiresAt 即可，
+ * 因此即使数据库整体泄露也**推不出可用凭证**（拿不到 JWT_SECRET 就伪造不出来）。
+ * 吊销 = 把 revokedAt 打上时间戳，该 JWT 立即失效，与改密失效旧 token 同一条路径。
+ */
+model ApiKey {
+  id         String    @id @default(uuid())
+  tenantId   String
+  userId     String
+  name       String
+  /**
+   * 前 8 位，仅用于界面辨认，不参与校验
+   */
+  prefix     String
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  auditLog   AuditLog? @relation(fields: [auditLogId], references: [id])
+  auditLogId String?
+
+  @@index([userId])
+  @@index([tenantId])
+}
+
+/**
+ * 操作前快照：Agent 动数据之前先把该租户的相关表整成 JSON 存这里，出问题可整租户还原。
+ * 边界（重要，不要误读）：它只能还原**数据库状态**。
+ * 已经花掉的模型调用费、已经由外部 API 生成出来的图片/视频、已经发出的通知**撤不回来**。
+ * manifest 与 snapshot 详情里都显式标注了这一点，不做「万能后悔药」的暗示。
+ */
+model ChangeSnapshot {
+  id         String          @id @default(uuid())
+  tenantId   String
+  /**
+   * 由谁创建的快照（人或 Agent 服务账号）
+   */
+  actorId    String?
+  /**
+   * 人可读的标签，如「删产品前」
+   */
+  label      String
+  /**
+   * 触发原因：manual=Agent 主动打点，auto=破坏性操作自动兜底
+   */
+  trigger    SnapshotTrigger @default(MANUAL)
+  /**
+   * { 表名: 行数组 }
+   */
+  data       Json
+  /**
+   * { 表名: 行数 }，避免为了展示就要把整份 JSON 拉出来解析
+   */
+  counts     Json
+  /**
+   * 数据体字节数，用于配额提示
+   */
+  sizeBytes  Int             @default(0)
+  restoredAt DateTime?
+  createdAt  DateTime        @default(now())
+
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  auditLog   AuditLog? @relation(fields: [auditLogId], references: [id])
+  auditLogId String?
+
+  @@index([tenantId, createdAt])
+}
+
+enum SnapshotTrigger {
+  MANUAL
+  AUTO
 }
 
 // ---------- S2 内容提取管道 ----------
@@ -172,18 +293,18 @@ model ExtractionJob {
 }
 
 model ExtractedDocument {
-  id         String   @id @default(uuid())
-  jobId      String   @unique
-  tenantId   String
-  docType    String   @default("generic")
-  title      String
+  id        String   @id @default(uuid())
+  jobId     String   @unique
+  tenantId  String
+  docType   String   @default("generic")
+  title     String
   // 标准化后的正文（保留全文用于检索与审计，超长由管道截断）
-  content    String
-  confirmed  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  content   String
+  confirmed Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  job    ExtractionJob      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job    ExtractionJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
   fields ExtractedField[]
 
   @@index([tenantId, confirmed])
@@ -220,12 +341,12 @@ model ExtractionDeficiency {
 }
 
 model ReviewConfirmation {
-  id         String   @id @default(uuid())
-  jobId      String   @unique
-  userId     String?
+  id        String   @id @default(uuid())
+  jobId     String   @unique
+  userId    String?
   // 用户补全后的字段快照
-  payload    Json
-  createdAt  DateTime @default(now())
+  payload   Json
+  createdAt DateTime @default(now())
 
   job ExtractionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
 }
@@ -256,40 +377,40 @@ model MediaAsset {
 // ---------- S3 智能方案（LLM 生成多页方案+分享链接） ----------
 
 model PlanProject {
-  id         String   @id @default(uuid())
-  tenantId   String
-  userId     String?
-  title      String
-  customer   String   @default("")
-  area       String   @default("")
-  budget     String   @default("")
-  ecosystem  String   @default("")
-  store      String   @default("")
-  highlights String   @default("")
+  id                       String   @id @default(uuid())
+  tenantId                 String
+  userId                   String?
+  title                    String
+  customer                 String   @default("")
+  area                     String   @default("")
+  budget                   String   @default("")
+  ecosystem                String   @default("")
+  store                    String   @default("")
+  highlights               String   @default("")
   // 重点空间（如"客餐厅灯光、主卧睡眠、全屋WiFi"）
-  keySpaces  String   @default("")
+  keySpaces                String   @default("")
   // 客户需求自由文本（家庭成员/装修阶段/最想实现的场景）
-  needs      String   @default("")
+  needs                    String   @default("")
   // A-K 风格键
-  style      String   @default("A")
+  style                    String   @default("A")
   // standard | presale | private
-  edition    String   @default("standard")
+  edition                  String   @default("standard")
   // 方案页数（10/12 等，最少 9）
-  pageCount  Int      @default(9)
+  pageCount                Int      @default(9)
   // 方案页数组（cover/space/scene/budget），逐页审稿编辑后整体覆盖
-  pages      Json
+  pages                    Json
   // 文案版本号（每次保存 +1）
-  versionNo  Int      @default(0)
+  versionNo                Int      @default(0)
   // 客户分享令牌（公开只读链接）
-  shareToken String   @unique @default(uuid())
+  shareToken               String   @unique @default(uuid())
   // 关联的户型平面图 MediaAsset id（空间动线页配图）
-  floorplanAssetId String?
+  floorplanAssetId         String?
   // 客户户型图精装修效果图（AI 渲染的最终展示版，用于空间动线页与分享页）
   renderedFloorplanAssetId String?
   // 点位数组 [{productId,x,y}]（x/y 归一化 0-1，叠加渲染在户型图上）
-  layoutPoints Json?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  layoutPoints             Json?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
   @@index([tenantId, createdAt])
 }
@@ -298,45 +419,45 @@ model PlanProject {
 
 // 全局共享产品目录（种子数据；租户自建产品留待后续）
 model Product {
-  id       String  @id @default(uuid())
+  id        String  @id @default(uuid())
   // null = 公共库（平台种子）；非空 = 租户「我的产品库」
-  tenantId String?
-  name     String
+  tenantId  String?
+  name      String
   // 品类 key（见 CategoryDef：预置 39 类 + 租户自定义）
-  category String
-  brand    String  @default("")
-  model    String  @default("")
+  category  String
+  brand     String  @default("")
+  model     String  @default("")
   // 计量单位（台/个/套…）
-  unit     String  @default("台")
+  unit      String  @default("台")
   // 产品主图（MediaAsset 相对路径）；点位编辑器优先用产品图作图标，无图回退品类 SVG
-  imageUrl String  @default("")
+  imageUrl  String  @default("")
   // 参考价区间（元）：兼容点位清单/旧报价口径，保存时与三级价格同步（min=工程价,max=指导价）
-  priceMin Int     @default(0)
-  priceMax Int     @default(0)
+  priceMin  Int     @default(0)
+  priceMax  Int     @default(0)
   // 每空间典型数量提示（编辑器预置用）
-  perRoom  String  @default("")
-  active   Boolean @default(true)
-  sortOrder Int    @default(0)
+  perRoom   String  @default("")
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
 
   // ---------- 标准产品主数据（0.1.31，ERP/PIM 通用口径） ----------
   // 商品编码/订货号（门店内部 SKU）
-  sku       String @default("")
+  sku            String @default("")
   // 商品条码（EAN-13/UPC；无条码留空，禁止录入真实第三方品牌码）
-  barcode   String @default("")
+  barcode        String @default("")
   // SN 码规则（序列号前缀，如 ML-LOCK-；单台设备交付扫码按此前缀）
-  snRule    String @default("")
+  snRule         String @default("")
   // 规格参数摘要（协议/尺寸/供电等一行）
-  spec      String @default("")
+  spec           String @default("")
   // 质保期（月）
-  warranty  Int    @default(12)
+  warranty       Int    @default(12)
   // 三级价格体系（元）：官方指导价（零售挂牌）/ 经销价（门店进货成本）/ 工程价（批量渠道成交参考）
-  priceRetail  Int @default(0)
-  priceDealer  Int @default(0)
-  priceProject Int @default(0)
+  priceRetail    Int    @default(0)
+  priceDealer    Int    @default(0)
+  priceProject   Int    @default(0)
   // 多级返利（百分比整数 0-100）：一级经销返点 / 二级分销返点 / 设计师（介绍人）返点
-  rebateL1       Int @default(0)
-  rebateL2       Int @default(0)
-  rebateDesigner Int @default(0)
+  rebateL1       Int    @default(0)
+  rebateL2       Int    @default(0)
+  rebateDesigner Int    @default(0)
 
   @@index([category, sortOrder])
   @@index([tenantId, category])
@@ -345,18 +466,18 @@ model Product {
 
 // 品类字典：tenantId=null 为平台预置（39 类，覆盖市面智能家居品类），非空为租户自定义分类
 model CategoryDef {
-  id       String  @id @default(uuid())
-  tenantId String?
+  id        String  @id @default(uuid())
+  tenantId  String?
   // 品类 key（预置如 gateway/light；自定义如 my-xxx，或直接用中文名 slug）
-  key      String
+  key       String
   // 中文显示名
-  label    String
+  label     String
   // 徽章配色（十六进制）
-  color    String  @default("#888888")
+  color     String  @default("#888888")
   // lucide 图标名（自定义分类从预置图标里挑一个复用）
-  icon     String  @default("radar")
-  sortOrder Int    @default(0)
-  active   Boolean @default(true)
+  icon      String  @default("radar")
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
 
   @@unique([tenantId, key])
   @@index([tenantId, active])
@@ -394,58 +515,58 @@ model ModelProfile {
 // ---------- 接单工作台（销售接待：线索状态机 + 跟进记录） ----------
 
 model OrderRequest {
-  id        String   @id @default(uuid())
-  tenantId  String
-  userId    String?
+  id          String   @id @default(uuid())
+  tenantId    String
+  userId      String?
   // 客户信息
-  customer  String
-  phone     String   @default("")
+  customer    String
+  phone       String   @default("")
   // 房屋信息
-  community String   @default("")
-  area      String   @default("")
-  layout    String   @default("") // 户型（如"四室两厅"）
+  community   String   @default("")
+  area        String   @default("")
+  layout      String   @default("") // 户型（如"四室两厅"）
   // 需求（AI 解析后的结构化要点 + 原始描述）
-  needs     String   @default("")
-  rawInput  String   @default("")
-  budget    String   @default("")
+  needs       String   @default("")
+  rawInput    String   @default("")
+  budget      String   @default("")
   // —— 接待阶段结构化采集（对齐参考站「边聊边记」表单，2026-10-13 补齐）——
   // 装修阶段：undecided 尚未开始 / designing 设计中 / waterBefore 水电施工前 /
   // waterDuring 水电施工中 / roughDone 硬装完成 / living 已经入住
-  renoStage String   @default("undecided")
+  renoStage   String   @default("undecided")
   // 房屋补充信息
-  moveInDate String  @default("")
-  city       String  @default("")
-  district   String  @default("")
-  address    String  @default("")
-  store      String  @default("")
+  moveInDate  String   @default("")
+  city        String   @default("")
+  district    String   @default("")
+  address     String   @default("")
+  store       String   @default("")
   // 生活需求细分（参考站同名字段）
-  residents   String @default("") // 谁会经常住在这里
-  priority1   String @default("")
-  priority2   String @default("")
-  priority3   String @default("")
-  exclusions  String @default("") // 明确不做的内容
-  habits      String @default("") // 控制习惯
-  nightHabits String @default("") // 睡前与夜间习惯
-  devicePrefs String @default("") // 已有设备 / 品牌偏好
+  residents   String   @default("") // 谁会经常住在这里
+  priority1   String   @default("")
+  priority2   String   @default("")
+  priority3   String   @default("")
+  exclusions  String   @default("") // 明确不做的内容
+  habits      String   @default("") // 控制习惯
+  nightHabits String   @default("") // 睡前与夜间习惯
+  devicePrefs String   @default("") // 已有设备 / 品牌偏好
   // 客户想体验的场景：字符串数组，元素取值见 SCENE_KEYS（movie/party/home/away/sleep/nightup/dinner/read/work/morning）
-  scenes Json @default("[]")
+  scenes      Json     @default("[]")
   // 系统范围矩阵：{ [systemKey]: { need: 'yes'|'no'|'maybe', area: string, detail: string } }
   // systemKey 取值见 SYSTEM_KEYS（lighting/switch/curtain/wifi/automation/security/hvac/voice/media）
-  systems Json @default("{}")
+  systems     Json     @default("{}")
   // 预算（结构化部分；budget 保留自由文本档位描述）
-  budgetMin   Int    @default(0) // 理想预算起点（元）
-  budgetMax   Int    @default(0) // 客户预算上限（元）
-  budgetScope String @default("") // 预算包含范围
+  budgetMin   Int      @default(0) // 理想预算起点（元）
+  budgetMax   Int      @default(0) // 客户预算上限（元）
+  budgetScope String   @default("") // 预算包含范围
   // 生态偏好（米家/HomeKit 等）
-  ecosystem String   @default("")
+  ecosystem   String   @default("")
   // 状态机：new 了解客户 -> qualified 需求确认 -> proposed 方案匹配 -> quoted 报价 -> won 成单 / lost 失单
-  status    String   @default("new")
+  status      String   @default("new")
   // 关联方案（生成方案后挂接）
-  planId    String?
+  planId      String?
   // 失单原因
-  lostReason String  @default("")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  lostReason  String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   notes OrderNote[]
 
@@ -467,16 +588,16 @@ model OrderNote {
 
 // 保存的点位布局图纸
 model FloorplanLayout {
-  id             String   @id @default(uuid())
-  tenantId       String
-  userId         String?
-  title          String
+  id           String   @id @default(uuid())
+  tenantId     String
+  userId       String?
+  title        String
   // 户型底图 MediaAsset id
-  mediaAssetId   String
+  mediaAssetId String
   // 点位数组 [{productId,name,category,x,y}]（x/y 归一化 0-1）
-  points         Json
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  points       Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([tenantId, createdAt])
 }
@@ -484,15 +605,15 @@ model FloorplanLayout {
 // ---------- 定制智能体（用户自建，落库替代仅存 localStorage 的方案） ----------
 
 model CustomAgent {
-  id       String @id @default(uuid())
-  tenantId String
-  userId   String
-  name     String
-  description String @default("")
+  id           String   @id @default(uuid())
+  tenantId     String
+  userId       String
+  name         String
+  description  String   @default("")
   // 人设/系统提示词：决定智能体的身份、语气、输出格式与注意事项
-  systemPrompt String @default("")
-  avatarColor  String @default("#5B5BF0")
-  enabled      Boolean @default(true)
+  systemPrompt String   @default("")
+  avatarColor  String   @default("#5B5BF0")
+  enabled      Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -503,16 +624,16 @@ model CustomAgent {
 // ---------- 问题反馈（用户提交 + 处理进度跟踪） ----------
 
 model FeedbackTicket {
-  id       String @id @default(uuid())
-  tenantId String
-  userId   String
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
   // bug | feature | other
-  category String
-  title    String
-  detail   String @default("")
+  category  String
+  title     String
+  detail    String   @default("")
   // open（待处理）| processing（处理中）| resolved（已解决）| closed（已关闭）
-  status   String @default("open")
-  reply    String @default("")
+  status    String   @default("open")
+  reply     String   @default("")
   repliedBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -523,24 +644,24 @@ model FeedbackTicket {
 // ---------- 智能灯光场景演示（灯具编排 + 手工时间轴 + 出片） ----------
 
 model LightingScene {
-  id     String @id @default(uuid())
-  tenantId String
-  userId   String
-  title   String
+  id            String   @id @default(uuid())
+  tenantId      String
+  userId        String
+  title         String
   // 参考效果图的 MediaAsset id（第一步上传）
   sourceAssetId String?
   // 画幅比例，如 16:9 / 9:16 / 1:1
-  ratio          String @default("16:9")
+  ratio         String   @default("16:9")
   // 灯具数组 [{id,type,name,x,y,brightness,colorTemp,alwaysDim,order}]（x/y 归一化 0-1）
-  fixtures       Json
+  fixtures      Json
   // 时间轴 {durationMs,tracks:[{fixtureId,keyframes:[{t,brightness,colorTemp}]}]}
-  timeline       Json
+  timeline      Json
   // 出片产物 MediaAsset id
-  videoAssetId   String?
+  videoAssetId  String?
   // draft（编排中）| ready（已出片）
-  status         String @default("draft")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  status        String   @default("draft")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([tenantId, createdAt])
 }
@@ -548,12 +669,12 @@ model LightingScene {
 // ---------- AI 画布（对话式生图：多轮 / 变体 / 分支） ----------
 
 model ImageConversation {
-  id        String   @id @default(uuid())
+  id        String      @id @default(uuid())
   tenantId  String
   userId    String
-  title     String   @default("新对话")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  title     String      @default("新对话")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
   turns     ImageTurn[]
 
   @@index([tenantId, updatedAt])
@@ -605,20 +726,20 @@ model GenerationJob {
 // ---------- 素材库投稿（创作者投稿 → 审核 → 上架供下载） ----------
 
 model MaterialSubmission {
-  id        String   @id @default(uuid())
-  tenantId  String
-  userId    String
-  title     String
-  desc      String   @default("")
+  id         String   @id @default(uuid())
+  tenantId   String
+  userId     String
+  title      String
+  desc       String   @default("")
   // 素材文件相对 UPLOAD_DIR 的路径（先经 /api/media/uploads 上传拿到 assetId）
-  filePath  String
-  mimeType  String   @default("")
-  sizeBytes Int      @default(0)
+  filePath   String
+  mimeType   String   @default("")
+  sizeBytes  Int      @default(0)
   // pending（待审核）| approved（已上架）| rejected（未通过）| offline（已下架）
-  status    String   @default("pending")
-  reviewNote String  @default("")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status     String   @default("pending")
+  reviewNote String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@index([tenantId, createdAt])
   @@index([status])

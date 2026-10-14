@@ -193,6 +193,66 @@ SEED_ADMIN_PASSWORD=（自定义强密码）
 - **磁盘治理**：`docker-compose` 已配 json-file 日志轮转（10MB×3）防日志挤爆磁盘；产物配额 `UPLOAD_QUOTA_MB`（默认 4096），个人设置可查看占用并一键清理 30 天前且未被方案/布局引用的过期产物
 - **升级不丢数据**：数据全在 `pgdata` / `api-uploads` 两个命名卷，`docker compose up -d --build` 重建镜像不影响卷；nginx 对 `index.html` 禁缓存（hash 资源 immutable），发版后浏览器不会加载到失效 chunk
 
+## Agent 机器接入（不用看界面就能操作系统）
+
+面向 AI Agent / 自动化脚本的一层：独立身份、能力清单、全量审计、操作前快照与还原。
+
+**1）身份**：独立服务账号 + 可撤销 API Key，权限完全走现有 RBAC
+
+```bash
+# 建机器账号（无可用密码，只能用 Key 登录）
+curl -X POST http://127.0.0.1:3080/api/agent/service-accounts \
+  -H "Authorization: Bearer <你的登录 token>" -H 'Content-Type: application/json' \
+  -d '{"name":"数据分析 Agent","roleKey":"viewer"}'
+
+# 签发 Key（只返回一次，平台不存密钥材料）
+curl -X POST http://127.0.0.1:3080/api/agent/keys \
+  -H "Authorization: Bearer <你的登录 token>" -H 'Content-Type: application/json' \
+  -d '{"name":"ci-runner","ttlDays":90,"serviceAccountId":"<服务账号 id>"}'
+```
+
+Key 本身是一枚用 `JWT_SECRET` 签名的 JWT，库里只留可吊销的记录 —— **数据库整体泄露也推不出可用凭证**。
+吊销：`POST /api/agent/keys/{id}/revoke`，立即生效。之后所有请求直接 `Authorization: Bearer <Key>`，
+认证、RBAC、多租户全部沿用现成链路，**不需要为 Agent 单独开一套接口**。
+
+**2）能力清单**：`GET /api/agent/manifest` 一次读懂全系统
+
+| 取法 | 用途 | 量级 |
+|---|---|---|
+| `/api/agent/manifest` | 索引：分组 + 破坏性操作清单 | ~300 token |
+| `/api/agent/manifest?group=quote` | 只取报价这一组 | ~300 token |
+| `/api/agent/manifest?full=1` | 全量 124 条路由 | ~3.4k token |
+
+比让 Agent 读源码省一两个数量级的 token。清单由 smoke 门禁做**漂移检查**：
+新增接口忘了写进清单 → 门禁 FAIL；清单写了代码里没有的路由 → 同样 FAIL。
+
+**3）审计**：所有写操作自动落库
+
+此前全项目只有 llm / layout / knowledge 三处手写记录，报价、接单、灯光、画布、方案一条都不记。
+0.1.53 改由全局拦截器兜底 —— 靠自觉补是补不齐的，且以后每加一个 service 都会再漏一次。
+每条记：谁（人点的 `USER` 还是机器跑的 `AGENT`）、什么时间、哪个接口、什么状态码、耗时多久、
+请求体 SHA-256 摘要（**存摘要不存明文**，报价单与接单记录里全是客户姓名电话）。
+客户端带 `X-Request-Id` 可把一串动作串成一次任务，用 `GET /api/agent/audit?requestId=...` 复盘。
+
+**4）操作前快照与还原**
+
+```bash
+# 动数据前打点
+curl -X POST .../api/agent/snapshots -d '{"label":"批量导入产品前"}'
+# 出问题还原（confirm 必须是快照 id 前 8 位，防手滑调错快照）
+curl -X POST .../api/agent/snapshots/{id}/restore -d '{"confirm":"<前8位>"}'
+```
+
+破坏性操作（DELETE、或清单里标 `risk=destructive` 的接口）在调用方没自带 `X-Snapshot-Id` 时，
+**拦截器会先自动打一份 `auto` 快照再放行**，快照 id 记进对应审计行。
+同一份快照不允许反复还原 —— 否则会把后续的正确操作一起冲掉。
+
+> ⚠️ **能力边界，不要当万能后悔药**：快照只还原**数据库里的行**。
+> 已经扣掉的额度、已由外部 API 生成出来的图片/视频、已发出的通知**撤不回**。
+> 这句话在快照详情与 manifest 响应里都会显式返回，不做暗示性包装。
+>
+> 快照**刻意不含** `AuditLog`（还原它等于改写「谁动过」这段历史）与模型配置（部署级共享，还原会连别的租户一起改）。
+
 ## 端口规约
 
 | 服务 | 端口 | 说明 |

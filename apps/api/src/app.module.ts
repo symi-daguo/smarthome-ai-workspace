@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module.js';
@@ -20,6 +20,8 @@ import { AgentsModule } from './agents/agents.module.js';
 import { FeedbackModule } from './feedback/feedback.module.js';
 import { LightingModule } from './lighting/lighting.module.js';
 import { CanvasModule } from './canvas/canvas.module.js';
+import { AgentModule } from './agent/agent.module.js';
+import { AuditInterceptor } from './agent/audit.interceptor.js';
 
 @Module({
   imports: [
@@ -49,7 +51,13 @@ import { CanvasModule } from './canvas/canvas.module.js';
     FeedbackModule,
     LightingModule,
     CanvasModule,
+    // 0.1.53：机器接入（API Key / 能力清单 / 快照还原）+ 全量审计
+    AgentModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // 全量审计：靠它兜住「以后新增的 service 又忘了写审计」这件事，逐个 service 手写是补不齐的
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+  ],
 })
 export class AppModule {}

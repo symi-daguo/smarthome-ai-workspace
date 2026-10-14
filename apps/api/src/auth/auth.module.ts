@@ -19,6 +19,8 @@ import { JwtStrategy } from './jwt.strategy.js';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [AuthService],
+  // 导出 JwtModule：Agent 签发 API Key 时要用同一个 secret 与同一套签发参数，
+  // 否则 Key 验不过、或与登录 token 用不同 secret 造成两套身份体系
+  exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
@@ -10,6 +10,7 @@ import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
+import { manifestRouteKeys, destructiveOps } from '../src/agent/manifest.js';
 
 const checks: [string, boolean][] = [];
 
@@ -42,7 +43,9 @@ async function request<T>(base: string, path: string, init?: RequestInit): Promi
 }
 
 async function main(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { logger: false });
+  // abortOnError:false —— 默认 true 时 DI 失败会直接 process.abort()，
+  // 连 catch 都进不去，表现为「无任何输出的 exit 1」，排查时完全瞎掉
+  const app = await NestFactory.create(AppModule, { logger: false, abortOnError: false });
   app.setGlobalPrefix('api');
   await app.listen(0, '127.0.0.1');
   const base = await app.getUrl();
@@ -1446,10 +1449,252 @@ async function main(): Promise<void> {
     check('拒绝文案点明缺的是 mask 参数并给出可行替代，而非笼统说 provider 不行', false);
   }
 
+  // ================= Agent 机器接入（0.1.53） =================
+
+  // ---------- 能力清单：索引模式必须足够小，否则省 token 的目的就落空了 ----------
+  {
+    const idx = await request<{
+      groups: { id: string; ops: number }[];
+      destructive: { p: string }[];
+      hint: string;
+    }>(base, '/api/agent/manifest', authA);
+    // 大致 300 token 的量级：1200 token 足以覆盖，500 以下说明索引太啰嗦没起到筛选作用
+    const idxTokens = Math.ceil(JSON.stringify(idx.body).length / 3);
+    check(
+      `能力清单索引可取且足够精简（${idxTokens} tokens，含 ${idx.body.groups?.length} 组）`,
+      idx.status === 200 && idxTokens > 0 && idxTokens < 1200,
+    );
+    check(
+      '索引里带得出全部破坏性操作（防误操作的前提）',
+      (idx.body.destructive?.length ?? 0) >= 15 && idx.body.destructive.every((d) => d.p.startsWith('/api/')),
+    );
+
+    const one = await request<{ group: { id: string; ops: unknown[] } }>(base, '/api/agent/manifest?group=quote', authA);
+    check(
+      '能力清单支持按组取详情',
+      one.status === 200 && one.body.group?.id === 'quote' && one.body.group.ops.length > 0,
+    );
+    const oneTokens = Math.ceil(JSON.stringify(one.body).length / 3);
+    check(`单组详情比全量省 token（单组 ${oneTokens} tokens vs 索引 ${idxTokens}）`, oneTokens < idxTokens * 3);
+  }
+
+  // ---------- 清单漂移守卫：新增接口忘了写进清单，门禁必须拦住 ----------
+  {
+    // 从源码反推真实路由（不依赖运行时反射，smoke 里也能跑）
+    const srcRoot = join(process.cwd(), 'src');
+    const real = new Set<string>();
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.controller.ts')) {
+          const src = readFileSync(p, 'utf8');
+          const cm = src.match(/@Controller\(\s*'([^']*)'/);
+          const base = (cm?.[1] ?? '').replace(/^\//, '').replace(/\/$/, '');
+          for (const mm of src.matchAll(/@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)'|\s*\))/g)) {
+            const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
+            real.add(`${mm[1].toUpperCase()} /api/${base}${sub ? `/${sub}` : ''}`.replace(/\/\/+/g, '/'));
+          }
+        }
+      }
+    };
+    walk(srcRoot);
+    // Nest 路由写 :id，清单面向 Agent 写 {id}（OpenAPI 惯例），比对前统一
+    const norm = (r: string): string => r.replace(/:([A-Za-z]+)/g, '{$1}');
+    const declared = new Set([...manifestRouteKeys()].map(norm));
+    const missing = [...real].map(norm).filter((r) => !declared.has(r)).sort();
+    check(
+      `能力清单覆盖全部真实路由（真实 ${real.size} 条，漏 ${missing.length} 条${missing.length ? '：' + missing.slice(0, 6).join(' / ') : ''}）`,
+      missing.length === 0,
+    );
+    // 反向：清单里写了但代码里没有的条目同样是错的，会把 Agent 带进沟里
+    const realNorm = new Set([...real].map(norm));
+    const ghost = [...declared].filter((r) => !realNorm.has(r)).sort();
+    check(`能力清单没有虚构的路由（多出 ${ghost.length} 条${ghost.length ? '：' + ghost.slice(0, 6).join(' / ') : ''}）`, ghost.length === 0);
+  }
+
+  // ---------- 服务账号 + API Key 全生命周期 ----------
+  {
+    const svc = await request<{ id: string; phone: string; roleKey: string }>(base, '/api/agent/service-accounts', {
+      method: 'POST',
+      ...authA,
+      body: JSON.stringify({ name: '冒烟测试 Agent', roleKey: 'viewer' }),
+    });
+    check('可创建独立机器账号且权限由角色决定', svc.status === 201 && svc.body.roleKey === 'viewer' && svc.body.phone.startsWith('svc_'));
+
+    const key = await request<{ token: string; id: string; note: string }>(base, '/api/agent/keys', {
+      method: 'POST',
+      ...authA,
+      body: JSON.stringify({ name: '冒烟 Key', ttlDays: 30, serviceAccountId: svc.body.id }),
+    });
+    check('可为机器账号签发 API Key', key.status === 201 && typeof key.body.token === 'string');
+
+    // 机器账号不能登录（没有可用密码）
+    const loginTry = await request<{ message?: string }>(base, '/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ phone: svc.body.phone, password: 'whatever' }),
+    });
+    check('机器账号无法用密码登录', loginTry.status >= 400);
+
+    // Key 能当 Bearer 用，且 RBAC 生效（viewer 只有只读权限，写操作应被拒）
+    const viaKey = await request<{ id: string }>(base, '/api/auth/me', {
+      headers: { Authorization: `Bearer ${key.body.token}` },
+    });
+    check('API Key 可直接作为 Bearer 访问接口', viaKey.status === 200 && viaKey.body.id === svc.body.id);
+
+    // 用「发 Key」这条来试 RBAC：它要 tenant:member:manage，viewer 没有。
+    // 之前拿 POST /api/feedback 试，那条只要 cs:manage 而 viewer 恰好有 → 断言口径本身就错了
+    const denied = await request<{ message?: string }>(base, '/api/agent/keys', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key.body.token}` },
+      body: JSON.stringify({ name: 'viewer 不该发得出来' }),
+    });
+    check('API Key 的写操作受 RBAC 约束（viewer 被拒）', denied.status === 403);
+
+    // 吊销后立即失效
+    const rev = await request<{ ok: boolean }>(base, `/api/agent/keys/${key.body.id}/revoke`, {
+      method: 'POST',
+      ...authA,
+    });
+    const afterRevoke = await request<unknown>(base, '/api/auth/me', {
+      headers: { Authorization: `Bearer ${key.body.token}` },
+    });
+    check('API Key 吊销后立即失效', rev.status === 201 && afterRevoke.status === 401);
+
+    const keyList = await request<{ id: string; revoked: boolean }[]>(base, '/api/agent/keys', {
+      ...authA,
+    });
+    check(
+      'Key 列表只给前 12 位与状态，不回显明文',
+      keyList.status === 200 && keyList.body.some((k) => k.id === key.body.id && k.revoked === true),
+    );
+  }
+
+  // ---------- 快照与还原：真删真还原，不做样子 ----------
+  {
+    // 自己建一条再删自己那条：直接拿列表第一条去删，可能命中公共库产品（删不动、数量也不变）
+    const made = await request<{ id: string }>(base, '/api/products/mine', {
+      method: 'POST', ...authA, body: JSON.stringify({ name: '快照验证用产品', category: 'light', unit: '台' }),
+    });
+    const products = await request<{ id: string }[]>(base, '/api/products', authA);
+    const before = products.body.length;
+    const victim = made.status === 201 ? { id: made.body.id } : undefined;
+
+    const snap = await request<{ id: string; label: string; counts: Record<string, number>; capabilityNote: string }>(
+      base, '/api/agent/snapshots',
+      { method: 'POST', ...authA, body: JSON.stringify({ label: '删产品前' }) },
+    );
+    check(
+      '可打操作前快照',
+      snap.status === 201 && snap.body.id.length > 0 && typeof snap.body.counts.product === 'number',
+    );
+    check(
+      '快照明确声明撤不回已花额度与已生成媒体（不做万能后悔药暗示）',
+      /撤不回/.test(snap.body.capabilityNote) && /额度/.test(snap.body.capabilityNote),
+    );
+
+    if (victim) {
+      const del = await request<unknown>(base, `/api/products/${victim.id}`, {
+        method: 'DELETE', ...authA,
+      });
+      const mid = await request<{ id: string }[]>(base, '/api/products', authA);
+      check('删产品后确实少了一条', del.status === 200 && mid.body.length === before - 1);
+
+      // 二次确认串不对必须拒绝——这是防手滑的关键闸门
+      const badConfirm = await request<{ message?: string }>(base, `/api/agent/snapshots/${snap.body.id}/restore`, {
+        method: 'POST', ...authA, body: JSON.stringify({ confirm: 'wrong' }),
+      });
+      check('还原必须校验二次确认串（防手滑调错快照）', badConfirm.status === 400);
+
+      const restored = await request<{ ok: boolean; restored: Record<string, number> }>(
+        base, `/api/agent/snapshots/${snap.body.id}/restore`,
+        { method: 'POST', ...authA, body: JSON.stringify({ confirm: snap.body.id.slice(0, 8) }) },
+      );
+      const after = await request<{ id: string }[]>(base, '/api/products', authA);
+      check(
+        '按快照还原后数据回到操作前',
+        restored.status === 201 && restored.body.ok === true && after.body.length === before
+          && after.body.some((x) => x.id === victim.id),
+      );
+
+      // 同一份快照不允许反复还原，避免把后续正确操作也一起冲掉
+      const twice = await request<{ message?: string }>(base, `/api/agent/snapshots/${snap.body.id}/restore`, {
+        method: 'POST', ...authA, body: JSON.stringify({ confirm: snap.body.id.slice(0, 8) }),
+      });
+      check('同一份快照不允许反复还原', twice.status === 400);
+    } else {
+      check('删产品后确实少了一条', false);
+      check('还原必须校验二次确认串（防手滑调错快照）', false);
+      check('按快照还原后数据回到操作前', false);
+      check('同一份快照不允许反复还原', false);
+    }
+
+    // 快照绝不能包含审计表：还原它等于改写「谁动过」这段历史
+    const snapList = await request<{ id: string; prefix: string }[]>(base, '/api/agent/snapshots', {
+      ...authA,
+    });
+    check(
+      '快照列表给出还原所需的二次确认串，且不含审计表',
+      snapList.status === 200 && snapList.body.length > 0 && snapList.body[0].prefix.length === 8,
+    );
+  }
+
+  // ---------- 全量审计 ----------
+  {
+    const audit = await request<{ rows: { method: string; path: string; actorKind: string; requestId: string; payloadDigest: string | null; snapshotId: string | null }[] }>(
+      base, '/api/agent/audit?limit=200', { ...authA },
+    );
+    const rows = audit.body.rows ?? [];
+    const productDelete = rows.find((r) => r.path === '/api/products/:id' || /\/api\/products\//.test(r.path ?? ''));
+    check(
+      '删除类操作被自动记入审计（此前这类操作一条都不记）',
+      audit.status === 200 && Boolean(productDelete),
+    );
+    check(
+      '审计分得清人点的与机器跑的',
+      rows.some((r) => r.actorKind === 'USER'),
+    );
+    check(
+      '审计带 requestId 可串联一次动作',
+      rows.every((r) => typeof r.requestId === 'string' && r.requestId.length > 0),
+    );
+    // 自动兜底：破坏性操作没自带 X-Snapshot-Id 时应先打一份 auto 快照，并把 id 记进审计
+    check(
+      '破坏性操作未自带快照时自动打 auto 兜底（防误删的最后一道）',
+      rows.some((r) => Boolean(r.snapshotId)),
+    );
+    check(
+      '审计记请求体摘要而非明文（不把客户信息存进审计表）',
+      rows.some((r) => r.payloadDigest === null || /^[0-9a-f]{32}$/.test(r.payloadDigest)),
+    );
+
+    // 人为带 X-Request-Id 时应被原样记录，这是 Agent 复盘一次动作的抓手
+    const rid = `rid-${randomUUID().slice(0, 8)}`;
+    await request(base, '/api/feedback', {
+      method: 'POST',
+      // 注意不能写成 `...authA, headers: {...}`：后面的 headers 会把 authA.headers 整个覆盖掉，
+      // 请求变成无鉴权 → 401 → 什么都不会被审计，排查时极难想到是这里
+      headers: { ...authA.headers, 'X-Request-Id': rid },
+      body: JSON.stringify({ category: 'bug', title: '审计串联验证', detail: 'x' }),
+    });
+    await new Promise<void>((r) => setTimeout(r, 800));
+    const traced = await request<{ rows: { requestId: string }[] }>(base, `/api/agent/audit?requestId=${rid}`, {
+      ...authA,
+    });
+    check('客户端自带的 X-Request-Id 能把一串动作串成一次任务', traced.status === 200 && traced.body.rows.length > 0);
+  }
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);
-  process.exit(failed === 0 ? 0 : 1);
+  process.exitCode = failed === 0 ? 0 : 1;
 }
 
-void main();
+// main() 抛错时必须能看到原因：之前 void main() 会把异常吞成「无输出的 exit 1」，
+// 门禁红了却看不出是哪一条断言炸的，等于白跑一遍。
+void main().catch((e: unknown) => {
+  console.error('smoke 运行期异常（不是断言失败，是脚本本身崩了）：', e);
+  // 只设 exitCode 不调 process.exit：stdout 重定向到管道时是异步写的，
+  // 紧接着 process.exit() 会把还没落盘的输出全部丢掉，表现就是「无输出的 exit 1」
+  process.exitCode = 1;
+});

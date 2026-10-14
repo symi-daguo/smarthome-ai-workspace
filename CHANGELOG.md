@@ -2,6 +2,129 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.53] - 2026-10-14
+
+### Feat（Agent 机器接入：独立身份 + 能力清单 + 全量审计 + 操作前快照还原）
+
+用户提出四条诉求：额度入口在哪、多端能否打包成 exe/mac、**Agent 要能不看界面就操作系统**、
+**每个动作可追溯、误操作能还原、还不能烧太多 token**。后三条本版交付，前两条的结论见文末。
+
+#### ① 独立服务账号 + 可撤销 API Key（复用现有 RBAC）
+
+此前只有手机号+密码换 JWT，Agent 若直接持有人的登录密码，泄露即等于交出整个租户。
+
+- `POST /api/agent/service-accounts` 建机器账号：手机号位是 `svc_` + uuid（登录接口只认手机号格式，
+  因此**天然登不进来**），密码哈希存随机值，`isServiceAccount=true`
+- `POST /api/agent/keys` 签发 Key：**凭证本身就是一枚用 `JWT_SECRET` 签名的 JWT**，payload 带 `ak`=行 id。
+  库里**不存任何密钥材料** —— 即使数据库整体泄露也推不出可用凭证（拿不到 `JWT_SECRET` 就伪造不出来）。
+  吊销 = 打 `revokedAt`，与「改密让旧 token 全失效」同一条机制
+- **收益**：20 多个控制器**一行都不用改**就支持了 Agent 接入 —— 认证、RBAC、多租户全部沿用现成链路
+
+**一次权限定过头的自我纠错**：最初用 `platform:tenant:manage` 保护建号/发 Key，实测 403 ——
+那是平台级权限，开源自部署的租户管理员根本没有，结果是「谁也发不出 Key」，功能等于不存在。
+改用 `tenant:member:manage`（租户管理员自带）。同时给 tenant_admin 补 `platform:audit:view`：
+审计建了却没人看得到，追溯能力等于白建。
+
+#### ② 能力清单 manifest（这是省 token 的关键）
+
+Agent 要摸清系统能干什么，最省钱的办法不是读源码，而是读一份结构化清单。按需取：
+
+| 取法 | 实测 | 用途 |
+|---|---|---|
+| `/api/agent/manifest` | **1713 tokens** | 索引：18 组 + 破坏性操作清单 |
+| `/api/agent/manifest?group=quote` | **658 tokens** | 只取报价这一组 |
+| `?full=1` | ~3.4k tokens | 全量 124 条路由 |
+
+**漂移守卫**：smoke 从源码反推真实路由，与清单**双向**比对 —— 新增接口忘了写进清单 → FAIL；
+清单写了代码里没有的路由 → 同样 FAIL。这个守卫当场抓出 8 处漏项与 1 处虚构路由
+（含一个代码里根本不存在的 `PATCH /api/plans/{id}`，会把 Agent 带进沟里）。
+
+#### ③ 全量审计（此前形同虚设）
+
+实测：**全项目只有 llm / layout / knowledge 三处手写 `auditLog`**，报价、接单、灯光、画布、方案、
+智能体、反馈**一条都不记**。靠自觉补是补不齐的，且以后每加一个 service 都会再漏一次 ——
+改由**全局拦截器兜底**（Nest 的 `APP_INTERCEPTOR`），这是唯一能保证「不漏」的位置。
+
+每条记：谁（`USER` 人点的 / `AGENT` 机器跑的 / `SYSTEM`）、时间、接口、方法、状态码、耗时、
+请求体 **SHA-256 摘要**。**存摘要不存明文**是刻意的 —— 报价单与接单记录里全是客户姓名电话。
+客户端带 `X-Request-Id` 可把一串动作串成一次任务。
+
+#### ④ 操作前快照与还原（含自动兜底）
+
+- `POST /api/agent/snapshots {label}` 把该租户 20 张相关表整成 JSON 存下
+- `POST /api/agent/snapshots/{id}/restore` 还原。**`confirm` 必须是快照 id 前 8 位** —— 防手滑调错快照
+  把整租户还原掉；**同一份快照不允许反复还原**，否则会把后续的正确操作一起冲掉
+- 还原采用「按 id upsert + 删掉快照里没有的行」，不是「整表清空再插」：子表 upsert 时父行已存在，
+  外键不会断；只碰本租户；中途失败重跑幂等
+- **自动兜底**：破坏性操作（DELETE 或清单标 `risk=destructive`）在调用方没自带 `X-Snapshot-Id` 时，
+  拦截器先打一份 `auto` 快照再放行，快照 id 记进对应审计行。
+  识别方式从清单转运行时模式（`:param` → 匹配任意段），**不给每个端点手工打标** ——
+  手工打标漏一个就等于没防护，而漏的那个恰好最容易被误调
+- **快照刻意不含** `AuditLog`（还原它等于改写「谁动过」这段历史）与模型配置（部署级共享，
+  还原会连别的租户一起改）
+
+> ⚠️ **能力边界，不做万能后悔药暗示**：快照只还原**数据库里的行**。
+> 已经扣掉的额度、已由外部 API 生成的图片/视频、已发出的通知**撤不回**。
+> 这句话在快照详情、manifest 响应、README 三处都显式返回。
+
+#### 端到端实测（对部署后的真实服务，不是只跑 smoke）
+
+```
+1 登录 → 2 建机器账号 svc_e744…(viewer) → 3 签发 Key → 4 用 Key 访问成功（权限 2 项）
+5 manifest 索引 1713 tokens / 单组 658 tokens
+6 viewer 用 Key 写操作 → HTTP 403（RBAC 生效）
+7 新建产品 25 → DELETE 不带快照 → HTTP 200 → 自动生成 AUTO 快照 → 24
+8 confirm=wrong 还原 → HTTP 400；confirm 正确 → 还原后 25，被删产品回来了
+9 审计按 requestId 查回 DELETE 行，snapshot 字段有值
+10 revoke Key → 立即 401
+```
+
+### Chore（桌面打包方案的查证结论，见 [桌面打包方案.md](./桌面打包方案.md)）
+
+用户要求打包成 exe 与 macOS 安装应用。**先纠正一个前提：提交 GitHub 并不会自动构建** ——
+本仓库至今零 CI（`.github/workflows/` 不存在），推上去只更新源码。
+而且这是服务端 SaaS，数据库与模型密钥必须留在服务器，客户端只能是壳或内嵌整机。
+
+联网查证后的结论（关键项均已双源核实，许可证逐个查实）：
+
+- **推荐 Electron 而非 Tauri 2**：Electron 的 `utilityProcess` 自带 Node，NestJS 零改造直接跑；
+  Tauri 要为四个平台组合各构建一份 Node sidecar。**但若走「纯壳连服务器」路线，Tauri 反而更合适**
+- **PGlite 方案已证伪**：Prisma **无官方 PGlite adapter**（`@prisma/adapter-pglite` 在 npm 404，
+  官方文档只把它列在社区清单里）；PGlite 自身仍是 alpha 且限单连接。
+  改用 `embedded-postgres`（MIT）起真实 postgres 进程，**`PrismaPg` 代码零改动**
+- **硬门槛：macOS 公证需付费 Apple Developer Program**。Apple 官方对照表中公证与证书权限在免费注册列为空
+- Windows SmartScreen 是信誉制，需代码签名证书建立信誉
+- 许可证全部 MIT / Apache-2.0 / PostgreSQL License，**无 GPL/AGPL 传染**
+- 建议先做 P1（起内嵌 Postgres + 指向本地端口 + 跑 smoke）——这是最低成本的证伪/证实实验，
+  且不需要任何账号或证书
+
+### 踩坑与自我纠错（本轮踩得最多的一个）
+
+1. **Nest `abortOnError` 会把启动期异常整个吞掉**。`NestFactory.create(AppModule, { logger: false })`
+   默认 `abortOnError: true`，DI 失败时直接 `process.abort()` —— **连 `.catch()` 都进不去**，
+   表现是「无任何输出的 exit 1」。排查时加了探针才定位到是 `AgentService` 缺 `JwtService`。
+   smoke 已改成 `abortOnError: false`。
+2. **`void main()` + `process.exit()` = 无输出**。stdout 重定向到管道时是异步写的，
+   紧接着 `process.exit()` 会把没落盘的输出全丢掉。改成只设 `process.exitCode`，
+   并给 `main()` 挂 `.catch` 把异常打出来。
+3. **对象展开的覆盖陷阱**（同一类错犯了三次）：
+   `headers: { Authorization: \`Bearer ${authA}\` }` 会把 `[object Object]` 当 token；
+   `...authA, headers: { 'X-Request-Id': rid }` 里的 headers 又会**整个覆盖** `authA.headers`。
+   最终改成 `headers: { ...authA.headers, 'X-Request-Id': rid }`。
+4. **ESM 里没有 `require`**。smoke 的漂移守卫一度用 `require('node:fs')`，编译后在 ESM 下直接崩。
+   **批量替换文本时必须逐条断言命中数** —— 有一次 `sed` 先一步改了文本，导致我后面的 Python 替换
+   静默没生效，报错却是「变量未定义」，排查方向完全被带偏。
+
+### 额度入口在哪（用户问）
+
+界面里**三处都有**：顶栏额度胶囊（`¥xxx`，本身可点）、顶栏「会员与额度」按钮跳 `/vip`、
+侧栏「个人中心」跳 `/tokens`。顶栏胶囊容易被当成纯展示，实则 `MainLayout.tsx:87-89` 里绑了导航。
+
+### 门禁
+
+`pnpm typecheck` ✓ / `pnpm build` ✓ / `pnpm smoke` **264/264**（新增 26 条）。
+部署核对：容器镜像 ID `sha256:b0f35ae3…` == 最新镜像 ID，`/api/health` 正常。
+
 ## [0.1.52] - 2026-10-14
 
 ### Fix（智能灯光场景页三个 UI 缺陷 + 全站主题审查：消灭「黑色主题 + 白色卡片」）
