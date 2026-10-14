@@ -1,6 +1,6 @@
 {
   "name": "smart-home-ai-saas",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "private": true,
   "description": "智能家居 AI 工作台：多租户、RBAC、agent 工具调用、内容提取与知识库（开源自部署，模型自选）",
   "packageManager": "pnpm@11.5.3",

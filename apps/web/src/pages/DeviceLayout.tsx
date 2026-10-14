@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { App as AntApp, Button, Card, Empty, Grid, Input, InputNumber, Segmented, Slider, Space, Spin, Switch, Tag, Tooltip, Typography, Upload, theme } from 'antd';
+import { App as AntApp, Button, Card, Empty, Grid, Input, InputNumber, Modal, Segmented, Slider, Space, Spin, Switch, Tag, Tooltip, Typography, Upload, theme } from 'antd';
 import { api, fileUrl } from '../lib/api';
 import { loadCategoryDict } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
@@ -157,6 +157,9 @@ export function DeviceLayout(): ReactNode {
   const [sigThreshold, setSigThreshold] = useState(0.18);
   const [showGrid, setShowGrid] = useState(false);
   const [showRings, setShowRings] = useState(false);
+  /** 热力叠加透明度（对齐参考站「热力透明度」滑块）；值越低越能看清底图 */
+  const [heatAlpha, setHeatAlpha] = useState(0.62);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [powers, setPowers] = useState<Record<string, number>>({});
   const [detecting, setDetecting] = useState(false);
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
@@ -293,6 +296,11 @@ export function DeviceLayout(): ReactNode {
     () => points.map((p) => ({ x: p.x, y: p.y, power: powers[p.id] ?? 1 })),
     [points, powers],
   );
+
+  // 首次进入 WiFi 模式且还没底图时弹一次引导；同一会话不重复打扰
+  useEffect(() => {
+    if (mode === 'wifi' && !imgSrc) setGuideOpen(true);
+  }, [mode, imgSrc]);
 
   /** 信号网格规模：限制总格数，保证拖墙/拖设备时能实时重算 */
   const grid = useMemo(() => (imgSize ? fieldGrid(imgSize.w, imgSize.h) : null), [imgSize]);
@@ -484,7 +492,7 @@ export function DeviceLayout(): ReactNode {
         wallAtten,
         threshold: sigThreshold,
         freeAtten: WIFI_FREE_ATTEN,
-        alpha: 0.62,
+        alpha: heatAlpha,
         showGrid,
         showRings,
         wallThicknessM: WIFI_WALL_M,
@@ -496,7 +504,7 @@ export function DeviceLayout(): ReactNode {
     } catch (e) {
       message.error((e as Error).message);
     }
-  }, [imgSrc, title, walls, wifiSources, planW, planH, wallAtten, sigThreshold, showGrid, showRings, message]);
+  }, [imgSrc, title, walls, wifiSources, planW, planH, wallAtten, sigThreshold, heatAlpha, showGrid, showRings, message]);
 
   const saveAndAttach = useCallback(async () => {
     if (!assetId) {
@@ -555,6 +563,7 @@ export function DeviceLayout(): ReactNode {
             ]}
           />
           <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} style={{ width: 220 }} prefix={<Text type="secondary" style={{ fontSize: 12 }}>图纸名</Text>} />
+          {mode === 'wifi' && <Button onClick={() => setGuideOpen(true)}>使用引导</Button>}
           {planId && <Button onClick={() => navigate(`/plan?id=${planId}`)}>返回方案</Button>}
         </Space>
       </div>
@@ -684,6 +693,11 @@ export function DeviceLayout(): ReactNode {
                 <Slider min={0.05} max={0.9} step={0.01} value={sigThreshold} onChange={setSigThreshold} />
               </div>
 
+              <div>
+                <Text style={{ fontSize: 12 }}>热力透明度 <b>{Math.round(heatAlpha * 100)}%</b></Text>
+                <Slider min={0.15} max={0.95} step={0.01} value={heatAlpha} onChange={setHeatAlpha} />
+              </div>
+
               <Space direction="vertical" size={4} style={{ width: '100%' }}>
                 <Space size={8}><Switch size="small" checked={showRings} onChange={setShowRings} /><Text style={{ fontSize: 12 }}>显示覆盖半径等值环</Text></Space>
                 <Space size={8}><Switch size="small" checked={showGrid} onChange={setShowGrid} /><Text style={{ fontSize: 12 }}>叠加每米网格（比例尺）</Text></Space>
@@ -693,6 +707,19 @@ export function DeviceLayout(): ReactNode {
                 <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>覆盖率统计</Text>
                 {stats ? (
                   <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                    {/* 三档分布（对齐参考站）：只看总覆盖率看不出布点是否均匀 */}
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                      {([
+                        ['信号好', stats.tierGood, '#52c41a'],
+                        ['信号一般', stats.tierFair, '#faad14'],
+                        ['信号弱', stats.tierWeak, '#cf1322'],
+                      ] as const).map(([label, v, color]) => (
+                        <div key={label} style={{ flex: 1, textAlign: 'center', background: `${color}1a`, borderRadius: 6, padding: '4px 2px' }}>
+                          <div style={{ fontSize: 10, color, opacity: 0.9 }}>{label}</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color }}>{(v * 100).toFixed(0)}%</div>
+                        </div>
+                      ))}
+                    </div>
                     <div>图纸尺寸：{planW} × {planH} m（{stats.planAreaM2.toFixed(1)} ㎡）</div>
                     <div>覆盖面积：{stats.coveredAreaM2.toFixed(1)} ㎡</div>
                     <div>
@@ -763,6 +790,32 @@ export function DeviceLayout(): ReactNode {
         </Card>
         </div>
       </div>
+
+      {/* WiFi 热力图 5 步使用引导（对齐参考站）。我方第 2 步多一个「自动识别 + 人工补画」的
+          往返动作——参考站只说「确认墙体」，但实际识别会漏墙，必须允许补画，否则用户会
+          拿着错的墙体去算覆盖率。引导里如实写出来，不粉饰成一步到位。 */}
+      <Modal title="WiFi 覆盖模拟 · 首次使用流程" open={guideOpen} onCancel={() => setGuideOpen(false)} footer={<Button type="primary" onClick={() => setGuideOpen(false)}>知道了</Button>}>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          按 5 步完成墙体确认、设备布点与图片导出。全程在本地计算，图纸不会上传到第三方。
+        </Text>
+        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+          {[
+            ['上传户型图', '点「上传户型图」选客户户型平面图，支持 JPG / PNG / WebP，10MB 内。'],
+            ['识别并补画墙体', '系统会自动识别墙体；识别不准就用「新增墙」补画，拖墙端点改方向、点墙身选中后可删除。墙体直接影响穿墙衰减，算错会让覆盖率失真。'],
+            ['填写图纸实际尺寸', '在右侧填图纸的宽与高（米）。这一步决定比例尺与覆盖面积的真实换算，填错则所有覆盖数字都错。'],
+            ['选择并放置设备', '从产品库选吸顶 AP / 面板 AP / 路由器 / 室外 AP，点画布放置，再拖到合适的安装位置。'],
+            ['看统计并导出', '实时观察「信号好 / 一般 / 弱」三档占比与覆盖率；确认后点「导出图片」得到带墙体、图例与统计的热力图 PNG。'],
+          ].map(([t, d], i) => (
+            <div key={t} style={{ display: 'flex', gap: 10 }}>
+              <Tag color={token.colorPrimary}>{i + 1}</Tag>
+              <div>
+                <Text strong style={{ display: 'block' }}>{t}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{d}</Text>
+              </div>
+            </div>
+          ))}
+        </Space>
+      </Modal>
     </div>
   );
 }

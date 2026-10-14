@@ -64,6 +64,15 @@ export interface CoverageStats {
   coveredAreaM2: number;
   weakAreaM2: number;
   threshold: number;
+  /**
+   * 三档信号占比（0-1，2026-10-14 对齐参考站的「信号好 / 一般 / 弱」）。
+   * 与 ratio 的区别：ratio 是二值「达标/不达标」，tiers 是三档分布，
+   * 能看出「勉强能用」与「完全没信号」各占多少——只报一个总覆盖率看不出布点是否均匀。
+   * 分档线取阈值的固定比例而非绝对值，这样拖动阈值滑块时两者的关系保持稳定。
+   */
+  tierGood: number;
+  tierFair: number;
+  tierWeak: number;
 }
 
 /* ============================ 通用 ============================ */
@@ -876,10 +885,20 @@ export function measureCoverageStats(
   const cellArea = Math.max(0, cellW * cellH);
   let covered = 0;
   let total = 0;
+  // 三档分档线：好 ≥ 阈值、一般 ≥ 0.35×阈值、其余为弱。与 ratio 共用同一趟扫描，不额外遍历。
+  let good = 0;
+  let fair = 0;
+  const fairLine = opts.threshold * 0.35;
   for (let i = 0; i < field.length; i += 1) {
     if (opts.wallMask && opts.wallMask[i]) continue;
     total += 1;
-    if (field[i] >= opts.threshold) covered += 1;
+    const v = field[i];
+    if (v >= opts.threshold) {
+      covered += 1;
+      good += 1;
+    } else if (v >= fairLine) {
+      fair += 1;
+    }
   }
   const planArea = Math.max(0, opts.planWidthM) * Math.max(0, opts.planHeightM);
   return {
@@ -890,6 +909,9 @@ export function measureCoverageStats(
     coveredAreaM2: covered * cellArea,
     weakAreaM2: (total - covered) * cellArea,
     threshold: opts.threshold,
+    tierGood: total > 0 ? good / total : 0,
+    tierFair: total > 0 ? fair / total : 0,
+    tierWeak: total > 0 ? Math.max(0, total - covered - fair) / total : 0,
   };
 }
 

@@ -149,6 +149,11 @@ async function main(): Promise<void> {
     { name: '空调伴侣', category: 'appliance', priceMin: 89, priceMax: 149, perRoom: '每台壁挂空调 1 个', sku: 'AP-1101', sn: 'SJ-AC-', spec: '16A 红外+电量 · 1.5P 内挂机适配', warranty: 24 },
     { name: '地暖/新风控制器', category: 'hvac', priceMin: 239, priceMax: 399, perRoom: '分集水器/新风机位', sku: 'HV-1201', sn: 'SJ-FH-', spec: '周定时 8 时段 · 外置温控探头', warranty: 24 },
     { name: 'WiFi 面板 AP', category: 'network', priceMin: 239, priceMax: 399, perRoom: '每 60-80㎡ 1 个（Mesh 组网）', sku: 'NW-1301', sn: 'SJ-AP-', spec: 'WiFi6 AX3000 · 86 型 PoE · 双频 160MHz', warranty: 36 },
+    // 吸顶 / 路由器 / 室外三类 AP：参考站 WiFi 热力图按这四类分别布点，
+    // 只有面板 AP 会让「吸顶覆盖 vs 面板覆盖 vs 室外桥接」三种布点策略无法在界面上表达。
+    { name: 'WiFi 吸顶 AP', category: 'network', priceMin: 299, priceMax: 499, perRoom: '客厅/走廊顶装 1 个', sku: 'NW-1302', sn: 'SJ-AP-', spec: 'WiFi6 AX3000 · 吸顶明装 · 全向覆盖 · PoE 供电', warranty: 36 },
+    { name: 'WiFi 路由器', category: 'network', priceMin: 399, priceMax: 799, perRoom: '全屋 1 台（入户弱电箱）', sku: 'NW-1303', sn: 'SJ-RT-', spec: 'WiFi6 AX5400 · 全屋 Mesh 主路由 · 4 口千兆', warranty: 24 },
+    { name: 'WiFi 室外 AP', category: 'network', priceMin: 599, priceMax: 1099, perRoom: '别墅/复式每层 1 个', sku: 'NW-1304', sn: 'SJ-OU-', spec: 'WiFi6 IP67 防水 · 定向覆盖 · 室外 PoE 桥接', warranty: 36 },
   ];
   let productCount = 0;
   for (let i = 0; i < PRODUCT_DEFS.length; i++) {
