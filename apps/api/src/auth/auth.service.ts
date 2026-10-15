@@ -80,6 +80,7 @@ export class AuthService {
       phone: user.phone,
       displayName: user.displayName,
       avatarColor: user.avatarColor,
+      avatarUrl: user.avatarUrl,
       // 审计要能区分「人点的」与「Agent 跑的」，机器账号没有可用密码，标记只能来自库里
       isServiceAccount: user.isServiceAccount,
       memberships: user.memberships.map((m) => ({
@@ -116,12 +117,13 @@ export class AuthService {
   }
 
   /** 个人设置：更新显示名 / 头像底色 */
-  async updateProfile(userId: string, dto: { displayName?: string; avatarColor?: string }): Promise<AuthProfile> {
+  async updateProfile(userId: string, dto: { displayName?: string; avatarColor?: string; avatarUrl?: string }): Promise<AuthProfile> {
     await this.prisma.user.update({
       where: { id: userId },
       data: {
         ...(dto.displayName !== undefined ? { displayName: dto.displayName } : {}),
         ...(dto.avatarColor !== undefined ? { avatarColor: dto.avatarColor } : {}),
+        ...(dto.avatarUrl !== undefined ? { avatarUrl: dto.avatarUrl } : {}),
       },
     });
     return this.profile(userId);
@@ -138,6 +140,8 @@ export interface AuthProfile {
   phone: string;
   displayName: string;
   avatarColor?: string | null;
+  /** 头像图片 URL；空串=回退到 avatarColor 底色 */
+  avatarUrl?: string;
   /** 机器账号：只经 API Key 访问。审计据此把操作归类为 AGENT 而非 USER */
   isServiceAccount?: boolean;
   /** 由 JwtStrategy 写入：这枚 API Key 归属的租户。TenantGuard 用它拒绝「拿 A 的 Key 访问 B」 */

@@ -27,6 +27,7 @@ import {
 import {
   Avatar,
   App as AntApp,
+  Tooltip,
   Button,
   Divider,
   Drawer,
@@ -49,6 +50,7 @@ import { api } from '../lib/api';
 import { tokenToYuan } from '../lib/money';
 import { BRAND_GRADIENT } from '../theme/tokens';
 import { BrandMark } from '../components/BrandMark';
+import { UserAvatar } from '../components/UserAvatar';
 import { TaskBall } from '../components/TaskBall';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore, type WorkbenchConversation } from '../store/ChatStore';
@@ -148,7 +150,8 @@ type HistoryItem =
 export function MainLayout(): ReactNode {
   const { modal } = AntApp.useApp();
   const { token } = useToken();
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
+  const { message } = AntApp.useApp();
   const { mode, setMode } = useTheme();
   const { conversations, activeKey, setActiveKey, createNew, remove } = useChatStore();
   const navigate = useNavigate();
@@ -304,14 +307,38 @@ export function MainLayout(): ReactNode {
     boxShadow: '0 4px 12px rgba(91, 91, 240, 0.25)',
   };
 
+  /** 工作台名取当前租户；点标题可改（需 tenant:member:manage，后端会校验） */
+  const tenantName =
+    user?.memberships.find((m) => m.tenantId === user.activeTenantId)?.tenantName
+    ?? user?.memberships[0]?.tenantName
+    ?? '智能家居 AI 工作台';
+
+  const renameTenant = async (): Promise<void> => {
+    const next = window.prompt('工作台名称', tenantName);
+    if (!next?.trim() || next.trim() === tenantName) return;
+    try {
+      await api('/api/tenants/current', { method: 'PATCH', body: JSON.stringify({ name: next.trim() }) });
+      await refresh();
+      message.success('已改名');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '改名失败');
+    }
+  };
+
   const sideContent: ReactNode = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 顶部品牌行 */}
       <div style={{ height: 56, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px 0 16px' }}>
         <BrandMark size={28} />
-        <Text strong style={{ fontSize: 14, flex: 1, whiteSpace: 'nowrap' }}>
-          智能家居 AI 工作台
-        </Text>
+        <Tooltip title="点击改名">
+          <Text
+            strong
+            style={{ fontSize: 14, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
+            onClick={() => void renameTenant()}
+          >
+            {tenantName}
+          </Text>
+        </Tooltip>
         {isDesktop ? (
           <Button
             type="text"
@@ -487,13 +514,7 @@ export function MainLayout(): ReactNode {
 
       {/* 底部个人中心卡 */}
       <div style={{ padding: '8px 12px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Avatar
-          size={36}
-          style={{ background: user?.avatarColor ?? token.colorPrimary, flex: 'none', cursor: 'pointer' }}
-          onClick={() => navigate('/tokens')}
-        >
-          {(user?.displayName ?? 'U').slice(0, 1)}
-        </Avatar>
+        <UserAvatar user={user} size={36} cursor="pointer" onClick={() => navigate('/tokens')} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {user?.displayName ?? '未命名'}
@@ -723,9 +744,7 @@ export function MainLayout(): ReactNode {
               aria-label="用户菜单"
               style={{ height: 40, padding: '0 6px', display: 'inline-flex', alignItems: 'center', gap: 8 }}
             >
-              <Avatar size={32} style={{ background: user?.avatarColor ?? token.colorPrimary, flex: 'none' }}>
-                {(user?.displayName ?? 'U').slice(0, 1)}
-              </Avatar>
+              <UserAvatar user={user} size={32} />
               {isDesktop ? <Text>{user?.displayName ?? ''}</Text> : null}
             </Button>
           </Dropdown>

@@ -94,6 +94,9 @@ async function request<T>(base: string, path: string, init?: RequestInit): Promi
 }
 
 async function main(): Promise<void> {
+  // 登录限流（RATE_LIMIT_AUTH=1000）放在 package.json 的 smoke 脚本里设：
+  // @Throttle 装饰器在模块加载时求值，在这里设已经太晚，会把自己限流成 429。
+
   // abortOnError:false —— 默认 true 时 DI 失败会直接 process.abort()，
   // 连 catch 都进不去，表现为「无任何输出的 exit 1」，排查时完全瞎掉
   const app = await NestFactory.create(AppModule, { logger: false, abortOnError: false });
@@ -2228,6 +2231,86 @@ async function main(): Promise<void> {
       `图标调用点不再写死尺寸（发现 ${stray.length} 处：${stray.join(',') || '无'}）`,
       stray.length === 0,
     );
+  }
+
+  // ---------- 头像上传 + 工作台改名 + 多租户边界（0.1.58）----------
+  {
+    const originalTenantName = (await request<{ memberships: { tenantName: string }[] }>(base, '/api/auth/me', authA)).body.memberships[0]?.tenantName ?? '';
+    // ① 头像：走既有 /api/media/uploads 上传（复用，不新建端点）→ 写 profile → me 回读
+    const fd = new FormData();
+    fd.append('file', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'a.png');
+    // 不能走 request()：它会强制 Content-Type: application/json，
+    // multipart 的 boundary 就丢了，服务端解析不出文件（这个坑踩过一次）
+    const upRes = await fetch(`${base}/api/media/uploads`, {
+      method: 'POST', headers: authA.headers, body: fd,
+    });
+    const up = { status: upRes.status, body: (await upRes.json()) as { id: string; url: string } };
+    check('既有上传端点可直接用于头像（未新建上传接口）', up.status === 201 && up.body.url.startsWith('/api/media/'));
+
+    const saved = await request<{ displayName: string }>(base, '/api/auth/profile', {
+      method: 'PATCH', ...authA, body: JSON.stringify({ avatarUrl: up.body.url }),
+    });
+    check('头像地址可保存', saved.status === 200);
+    const meAfterAvatar = await request<{ avatarUrl?: string }>(base, '/api/auth/me', authA);
+    check(
+      '头像已持久化（换请求仍能读回）',
+      meAfterAvatar.body.avatarUrl === up.body.url,
+    );
+
+    // 外站地址要被拒：否则可以塞个外链当头像，等于让用户界面加载任意第三方资源
+    const badUrl = await request<{ message?: string }>(base, '/api/auth/profile', {
+      method: 'PATCH', ...authA, body: JSON.stringify({ avatarUrl: 'https://evil.example/x.png' }),
+    });
+    check('头像地址拒绝外站链接（避免任意第三方资源加载）', badUrl.status === 400);
+
+    // ② 工作台改名：管理员可改，普通成员不可改
+    const renamed = await request<{ name: string }>(base, '/api/tenants/current', {
+      method: 'PATCH', ...authA, body: JSON.stringify({ name: '冒烟测试工作台' }),
+    });
+    check('租户管理员可改工作台名称', renamed.status === 200 && renamed.body.name === '冒烟测试工作台');
+    const meAfterRename = await request<{ memberships: { tenantName: string }[] }>(base, '/api/auth/me', authA);
+    check('改名已持久化到成员关系里', meAfterRename.body.memberships[0]?.tenantName === '冒烟测试工作台');
+
+    const phoneM2 = randomPhone();
+    await request(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: phoneM2, displayName: '改名边界验证', roleKey: 'operator', password: 'Smoke12345' }),
+    });
+    const m2Login = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: phoneM2, password: 'Smoke12345' }),
+    });
+    const m2Auth = { headers: { Authorization: `Bearer ${m2Login.body.token}` } };
+    const denied = await request(base, '/api/tenants/current', {
+      method: 'PATCH', ...m2Auth, body: JSON.stringify({ name: '运营想改名字' }),
+    });
+    check('普通成员不能改工作台名称（需 tenant:member:manage）', denied.status === 403);
+
+    // ③ 多租户边界：A 看不见 B 的成员，也改不了 B 的名字
+    const phoneB2 = randomPhone();
+    const bReg = await request<{ token: string }>(base, '/api/auth/register', {
+      method: 'POST', body: JSON.stringify({ phone: phoneB2, password: 'TenantB2026', displayName: '乙租户' }),
+    });
+    const bAuth = { headers: { Authorization: `Bearer ${bReg.body.token}` } };
+    const bMembers = await request<{ displayName: string }[]>(base, '/api/team/members', bAuth);
+    check(
+      '乙租户看不到甲租户的成员',
+      bMembers.status === 200 && bMembers.body.every((m) => m.displayName !== '改名边界验证'),
+    );
+    const bRename = await request<{ name: string }>(base, '/api/tenants/current', {
+      method: 'PATCH', ...bAuth, body: JSON.stringify({ name: '乙租户改名' }),
+    });
+    const aStill = await request<{ memberships: { tenantName: string }[] }>(base, '/api/auth/me', authA);
+    check(
+      '改乙租户名字不会影响甲租户',
+      bRename.status === 200 && aStill.body.memberships[0]?.tenantName === '冒烟测试工作台',
+    );
+    // 恢复原名，避免污染演示数据
+    await request(base, '/api/tenants/current', {
+      method: 'PATCH', ...authA, body: JSON.stringify({ name: originalTenantName }),
+    });
+    await request(base, `/api/team/members/${
+      (await request<{ id: string; phone: string }[]>(base, '/api/team/members', authA)).body.find((x) => x.phone === phoneM2)?.id ?? 'x'
+    }`, { method: 'DELETE', ...authA });
   }
 
   await app.close();

@@ -29,6 +29,11 @@ export class AgentsService {
   }
 
   async create(tenantId: string, userId: string, dto: CreateAgentDto) {
+    // 先查一次再插：撞唯一约束时 Postgres 一定会打一条 ERROR 日志，
+    // 应用层虽然转成了 409，但日志里已经留下 ERROR（用户要求「运行日志无报错」）。
+    // 唯一约束继续留着兜并发，真正的防线是它；预检只是让常规路径安静下来。
+    const dup = await this.prisma.customAgent.findFirst({ where: { tenantId, name: dto.name.trim() }, select: { id: true } });
+    if (dup) throw new ConflictException('AGENT_NAME_EXISTS');
     try {
       return await this.prisma.customAgent.create({
         data: {
@@ -49,6 +54,13 @@ export class AgentsService {
 
   async update(tenantId: string, id: string, dto: UpdateAgentDto) {
     const owned = await this.mustGet(tenantId, id);
+    if (dto.name !== undefined) {
+      const dup = await this.prisma.customAgent.findFirst({
+        where: { tenantId, name: dto.name.trim(), NOT: { id } },
+        select: { id: true },
+      });
+      if (dup) throw new ConflictException('AGENT_NAME_EXISTS');
+    }
     try {
       return await this.prisma.customAgent.update({
         where: { id: owned.id },

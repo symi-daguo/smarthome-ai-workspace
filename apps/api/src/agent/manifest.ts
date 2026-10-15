@@ -168,6 +168,7 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/llm/chat': ['content:generate'],
 
   'GET /api/tenants/current': [],
+  'PATCH /api/tenants/current': ['tenant:member:manage'], // 改工作台名称，显示在侧栏顶部
   'GET /api/tenants/current/tokens': [],
   'GET /api/tenants/current/tokens/ledger': [],
   'POST /api/tenants/current/tokens/grant': ['tenant:token:grant'],
@@ -257,6 +258,7 @@ export const MANIFEST: ManifestGroup[] = [
     about: '额度账本。你在界面上看到的「¥xxx」就是这个余额。',
     ops: [
       { m: 'GET', p: '/api/tenants/current', d: '当前租户信息', risk: R },
+      { m: 'PATCH', p: '/api/tenants/current', d: '★ 改工作台名称，显示在侧栏顶部与分享页', risk: W, q: { name: '1-24 字' } },
       { m: 'GET', p: '/api/tenants/mine', d: '我加入的所有租户', risk: R },
       { m: 'GET', p: '/api/tenants/current/tokens', d: '额度余额', risk: R },
       { m: 'GET', p: '/api/tenants/current/tokens/ledger', d: '额度流水（发放/消耗）', risk: R },

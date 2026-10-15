@@ -12,7 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
-    "smoke": "node dist/test/smoke.js"
+    "smoke": "RATE_LIMIT_AUTH=1000 node dist/test/smoke.js"
   },
   "dependencies": {
     "@casl/ability": "7.0.1",

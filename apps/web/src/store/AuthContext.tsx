@@ -14,6 +14,10 @@ export interface UserProfile {
   phone: string;
   displayName: string;
   avatarColor?: string | null;
+  /** 头像图片 URL；空串=回退到底色+首字 */
+  avatarUrl?: string;
+  /** 当前生效租户（服务端 TenantGuard 写入；前端只读，用于取租户名） */
+  activeTenantId?: string;
   memberships: Membership[];
 }
 

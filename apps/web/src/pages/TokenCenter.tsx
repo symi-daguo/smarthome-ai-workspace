@@ -32,6 +32,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api, tokenStore } from '../lib/api';
 import { tokenToYuan } from '../lib/money';
 import { PageHeader } from '../components/PageHeader';
+import { UserAvatar } from '../components/UserAvatar';
 import { useAuth, type UserProfile } from '../store/AuthContext';
 import { setShowBilling } from '../layouts/MainLayout';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
@@ -293,12 +294,7 @@ export function TokenCenter(): ReactNode {
       {/* 账号卡 */}
       <Card style={{ marginBottom: 16 }} styles={{ body: { padding: 20 } }}>
         <Space size={16} align="center" wrap>
-          <Avatar
-            size={56}
-            style={{ borderRadius: 14, background: user?.avatarColor ?? BRAND_GRADIENT, fontSize: 24, fontWeight: 700, flex: 'none' }}
-          >
-            {(user?.displayName ?? 'U').slice(0, 1)}
-          </Avatar>
+          <UserAvatar user={user} size={56} shape="square" fontSize={24} allowUpload />
           <div>
             <Space size={8}>
               <Text strong style={{ fontSize: 17 }}>{user?.displayName ?? '未命名'}</Text>

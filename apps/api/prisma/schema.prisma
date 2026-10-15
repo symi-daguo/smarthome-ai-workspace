@@ -70,6 +70,9 @@ model User {
   displayName      String
   // 侧栏头像底色（个人设置可改）
   avatarColor      String?
+  // 头像图片（走既有 /api/media/uploads 上传）。空串 = 回退到 avatarColor 底色 + 姓名首字。
+  // 不新建上传端点、不引组件库：复用已有 multipart 上传与前端 compressImage。
+  avatarUrl        String    @default("")
   // 令牌版本：改密/登出全部设备时自增，旧 JWT 内 tv 不匹配即失效
   tokenVersion     Int      @default(0)
   status           Status   @default(ACTIVE)
