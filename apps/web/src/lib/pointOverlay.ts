@@ -1,4 +1,4 @@
-import { categoryIconDataUrl } from './product-icons';
+import { categoryIconDataUrl, productIconDataUrl } from './product-icons';
 import { catMeta as catMetaDict } from './categoryStore';
 import { fileUrl } from './api';
 
@@ -8,8 +8,10 @@ export interface PointLike {
   productId?: string;
   name: string;
   category: string;
-  /** 产品主图（已解析的完整 URL）；有图点位用产品照片作图标，加载失败回退品类 SVG（对齐参考站"产品图=点位图标"） */
+  /** 产品主图（已解析的完整 URL）；门店上传了自家实拍就用实拍，加载失败回退产品图标，再回退品类图标 */
   iconUrl?: string;
+  /** 产品级图标 key（同品类下不同产品用不同图标，否则一排标记分不清谁是谁） */
+  iconKey?: string;
   x: number;
   y: number;
 }
@@ -49,14 +51,14 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
         // 产品图不可用（跨域/已删除/分享页无 token），回退品类图标
       }
     }
-    if (!iconCache.has(p.category)) {
+    if (!iconCache.has(p.iconKey || p.category)) {
       try {
-        iconCache.set(p.category, await loadImage(categoryIconDataUrl(p.category)));
+        iconCache.set(p.iconKey || p.category, await loadImage(productIconDataUrl(p.category, p.iconKey)));
       } catch {
         // 图标加载失败回退首字
       }
     }
-    return iconCache.get(p.category) ?? null;
+    return iconCache.get(p.iconKey || p.category) ?? null;
   };
   const pointIcons = await Promise.all(points.map(loadIcon));
   const r = Math.max(14, canvas.width * 0.016);

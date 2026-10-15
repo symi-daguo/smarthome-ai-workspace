@@ -165,6 +165,23 @@ export function iconDataUrl(iconKey: string, color = '#ffffff'): string {
 }
 
 /** 按品类 key 生成 data URL（经 categoryStore 解析到图标 key；canvas 点位合成用） */
+/**
+ * 产品级图标：iconKey 命中就用它，否则回退品类图标。
+ *
+ * 为什么要产品级：品类图标只有 39 个而产品有 24 个，且同品类必然撞
+ * （灯光 4 个、网关 2 个、开关 2 个、摄像头 2 个、AP 4 个）。
+ * 点位图上一排标记全是同一个图标时，根本分不清哪个是哪台设备。
+ */
+export function productIconDataUrl(category: string, iconKey: string | undefined, color = '#ffffff'): string {
+  return iconKey && ICON_TABLE[iconKey] ? iconDataUrl(iconKey, color) : categoryIconDataUrl(category, color);
+}
+
+/** 产品级图标 SVG（DOM 用） */
+export function productIconSvg(category: string, iconKey: string | undefined, size = 18, color = 'currentColor'): string {
+  if (iconKey && ICON_TABLE[iconKey]) return toSvg(iconKey, size, color);
+  return categoryIconSvg(category, size, color);
+}
+
 export function categoryIconDataUrl(category: string, color = '#ffffff'): string {
   return iconDataUrl(catMeta(category).icon, color);
 }

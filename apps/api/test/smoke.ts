@@ -2122,6 +2122,49 @@ async function main(): Promise<void> {
     );
   }
 
+  // ---------- 产品图标：同品类不得撞图标（0.1.56）----------
+  {
+    const iconKeys = readFileSync(join(process.cwd(), '../web/src/lib/product-icons.ts'), 'utf8');
+    const known = new Set(
+      (iconKeys.match(/export const PRODUCT_ICON_KEYS: string\[\] = \[([\s\S]*?)\];/) ?? [, ''])[1]
+        .split(',').map((x) => x.trim().replace(/^'|'$/g, '')).filter(Boolean),
+    );
+    const all = await request<{ id: string; name: string; category: string; iconKey?: string; tenantId?: string | null }[]>(
+      base, '/api/products', authA,
+    );
+    // 只断言**公共库预置产品**：这条守卫守的是 seed 的正确性。
+    // /api/products 同时返回本租户产品，而本文件前面那些用例自己建了几个无图标产品
+    // （它们本就该回退品类图标），把它们算进来会让断言测不到该测的东西。
+    const prods = { body: all.body.filter((p) => !p.tenantId) };
+    const noIcon = prods.body.filter((p) => !p.iconKey);
+    const badKey = prods.body.filter((p) => p.iconKey && !known.has(p.iconKey));
+    check(
+      `公共库每个产品都配了产品级图标（${prods.body.length} 个，缺 ${noIcon.length}）`,
+      prods.body.length >= 20 && noIcon.length === 0,
+    );
+    check(
+      `产品图标的 key 都真实存在于图标库（无效 ${badKey.length} 个）`,
+      badKey.length === 0,
+    );
+    // 同品类撞图标 = 点位图上一排标记长得一样，分不清谁是谁
+    const byCat = new Map<string, string[]>();
+    for (const p of prods.body) {
+      const arr = byCat.get(p.category) ?? [];
+      arr.push(p.iconKey ?? '');
+      byCat.set(p.category, arr);
+    }
+    const collided = [...byCat.entries()].filter(([, ks]) => ks.length > 1 && new Set(ks).size !== ks.length);
+    check(
+      `同品类产品的图标互不相同（撞车 ${collided.length} 组${collided.length ? '：' + collided.map(([c]) => c).join('、') : ''}）`,
+      collided.length === 0,
+    );
+    const multi = [...byCat.entries()].filter(([, ks]) => ks.length > 1);
+    check(
+      `确实存在同品类多产品需要区分（${multi.length} 个品类），否则本组断言无意义`,
+      multi.length >= 3,
+    );
+  }
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);

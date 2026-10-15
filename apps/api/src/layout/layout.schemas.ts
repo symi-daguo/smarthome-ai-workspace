@@ -14,6 +14,8 @@ export const createProductSchema = z.object({
   priceMax: priceField.optional(),
   perRoom: z.string().max(60).optional(),
   imageUrl: z.string().max(200).optional(),
+  // 产品级图标 key（product-icons.ts 的 PRODUCT_ICON_KEYS）；空串=回退品类图标
+  iconKey: z.string().max(40).optional(),
   // 标准产品主数据
   sku: z.string().max(40).optional(),
   barcode: z.string().max(20).optional(),

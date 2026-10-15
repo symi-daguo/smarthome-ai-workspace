@@ -6,12 +6,13 @@ import { api, fileUrl } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { catMeta, categoryList, categoryOptions, loadCategoryDict, refreshCategoryDict, type CategoryDef } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
-import { categoryIconSvg, iconSvgByKey, PRODUCT_ICON_KEYS } from '../lib/product-icons';
+import { categoryIconSvg, iconSvgByKey, productIconSvg, PRODUCT_ICON_KEYS } from '../lib/product-icons';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
 
 interface ProductRow {
+  iconKey?: string;
   id: string;
   tenantId: string | null;
   name: string;
@@ -302,7 +303,7 @@ export function ProductCenter(): ReactNode {
     r.imageUrl ? (
       <Image src={fileUrl(r.imageUrl)} width={40} height={40} style={{ borderRadius: 8, objectFit: 'cover', border: '1px solid rgba(0,0,0,.06)' }} />
     ) : (
-      <span style={{ width: 40, height: 40, borderRadius: 8, background: `${catMeta(r.category).color}1a`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: categoryIconSvg(r.category, 20, catMeta(r.category).color) }} />
+      <span style={{ width: 40, height: 40, borderRadius: 8, background: `${catMeta(r.category).color}1a`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: productIconSvg(r.category, r.iconKey, 20, catMeta(r.category).color) }} />
     );
 
   return (

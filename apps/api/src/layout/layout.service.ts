@@ -90,6 +90,8 @@ export class LayoutService {
       priceMax: dto.priceMax ?? 0,
       perRoom: dto.perRoom ?? '',
       imageUrl: dto.imageUrl ?? '',
+      // 产品级图标：空串=回退品类图标；同品类下不同产品用不同 key 区分
+      iconKey: dto.iconKey ?? '',
       sku: dto.sku?.trim() ?? '',
       barcode: dto.barcode?.trim() ?? '',
       snRule: dto.snRule?.trim() ?? '',
@@ -143,7 +145,8 @@ export class LayoutService {
     return this.prisma.product.create({
       data: {
         tenantId, name: src.name, category: src.category, brand: src.brand, model: src.model, unit: src.unit,
-        priceMin: src.priceMin, priceMax: src.priceMax, perRoom: src.perRoom, imageUrl: src.imageUrl,
+        priceMin: src.priceMin, priceMax: src.priceMax, perRoom: src.perRoom,
+        imageUrl: src.imageUrl, iconKey: src.iconKey,
         sku: src.sku, barcode: src.barcode, snRule: src.snRule, spec: src.spec, warranty: src.warranty,
         priceRetail: src.priceRetail, priceDealer: src.priceDealer, priceProject: src.priceProject,
         rebateL1: src.rebateL1, rebateL2: src.rebateL2, rebateDesigner: src.rebateDesigner,

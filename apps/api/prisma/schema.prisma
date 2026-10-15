@@ -438,6 +438,12 @@ model Product {
   name      String
   // 品类 key（见 CategoryDef：预置 39 类 + 租户自定义）
   category  String
+  /**
+   * 产品级图标 key（product-icons.ts 的 PRODUCT_ICON_KEYS，如 router/server/lamp）。
+   * 品类图标只有 39 个而产品有 24 个且同品类会撞（网关 2 个、灯光 4 个…），
+   * 所以点位标记与产品中心需要能区分同品类下的不同产品。空串 = 回退品类图标。
+   */
+  iconKey   String    @default("")
   brand     String  @default("")
   model     String  @default("")
   // 计量单位（台/个/套…）

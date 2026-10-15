@@ -22,7 +22,7 @@ export interface PlanForExport {
   floorplanUrl?: string | null;
   /** AI 渲染的精装修效果图（与原始户型图共存时优先用此图，覆盖点位叠加） */
   renderedFloorplanUrl?: string | null;
-  layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+  layoutPoints?: { name: string; category: string; iconKey?: string; x: number; y: number }[] | null;
 }
 
 // 16:9 = 13.333 x 7.5 英寸
