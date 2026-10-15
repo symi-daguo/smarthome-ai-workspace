@@ -24,6 +24,7 @@ import {
 } from '../data/imageWorkflows';
 import { api, fileUrl } from '../lib/api';
 import { compressImage } from '../lib/compress';
+import { newRequestId } from '../lib/request-id';
 import { RegionSelector, type RegionSelection } from '../components/RegionSelector';
 import { useActiveConfig } from '../lib/configStore';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
@@ -92,10 +93,8 @@ function arrToLines(list: string[]): string {
 }
 
 /** 提交幂等键：失败（尤其超时这种「不知道成没成」）保留复用，成功才清除。
- *  这样弱网重试 / 重复点击会被后端识别成同一次请求，不会二次出图、二次扣额度。 */
-const newRequestId = (): string =>
-  globalThis.crypto?.randomUUID?.() ?? `r-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
+ *  这样弱网重试 / 重复点击会被后端识别成同一次请求，不会二次出图、二次扣额度。
+ *  实现见 lib/request-id.ts */
 export function ImageStudio(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();

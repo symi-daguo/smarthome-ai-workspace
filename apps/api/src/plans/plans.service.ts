@@ -49,6 +49,8 @@ interface PlanInput {
   pageCount: number;
   floorplanAssetId?: string | null;
   layoutPoints?: unknown[] | null;
+  /** 提交幂等键：命中已有方案直接返回，避免重复调 LLM + 重复扣费 */
+  clientRequestId?: string;
 }
 
 const STYLE_NAMES: Record<string, string> = {
@@ -100,6 +102,14 @@ export class PlansService {
 
   /** LLM 生成多页方案（9 页标准骨架，pageCount 超出部分追加空间场景页） */
   async create(input: PlanInput) {
+    // 幂等查询放在**最前面**：方案要先调 LLM 出页、再按页数扣费，
+    // 是全项目最贵的一次提交，重放的代价远高于生图/生视频。
+    if (input.clientRequestId) {
+      const existing = await this.prisma.planProject.findFirst({
+        where: { tenantId: input.tenantId, clientRequestId: input.clientRequestId },
+      });
+      if (existing) return { ...existing, deduped: true };
+    }
     const styleName = STYLE_NAMES[input.style] ?? input.style;
     const pages = await this.generatePages(input, styleName);
     const cost = pages.length * (TOKENS_PER_PAGE[input.edition] ?? 100);
@@ -131,6 +141,7 @@ export class PlansService {
         versionNo: 1,
         floorplanAssetId: input.floorplanAssetId ?? null,
         layoutPoints: (input.layoutPoints ?? null) as never,
+        clientRequestId: input.clientRequestId ?? null,
       },
     });
   }

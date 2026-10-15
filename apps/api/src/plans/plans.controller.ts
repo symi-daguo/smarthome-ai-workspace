@@ -50,6 +50,7 @@ export class PlansController {
       pageCount: dto.pageCount,
       floorplanAssetId: dto.floorplanAssetId,
       layoutPoints: dto.layoutPoints,
+      clientRequestId: dto.clientRequestId,
     });
   }
 

@@ -1535,6 +1535,73 @@ async function main(): Promise<void> {
   check('幂等键在库中唯一（重放没有产生第二条产物）', stillOne === 1);
   await prisma.mediaAsset.delete({ where: { id: seededAsset.id } });
 
+  // 生视频走同一套幂等机制，且单价更高，更不能漏。
+  // 同样用预置产物模拟「上次成功但响应丢了」，不触发真实的视频生成调用。
+  const vIdemKey = `smoke-idem-vid-${randomUUID()}`;
+  const seededVideo = await prisma.mediaAsset.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      kind: 'video',
+      title: '视频幂等验证',
+      prompt: '视频幂等验证用提示词',
+      filePath: 'videos/smoke-idempotent.mp4',
+      mimeType: 'video/mp4',
+      sizeBytes: 0,
+      status: 'ready',
+      clientRequestId: vIdemKey,
+    },
+  });
+  const vidReplay = await request<{ id: string; deduped?: boolean }>(base, '/api/media/videos', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      prompt: '视频幂等验证用提示词',
+      duration: 5,
+      resolution: '720P',
+      ratio: '16:9',
+      clientRequestId: vIdemKey,
+    }),
+  });
+  check(
+    '生视频同一提交键重复提交直接取回原视频（不重复扣额度）',
+    vidReplay.status === 201 && vidReplay.body?.deduped === true && vidReplay.body?.id === seededVideo.id,
+  );
+  await prisma.mediaAsset.delete({ where: { id: seededVideo.id } });
+
+  // 方案是全项目最贵的一次提交：先调 LLM 出页，再按页数扣费。
+  // 幂等查询必须排在调 LLM 之前，否则重放一次就是白烧一次模型 + 一次额度。
+  const pIdemKey = `smoke-idem-plan-${randomUUID()}`;
+  const seededPlan = await prisma.planProject.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      title: '方案幂等验证',
+      style: 'A',
+      edition: 'standard',
+      pageCount: 9,
+      pages: [],
+      versionNo: 1,
+      clientRequestId: pIdemKey,
+    },
+  });
+  const planReplay = await request<{ id: string; deduped?: boolean }>(base, '/api/plans', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      title: '方案幂等验证',
+      style: 'A',
+      edition: 'standard',
+      pageCount: 9,
+      clientRequestId: pIdemKey,
+    }),
+  });
+  check(
+    '方案同一提交键重复提交直接取回原方案（不重复调 LLM、不重复扣费）',
+    planReplay.status === 201 && planReplay.body?.deduped === true && planReplay.body?.id === seededPlan.id,
+  );
+  await prisma.planProject.delete({ where: { id: seededPlan.id } });
+
   // ---------- 局部重绘链路：mask 必须真正到达出图层，不能被静默丢弃 ----------
   // 关键回归点：画布 turns 端点若没把 mask 透传给 generateImage，用户圈选后会变成「整张重画」，
   // 而 UI 上却显示「圈选重绘」。这里用「provider 不支持 → 作业必须 failed」来证明链路是通的：

@@ -429,6 +429,9 @@ model PlanProject {
   renderedFloorplanAssetId String?
   // 点位数组 [{productId,x,y}]（x/y 归一化 0-1，叠加渲染在户型图上）
   layoutPoints             Json?
+  // 提交幂等键：方案按页数扣费且要先调 LLM 出页，是全项目单价最高的提交，
+  // 重复提交等于重复调模型 + 重复扣费。命中已有方案直接返回，不再生成。
+  clientRequestId          String?  @unique
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 

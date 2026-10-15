@@ -15,6 +15,7 @@ import { App as AntApp, Button, Drawer, Form, Grid, Input, InputNumber, Modal, P
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
+import { newRequestId } from '../lib/request-id';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText } from '../lib/planPptx';
@@ -146,6 +147,8 @@ export function PlanStudio(): ReactNode {
   const [form] = Form.useForm();
   const [plan, setPlan] = useState<PlanDetail | null>(null);
   const [generating, setGenerating] = useState(false);
+  /** 提交幂等键：失败保留、成功清除，详见 lib/request-id.ts */
+  const reqIdRef = useRef<string | null>(null);
   const [editing, setEditing] = useState<{ index: number; heading: string; body: string; narration: string } | null>(null);
   const [savingPage, setSavingPage] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -202,8 +205,10 @@ export function PlanStudio(): ReactNode {
       return;
     }
     setGenerating(true);
+    const rid = reqIdRef.current ?? newRequestId();
+    reqIdRef.current = rid;
     try {
-      const created = await api<PlanDetail>('/api/plans', {
+      const created = await api<PlanDetail & { deduped?: boolean }>('/api/plans', {
         method: 'POST',
         body: JSON.stringify({
           title: values.title,
@@ -218,11 +223,17 @@ export function PlanStudio(): ReactNode {
           style,
           edition: version,
           pageCount,
+          clientRequestId: rid,
         }),
       });
+      reqIdRef.current = null;
       setPlan(created);
       setStep(1);
-      message.success(`方案文案已生成（${created.pages.length} 页），可逐页审稿编辑`);
+      message.success(
+        created.deduped
+          ? '这次提交此前已生成过方案，直接取回原方案（未重复扣额度）'
+          : `方案文案已生成（${created.pages.length} 页），可逐页审稿编辑`,
+      );
     } catch (e) {
       message.error((e as Error).message || '生成失败');
     } finally {

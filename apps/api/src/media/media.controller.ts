@@ -75,6 +75,7 @@ export class MediaController {
       resolution: dto.resolution.replace('P', ''),
       ratio: dto.ratio,
       firstFrameAssetId: dto.firstFrameAssetId,
+      clientRequestId: dto.clientRequestId,
       title: dto.title,
     });
   }

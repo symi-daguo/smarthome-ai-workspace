@@ -5,8 +5,9 @@ import {
   ThunderboltFilled,
 } from '@ant-design/icons';
 import { App as AntApp, Alert, Button, Grid, Input, Modal, Select, Typography, Upload, theme } from 'antd';
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { api, fileUrl } from '../lib/api';
+import { newRequestId } from '../lib/request-id';
 import { useActiveConfig } from '../lib/configStore';
 import {
   AUDIO_MODES, DEFAULT_EFFECTS, DEFAULT_MUSIC, MAX_EFFECTS_LEN, MAX_MUSIC_LEN,
@@ -83,6 +84,8 @@ export function VideoStudio(): ReactNode {
   const [assets, setAssets] = useState<ImageAsset[]>([]);
   const [generating, setGenerating] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  /** 提交幂等键：失败保留、成功清除，详见 lib/request-id.ts */
+  const reqIdRef = useRef<string | null>(null);
 
   const pickScene = (s: string): void => {
     setScene(s);
@@ -127,11 +130,13 @@ export function VideoStudio(): ReactNode {
       return;
     }
     setGenerating(true);
+    const rid = reqIdRef.current ?? newRequestId();
+    reqIdRef.current = rid;
     try {
       // 音轨不是上游独立参数，而是编译进提示词交给模型理解
       const audio = normalizeAudio(audioMode, musicStyle, soundEffects);
       const fullPrompt = withAudioPrompt(desc.trim(), audio);
-      const r = await api<{ url: string }>('/api/media/videos', {
+      const r = await api<{ url: string; deduped?: boolean }>('/api/media/videos', {
         method: 'POST',
         body: JSON.stringify({
           prompt: fullPrompt,
@@ -139,10 +144,16 @@ export function VideoStudio(): ReactNode {
           resolution: `${res}P`,
           ratio,
           ...(firstFrame ? { firstFrameAssetId: firstFrame.assetId } : {}),
+          clientRequestId: rid,
         }),
       });
+      reqIdRef.current = null;
       setVideoUrl(fileUrl(`${r.url}?t=${Date.now()}`));
-      message.success(firstFrame ? '视频已生成（图生视频）并保存到「我的资料库」' : '视频已生成并保存到「我的资料库」');
+      message.success(
+        r.deduped
+          ? '这次提交此前已成功出片，直接取回原视频（未重复扣额度）'
+          : firstFrame ? '视频已生成（图生视频）并保存到「我的资料库」' : '视频已生成并保存到「我的资料库」',
+      );
     } catch (e) {
       message.error((e as Error).message || '生成失败');
     } finally {

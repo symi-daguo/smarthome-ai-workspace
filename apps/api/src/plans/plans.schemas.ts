@@ -13,6 +13,8 @@ export const createPlanSchema = z.object({
   style: z.string().length(1).default('A'),
   edition: z.enum(['standard', 'presale', 'private']).default('standard'),
   pageCount: z.number().int().min(9).max(16).default(9),
+  /** 提交幂等键：方案按页数扣费且要先调 LLM，重放的代价最高，必须防重复提交 */
+  clientRequestId: z.string().max(64).optional(),
   // 户型平面图（MediaAsset id）与设备点位（来自点位布局编辑器，空间动线页配图用）
   floorplanAssetId: z.string().uuid().optional().nullable(),
   layoutPoints: z

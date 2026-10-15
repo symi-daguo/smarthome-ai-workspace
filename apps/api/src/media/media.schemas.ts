@@ -41,6 +41,11 @@ export const generateVideoSchema = z.object({
   ratio: z.enum(['16:9', '9:16', '1:1']).default('16:9'),
   /** 首帧图资产 id（先经 /api/media/uploads 上传或从我的资料选择）：传入则走 I2V-01-Director 图生视频 */
   firstFrameAssetId: z.string().min(1).max(40).optional(),
+  /**
+   * 提交幂等键（可选）：与生图同一个机制。视频单价高于图片，重复提交代价更大，
+   * 弱网超时重试或跨标签页重复点都会造成重复扣费。
+   */
+  clientRequestId: z.string().max(64).optional(),
   title: z.string().max(100).optional(),
 });
 export type GenerateVideoDto = z.infer<typeof generateVideoSchema>;

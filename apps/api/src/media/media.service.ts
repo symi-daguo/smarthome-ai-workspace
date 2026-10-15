@@ -277,8 +277,10 @@ export class MediaService {
     resolution: string;
     ratio: string;
     firstFrameAssetId?: string;
+    /** 提交幂等键：与生图同一机制，命中直接返回已有视频 */
+    clientRequestId?: string;
     title?: string;
-  }): Promise<{ id: string; url: string; status: string }> {
+  }): Promise<{ id: string; url: string; status: string; deduped?: boolean }> {
     // 首帧图：读取本地资产转 data URL，切换 I2V-01-Director（图生视频导演版，同支持运镜指令）
     // 先校验再扣额：资产无效时不应白扣额度
     let firstFrameImage = '';
@@ -290,6 +292,17 @@ export class MediaService {
       if (asset.kind !== 'image') throw new BadRequestException('FIRST_FRAME_MUST_BE_IMAGE');
       const buf = await readFile(this.resolveSafe(asset.filePath));
       firstFrameImage = `data:${asset.mimeType ?? 'image/jpeg'};base64,${buf.toString('base64')}`;
+    }
+
+    // 幂等：与生图同一套，按租户查、扣费之前返回。
+    // 视频单价高于图片，重复提交的直接代价更大，所以这里更不能漏。
+    if (opts.clientRequestId) {
+      const existing = await this.prisma.mediaAsset.findFirst({
+        where: { tenantId: opts.tenantId, clientRequestId: opts.clientRequestId },
+      });
+      if (existing) {
+        return { id: existing.id, url: `/api/media/assets/${existing.id}/file`, status: existing.status, deduped: true };
+      }
     }
 
     await this.tokens.consume(opts.tenantId, VIDEO_TOKENS, 'CONSUME', { kind: 'video', prompt: opts.prompt.slice(0, 80) }, opts.userId);
@@ -325,6 +338,7 @@ export class MediaService {
         mimeType,
         sizeBytes,
         status: 'ready',
+        clientRequestId: opts.clientRequestId ?? null,
       },
     });
     return { id: asset.id, url: `/api/media/assets/${asset.id}/file`, status: 'ready' };
