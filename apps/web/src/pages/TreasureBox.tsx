@@ -66,13 +66,23 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
  * 三层取景位置不同（background-position），避免「同一张图原样重复三次」的廉价感。
  * 角标压在图片右下角（对齐参考站），不挤占标题行。
  */
+/**
+ * 堆叠预览的三层。
+ *
+ * 全部用**百分比**而不是像素（0.1.59）：原来 dx 是 px、CARD_W 写死 196，
+ * 而卡片是 `minmax(300px, 1fr)` —— 两者一变位就错：
+ *   ① 卡片内宽 320px 时角标 `right: calc(50% - 196px + 6px)` 算出来是 **-30px**，
+ *      角标直接伸出卡片外；
+ *   ② 卡片更宽时角标落在图片右侧的空白里，与图片脱开；
+ *   ③ 196px 的图在 300px+ 的卡片里只占一半，右侧大片空黑。
+ * 改成百分比后，图片按卡片宽度等比缩放，永远填满；角标锚在容器内的固定右下角。
+ * dx 是「主层左边缘再往左挪百分之多少」，dy 同理。
+ */
 const STACK_LAYERS = [
-  { dx: -44, dy: 6, rot: -6, opacity: 0.4, pos: '26% 32%' },
-  { dx: -22, dy: 3, rot: 3, opacity: 0.66, pos: '64% 56%' },
+  { dx: -7, dy: 7, rot: -6, opacity: 0.42, pos: '26% 32%' },
+  { dx: -3.5, dy: 3.5, rot: 3, opacity: 0.68, pos: '64% 56%' },
   { dx: 0, dy: 0, rot: 0, opacity: 1, pos: '50% 48%' },
 ] as const;
-const CARD_W = 196;
-const CARD_H = 128;
 
 function StackedPreview({
   img,
@@ -90,7 +100,18 @@ function StackedPreview({
   accentText: string;
 }): ReactNode {
   return (
-    <div style={{ position: 'relative', height: 134, marginBottom: 12, display: 'flex', justifyContent: 'center' }}>
+    // overflow:hidden 保证旋转出来的边角不会溢出卡片；圆角交给容器，卡片内不再二次裁剪
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        aspectRatio: '16 / 10',
+        marginBottom: 12,
+        borderRadius: 12,
+        overflow: 'hidden',
+        background: manual ? accent : 'transparent',
+      }}
+    >
       {STACK_LAYERS.map((l, i) => (
         <div
           key={i}
@@ -99,29 +120,33 @@ function StackedPreview({
           aria-hidden={i === 2 ? undefined : true}
           style={{
             position: 'absolute',
-            left: `calc(50% - ${CARD_W / 2}px + ${l.dx}px)`,
-            top: l.dy,
-            width: CARD_W,
-            height: CARD_H,
+            // 主层占据 86% 宽高，靠左上角摆放，三层叠起来正好把容器铺满
+            left: `calc(7% + ${l.dx}%)`,
+            top: `calc(7% + ${l.dy}%)`,
+            width: '86%',
+            height: '86%',
             background: `url(${img}) ${l.pos} / cover`,
             opacity: l.opacity,
-            borderRadius: 12,
+            borderRadius: 10,
             transform: `rotate(${l.rot}deg)`,
-            boxShadow: i === 2 ? '0 4px 14px rgba(0,0,0,.12)' : 'none',
+            boxShadow: i === 2 ? '0 4px 14px rgba(0,0,0,.18)' : 'none',
           }}
         />
       ))}
       {badge ? (
         <span
           style={{
+            // 锚在容器内的固定右下角：跟卡片宽度无关，永远不会伸出卡片、也不会飘到空白里
             position: 'absolute',
-            right: `calc(50% - ${CARD_W}px + 6px)`,
-            bottom: 6,
+            right: 10,
+            bottom: 10,
+            zIndex: 2,
             fontSize: 11,
-            padding: '1px 8px',
+            lineHeight: '16px',
+            padding: '0 8px',
             borderRadius: 9999,
-            background: manual ? accent : 'rgba(0,0,0,.55)',
-            color: manual ? accentText : '#fff',
+            background: manual ? accentText : 'rgba(0,0,0,.55)',
+            color: manual ? accent : '#fff',
           }}
         >
           {badge}
