@@ -4,6 +4,20 @@
 # - 若再次遇到 Docker Hub 不可达，可替换为 ghcr.io / quay.io 镜像：
 #   ghcr.io/cloudnative-pg/postgresql:18（注意：该镜像需 operator 调度，不能直接 compose 运行）、
 
+# 日志轮转（全项目统一，所有容器都必须挂）。
+#
+# 用 local 驱动而不是 json-file：local 是 Docker 官方的稀疏二进制日志格式，
+# 同样的 max-size 下实际占用更小，且默认就是有上限的。json-file 不加 options
+# 时是**无上限**的，长期跑下去会把宿主磁盘悄悄撑满。
+#
+# 单容器上限 10m × 2 = 20MB，三个容器合计不超过 60MB。
+# 这是「正常落地使用」需要保留的量级：够排查近期故障，又不会无限增长。
+x-log-rotate: &log-rotate
+  driver: local
+  options:
+    max-size: '10m'
+    max-file: '2'
+
 services:
   # pgvector 镜像内置 PostgreSQL 18 + vector 扩展（知识库 RAG 需要）
   db:
@@ -23,6 +37,9 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    # 数据库容器同样要轮转：PostgreSQL 长时间运行会持续写连接与检查点日志，
+    # 不设上限的话它是全项目最容易悄悄撑大宿主磁盘的一个。
+    logging: *log-rotate
 
 
   # NestJS API：启动时自动 migrate deploy + 幂等种子
@@ -87,12 +104,7 @@ services:
       - 'host.docker.internal:host-gateway'
     ports:
       - '3080:3080'
-    # 日志轮转：单容器最多 3 个 10MB 文件，长期运行不挤爆宿主磁盘
-    logging: &log-rotate
-      driver: json-file
-      options:
-        max-size: '10m'
-        max-file: '3'
+    logging: *log-rotate
     depends_on:
       db:
         condition: service_healthy

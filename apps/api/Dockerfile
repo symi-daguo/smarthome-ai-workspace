@@ -28,10 +28,14 @@ COPY apps/web/package.json apps/web/
 # pnpm store 挂 BuildKit 缓存：首次下载后持久保留，重试或重建时命中缓存不必全量重下。
 # package-import-method=copy 是必须的——否则 node_modules 会是指向 /pnpm/store 的软链，
 # 而该挂载在构建结束后即消失，运行期会找不到依赖。
+#
+# --filter @app/api... 只装 API 及其依赖；尾部 ... 表示连带装上它依赖的 workspace 包。
+# 不加的话会把 apps/web 的 React + antd 一起装进 API 镜像（实测多占约 0.5GB），
+# 而这个容器运行时根本不碰前端。
 RUN --mount=type=cache,id=pnpm-store-api,target=/pnpm/store,sharing=locked \
     pnpm config set store-dir /pnpm/store && \
     pnpm config set package-import-method copy && \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --filter @app/api...
 
 # 拷贝源码并生成 Prisma Client、编译
 COPY apps/api apps/api

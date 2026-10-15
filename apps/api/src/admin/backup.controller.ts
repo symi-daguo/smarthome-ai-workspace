@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
-import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.module.js';
@@ -51,17 +51,39 @@ export class BackupController {
     }
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     const json = JSON.stringify(out);
-    // 同时在 uploads/backups 留一份，防下载中断
+    // 同时在 uploads/backups 留一份，防下载中断。
+    // 必须同时裁掉超出份数的旧备份：全库快照单份就有二十多 MB，
+    // 之前只写不删，反复导出几次就能把宿主磁盘吃掉几百 MB，
+    // 而且这些文件还会被 Docker 构建上下文带进镜像。
     try {
       const dir = join(this.config.get<string>('UPLOAD_DIR', 'uploads'), 'backups');
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, `backup-${stamp}.json`), json);
+      await this.pruneBackups(dir, 3);
     } catch {
       // 留盘失败不阻塞下载
     }
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="backup-${stamp}.json"`);
     res.send(json);
+  }
+
+  /**
+   * 备份留盘只保留最近 keep 份，超出的按修改时间从旧到新删。
+   * 单独抽出来是因为它失败绝不能影响备份本身（catch 已经吞掉），
+   * 而且按修改时间排比按文件名排更稳：文件名里的时间戳来自 ISO 字符串，
+   * 一旦有人改系统时区或时钟，文件名顺序就不再代表先后。
+   */
+  private async pruneBackups(dir: string, keep: number): Promise<void> {
+    const names = (await readdir(dir)).filter((n) => n.startsWith('backup-') && n.endsWith('.json'));
+    if (names.length <= keep) return;
+    const withTime = await Promise.all(
+      names.map(async (name) => ({ name, mtime: (await stat(join(dir, name))).mtimeMs })),
+    );
+    withTime.sort((a, b) => a.mtime - b.mtime);
+    for (const old of withTime.slice(0, withTime.length - keep)) {
+      await unlink(join(dir, old.name)).catch(() => undefined);
+    }
   }
 
   @RequirePermissions('platform:billing:manage')

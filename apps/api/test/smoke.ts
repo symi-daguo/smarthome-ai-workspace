@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
@@ -734,6 +734,36 @@ async function main(): Promise<void> {
 
   const storageRes = await request<{ usedBytes: number; quotaBytes: number; assets: number }>(base, '/api/admin/storage', authA);
   check('存储占用统计可查', storageRes.status === 200 && storageRes.body.quotaBytes > 0);
+
+  // ---------- 备份留盘必须自动裁剪（防止只增不减撑爆磁盘） ----------
+  // 背景：全库快照单份二十多 MB，0.1.63 之前只写不删，实测堆到 188 份 597MB，
+  // 而且这些文件还会被 Docker 构建上下文带进镜像。裁剪是唯一的兜底，所以必须验它真的在裁。
+  const backupDir = join(process.cwd(), 'uploads', 'backups');
+  const listBackups = (): string[] =>
+    existsSync(backupDir) ? readdirSync(backupDir).filter((n) => n.startsWith('backup-') && n.endsWith('.json')) : [];
+  // 造 4 份「很久以前」的假备份：文件名新但 mtime 老，才会排在裁剪队列的前面被删。
+  // 只改文件名不改 mtime 的话，按 mtime 排序时它们会被当成最新份，反而删掉真备份——那才是真事故。
+  mkdirSync(backupDir, { recursive: true });
+  const staleNames: string[] = [];
+  const oldTime = new Date('2001-01-01T00:00:00Z');
+  for (let i = 0; i < 4; i += 1) {
+    const name = `backup-2001-01-0${i + 1}-00-00-00.json`;
+    const p = join(backupDir, name);
+    writeFileSync(p, '{}');
+    utimesSync(p, oldTime, oldTime);
+    staleNames.push(name);
+  }
+  const beforeTrim = listBackups().length;
+  await fetch(`${base}/api/admin/backup`, { headers: authA.headers });
+  const afterTrim = listBackups();
+  check(
+    '备份留盘裁剪到固定份数（只增不减会撑爆磁盘）',
+    beforeTrim >= 4 && afterTrim.length === 3,
+  );
+  check(
+    '裁剪删掉的是最旧的备份，且真备份一份没少',
+    staleNames.every((n) => !afterTrim.includes(n)) && afterTrim.some((n) => !staleNames.includes(n)),
+  );
 
   const cleanupRes = await request<{ deleted: number; freedBytes: number }>(base, '/api/admin/storage/cleanup?beforeDays=3650', { ...authA, method: 'POST' });
   check('产物清理端点可用（0 天阈值不误删）', [200, 201].includes(cleanupRes.status) && typeof cleanupRes.body?.deleted === 'number');

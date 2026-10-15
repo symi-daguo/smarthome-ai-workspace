@@ -5,6 +5,11 @@
 .gitignore
 *.log
 **/*.log
+# 产物目录在 apps/api/uploads（容器内由 api-uploads 卷挂载，镜像里用不到）。
+# 必须用 **/uploads：单写 `uploads` 只匹配仓库根目录那一个，匹配不到 apps/api/uploads，
+# 结果每次 build 都把几百 MB 的产物与全库备份塞进构建上下文，
+# 镜像凭空多出 600MB 层，编译也白读写一遍——这正是之前 api 镜像 2.23GB 的大头。
+**/uploads
 uploads
 .trae
 # 本地环境文件不进入镜像，运行时变量由 compose 注入
