@@ -11,6 +11,8 @@
  * 识别流程内部使用像素坐标，最后一步统一归一化。
  */
 
+import { FONT_STACK_CANVAS } from '../theme/fonts';
+
 /* ============================ 类型 ============================ */
 
 export interface GrayImage {
@@ -1114,7 +1116,7 @@ export function drawHeatLegend(ctx: CanvasRenderingContext2D, width: number, hei
   ctx.roundRect(lx, ly, lw, lh, lh / 2);
   ctx.fill();
   ctx.fillStyle = 'rgba(20,15,10,.72)';
-  ctx.font = `bold ${Math.round(lh * 0.85)}px "Microsoft YaHei", sans-serif`;
+  ctx.font = `bold ${Math.round(lh * 0.85)}px ${FONT_STACK_CANVAS}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillText('弱', lx - lh * 1.1, ly + lh * 0.8);
@@ -1149,7 +1151,7 @@ export function drawExportSummary(ctx: CanvasRenderingContext2D, width: number, 
     `生成时间：${(s.generatedAt ?? new Date()).toLocaleString('zh-CN')}`,
   ];
   ctx.save();
-  ctx.font = `bold ${fs}px "Microsoft YaHei", sans-serif`;
+  ctx.font = `bold ${fs}px ${FONT_STACK_CANVAS}`;
   let boxW = 0;
   for (const line of lines) boxW = Math.max(boxW, ctx.measureText(line).width);
   const lineH = fs * 1.5;
@@ -1165,7 +1167,7 @@ export function drawExportSummary(ctx: CanvasRenderingContext2D, width: number, 
   ctx.textBaseline = 'top';
   lines.forEach((line, i) => {
     ctx.fillStyle = i === 0 ? '#ffd66b' : '#fff';
-    ctx.font = `${i === 0 ? 'bold ' : ''}${fs}px "Microsoft YaHei", sans-serif`;
+    ctx.font = `${i === 0 ? 'bold ' : ''}${fs}px ${FONT_STACK_CANVAS}`;
     ctx.fillText(line, bx + pad, by + pad / 2 + i * lineH);
   });
   ctx.restore();

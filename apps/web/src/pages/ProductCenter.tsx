@@ -6,7 +6,7 @@ import { api, fileUrl } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { catMeta, categoryList, categoryOptions, loadCategoryDict, refreshCategoryDict, type CategoryDef } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
-import { categoryIconSvg, iconSvgByKey, productIconSvg, PRODUCT_ICON_KEYS } from '../lib/product-icons';
+import { categoryIconSvg, iconSvgByKey, productIconSvg, ICON_SIZE, PRODUCT_ICON_KEYS } from '../lib/product-icons';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
@@ -303,7 +303,7 @@ export function ProductCenter(): ReactNode {
     r.imageUrl ? (
       <Image src={fileUrl(r.imageUrl)} width={40} height={40} style={{ borderRadius: 8, objectFit: 'cover', border: '1px solid rgba(0,0,0,.06)' }} />
     ) : (
-      <span style={{ width: 40, height: 40, borderRadius: 8, background: `${catMeta(r.category).color}1a`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: productIconSvg(r.category, r.iconKey, 20, catMeta(r.category).color) }} />
+      <span style={{ width: 40, height: 40, borderRadius: 8, background: `${catMeta(r.category).color}1a`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: productIconSvg(r.category, r.iconKey, ICON_SIZE.thumb, catMeta(r.category).color) }} />
     );
 
   return (
@@ -553,7 +553,7 @@ export function ProductCenter(): ReactNode {
                 dropdownStyle={{ width: 348, padding: 8 }}
                 labelRender={({ value }) => (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <span dangerouslySetInnerHTML={{ __html: iconSvgByKey(String(value), 16, '#555') }} />
+                    <span dangerouslySetInnerHTML={{ __html: iconSvgByKey(String(value), ICON_SIZE.medium, '#555') }} />
                     <Text type="secondary" style={{ fontSize: 11 }}>{String(value)}</Text>
                   </span>
                 )}
@@ -572,7 +572,7 @@ export function ProductCenter(): ReactNode {
                             background: selected ? token.colorPrimaryBg : 'transparent',
                             boxShadow: selected ? `inset 0 0 0 1px ${token.colorPrimary}` : 'none',
                           }}
-                          dangerouslySetInnerHTML={{ __html: iconSvgByKey(k, 17, selected ? token.colorPrimary : '#555') }}
+                          dangerouslySetInnerHTML={{ __html: iconSvgByKey(k, ICON_SIZE.medium, selected ? token.colorPrimary : '#555') }}
                         />
                       );
                     })}
@@ -593,7 +593,10 @@ export function ProductCenter(): ReactNode {
             pagination={false}
             dataSource={catList}
             columns={[
-              { title: '', width: 44, render: (_, c) => <span style={{ display: 'inline-flex', color: c.color }} dangerouslySetInnerHTML={{ __html: iconSvgByKey(c.icon, 18, c.color) }} /> },
+              // 图标给固定 32×32 居中盒子：原来 span 只有 inline-flex，在 44px 列里靠左，与右侧文字列视觉不齐
+              { title: '', width: 44, align: 'center', render: (_, c) => (
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 8, background: `${c.color}14`, color: c.color, flex: 'none' }} dangerouslySetInnerHTML={{ __html: iconSvgByKey(c.icon, ICON_SIZE.medium, c.color) }} />
+              ) },
               { title: '分类', render: (_, c) => <Space size={6}><Text>{c.label}</Text>{c.tenantId ? <Tag color="green">自定义</Tag> : null}</Space> },
               { title: 'key', dataIndex: 'key', width: 120, render: (v: string) => <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> },
               {

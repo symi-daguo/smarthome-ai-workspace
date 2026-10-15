@@ -2165,6 +2165,71 @@ async function main(): Promise<void> {
     );
   }
 
+  // ---------- 字体与图标许可证/一致性守卫（0.1.57）----------
+  {
+    const webRoot = join(process.cwd(), '../web');
+    // ① 仓库里不允许出现字体文件。
+    //    按字体「名字」引用系统字体是标准做法、不构成再分发；但一旦把字体文件打进仓库/镜像，
+    //    就是实打实的字体再分发，必须确认所选字体允许捆绑分发。守住这条最省事。
+    const fontFiles: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name === 'dist' || e.name.startsWith('.')) continue;
+        const fp = join(dir, e.name);
+        if (e.isDirectory()) walk(fp);
+        else if (/\.(woff2?|ttf|otf|eot)$/i.test(e.name)) fontFiles.push(fp.replace(webRoot, 'web'));
+      }
+    };
+    walk(webRoot);
+    check(`仓库未打包任何字体文件（发现 ${fontFiles.length} 个）`, fontFiles.length === 0);
+
+    // ② 字体栈必须只有一个来源：styles.css 是唯一定义处，fonts.ts 用 ?raw 提取。
+    //    曾经两边各写一份，smoke 立刻报不一致——两份副本本身就是漂移风险源。
+    const fontsTs = readFileSync(join(webRoot, 'src/theme/fonts.ts'), 'utf8');
+    const css = readFileSync(join(webRoot, 'src/styles.css'), 'utf8');
+    check(
+      '字体栈单一来源：theme/fonts.ts 从 styles.css ?raw 提取而非另写一份',
+      /from '\.\.\/styles\.css\?raw'/.test(fontsTs),
+    );
+    // CSS 栈里必须有 OFL 开源中文兜底，否则精简 Linux 上中文会变豆腐块
+    const cssStack = (css.match(/font-family:\s*([^;]+);/) ?? [, ''])[1];
+    check(
+      '字体栈含 OFL 开源中文兜底（Noto/Source Han/WenQuanYi）',
+      /Noto Sans SC/.test(cssStack) && /Source Han Sans SC/.test(cssStack),
+    );
+    // 画布与 PPTX 也必须走同一个来源，不允许各自写死字体名
+    const canvasSrc = readFileSync(join(webRoot, 'src/lib/pointOverlay.ts'), 'utf8');
+    const heatSrc = readFileSync(join(webRoot, 'src/lib/signalHeatmap.ts'), 'utf8');
+    const pptxSrc = readFileSync(join(webRoot, 'src/lib/planPptx.ts'), 'utf8');
+    check(
+      'canvas 三处字体引用统一来源（不再写死 Microsoft YaHei）',
+      [canvasSrc, heatSrc].every((x) => x.includes('FONT_STACK_CANVAS'))
+        && !/px "Microsoft YaHei"/.test(canvasSrc + heatSrc),
+    );
+    check(
+      'PPTX 字体名取自 FONT_PPTX 常量',
+      pptxSrc.includes('FONT_PPTX') && !/const FONT = 'Microsoft YaHei'/.test(pptxSrc),
+    );
+
+    // ③ 图标尺寸必须走 ICON_SIZE 档位，不允许各处随手写数字
+    const iconSrc = readFileSync(join(webRoot, 'src/lib/product-icons.ts'), 'utf8');
+    check(
+      '图标尺寸已收敛到 ICON_SIZE 档位',
+      /export const ICON_SIZE/.test(iconSrc),
+    );
+    const stray: string[] = [];
+    for (const f of ['ProductCenter.tsx', 'DeviceLayout.tsx']) {
+      const src = readFileSync(join(webRoot, 'src/pages', f), 'utf8');
+      for (const m of src.matchAll(/(?:productIconSvg|categoryIconSvg|iconSvgByKey)\([^)]*?,\s*(\d+)\s*,/g)) {
+        stray.push(`${f}:${m[1]}`);
+      }
+    }
+    check(
+      `图标调用点不再写死尺寸（发现 ${stray.length} 处：${stray.join(',') || '无'}）`,
+      stray.length === 0,
+    );
+  }
+
   await app.close();
   const failed = checks.filter(([, ok]) => !ok).length;
   console.log(`smoke result: ${checks.length - failed}/${checks.length} passed`);

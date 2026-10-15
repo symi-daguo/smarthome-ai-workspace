@@ -24,7 +24,7 @@ import {
   toGray,
 } from '../lib/signalHeatmap';
 import type { SignalSource, WallSeg } from '../lib/signalHeatmap';
-import { productIconSvg } from '../lib/product-icons';
+import { productIconSvg, ICON_SIZE } from '../lib/product-icons';
 
 const { Title, Text } = Typography;
 
@@ -638,7 +638,7 @@ export function DeviceLayout(): ReactNode {
                         />
                       ) : (
                         <div style={{ width: isSel ? 32 : 26, height: isSel ? 32 : 26, borderRadius: '50%', background: m.color, border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <span style={{ display: 'inline-flex', color: '#fff', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: productIconSvg(p.category, p.iconKey, isSel ? 20 : 16, '#ffffff') }} />
+                          <span style={{ display: 'inline-flex', color: '#fff', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: productIconSvg(p.category, p.iconKey, isSel ? ICON_SIZE.markerActive : ICON_SIZE.marker, '#ffffff') }} />
                         </div>
                       )}
                     </Tooltip>
@@ -771,7 +771,7 @@ export function DeviceLayout(): ReactNode {
                     onClick={() => setPending((cur) => (cur?.id === p.id ? null : p))}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ display: 'inline-flex', color: catMeta(p.category).color, lineHeight: 0, flex: 'none' }} dangerouslySetInnerHTML={{ __html: productIconSvg(p.category, p.iconKey, 16, catMeta(p.category).color) }} />
+                      <span style={{ display: 'inline-flex', color: catMeta(p.category).color, lineHeight: 0, flex: 'none' }} dangerouslySetInnerHTML={{ __html: productIconSvg(p.category, p.iconKey, ICON_SIZE.inline, catMeta(p.category).color) }} />
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
                         <div style={{ fontSize: 11, opacity: 0.65 }}>{p.perRoom || '按需布置'} · 参考 ¥{p.priceMin}-{p.priceMax}</div>

@@ -1,4 +1,5 @@
 import { categoryIconDataUrl, productIconDataUrl } from './product-icons';
+import { FONT_STACK_CANVAS } from '../theme/fonts';
 import { catMeta as catMetaDict } from './categoryStore';
 import { fileUrl } from './api';
 
@@ -62,7 +63,7 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
   };
   const pointIcons = await Promise.all(points.map(loadIcon));
   const r = Math.max(14, canvas.width * 0.016);
-  ctx.font = `bold ${Math.round(r * 0.95)}px "Microsoft YaHei", sans-serif`;
+  ctx.font = `bold ${Math.round(r * 0.95)}px ${FONT_STACK_CANVAS}`;
   points.forEach((p, idx) => {
     const x = p.x * canvas.width;
     const y = p.y * canvas.height;
@@ -204,7 +205,7 @@ export async function compositeHeatmap(baseSrc: string, sources: PointLike[], ta
   ctx.roundRect(lx, ly, lw, lh, lh / 2);
   ctx.fill();
   ctx.fillStyle = 'rgba(20,15,10,.72)';
-  ctx.font = `bold ${Math.round(lh * 0.85)}px "Microsoft YaHei", sans-serif`;
+  ctx.font = `bold ${Math.round(lh * 0.85)}px ${FONT_STACK_CANVAS}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillText('弱', lx - lh * 1.1, ly + lh * 0.8);
@@ -266,7 +267,7 @@ export async function compositeLightPlan(baseSrc: string, lights: PointLike[], t
   ], 0.75);
   const r = Math.max(12, canvas.width * 0.013);
   const lightIcon = await loadImage(categoryIconDataUrl('light')).catch(() => null);
-  ctx.font = `bold ${Math.round(r * 0.95)}px "Microsoft YaHei", sans-serif`;
+  ctx.font = `bold ${Math.round(r * 0.95)}px ${FONT_STACK_CANVAS}`;
   for (const p of lights) {
     const x = p.x * canvas.width;
     const y = p.y * canvas.height;

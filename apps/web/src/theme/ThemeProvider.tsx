@@ -3,6 +3,7 @@ import { theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { XProvider } from '@ant-design/x';
 import zhCNX from '@ant-design/x/locale/zh_CN';
+import { FONT_STACK_CSS } from './fonts.js';
 
 export type ThemeMode = 'auto' | 'light' | 'dark';
 
@@ -56,8 +57,7 @@ export function ThemeProvider({ children }: { children: ReactNode }): ReactNode 
             colorPrimary: '#4F46E5',
             // 转角比常规 SaaS 更圆一档，配合自有阴影形成独立的视觉语言
             borderRadius: 12,
-            fontFamily:
-              "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+            fontFamily: FONT_STACK_CSS,
           },
           components: {
             Card: {

@@ -29,7 +29,8 @@ export interface PlanForExport {
 const W = 13.333;
 const H = 7.5;
 const MX = 0.66; // 左右外边距
-const FONT = 'Microsoft YaHei';
+import { FONT_PPTX } from '../theme/fonts';
+const FONT = FONT_PPTX;
 
 /** 卡片阴影（pptxgenjs shadow：blur/offset 单位 pt，opacity 0-1） */
 const SHADOW = { type: 'outer' as const, color: '1E160E', blur: 10, offset: 3, angle: 90, opacity: 0.16 };

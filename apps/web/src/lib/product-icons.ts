@@ -172,6 +172,25 @@ export function iconDataUrl(iconKey: string, color = '#ffffff'): string {
  * （灯光 4 个、网关 2 个、开关 2 个、摄像头 2 个、AP 4 个）。
  * 点位图上一排标记全是同一个图标时，根本分不清哪个是哪台设备。
  */
+/**
+ * 图标尺寸档位（0.1.57）。
+ *
+ * 为什么不直接写数字：之前同一屏出现过 20 / 18 / **17** 三个尺寸 ——
+ * 其中 17 明显是看着"差不多"随手调的，导致图标选择器展开时是 17px、收起后变 16px，
+ * 同一个图标在开合之间会跳一下。尺寸集中在这里定义，各处引用，不再各写各的。
+ */
+export const ICON_SIZE = {
+  /** 行内小图标（表格行、列表行、菜单项） */
+  inline: 16,
+  /** 选择器网格、品类管理表头这类中等容器 */
+  medium: 18,
+  /** 产品缩略图 40×40 盒内 */
+  thumb: 20,
+  /** 点位标记：未选中 / 选中 */
+  marker: 16,
+  markerActive: 20,
+} as const;
+
 export function productIconDataUrl(category: string, iconKey: string | undefined, color = '#ffffff'): string {
   return iconKey && ICON_TABLE[iconKey] ? iconDataUrl(iconKey, color) : categoryIconDataUrl(category, color);
 }

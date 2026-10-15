@@ -293,6 +293,27 @@ curl -X POST .../api/agent/snapshots/{id}/restore -d '{"confirm":"<前8位>"}'
 **Agent 的权限边界**：机器账号也有角色。Agent 先读 `?effective=1` 清单就知道自己有哪些能力，
 不必反复撞 403 试错。跨租户访问会被 `API_KEY_TENANT_MISMATCH` 明确拦下。
 
+## 依赖与许可证（商用合规）
+
+本项目面向**免费商用的开源自部署**，所有第三方依赖均已核实许可证。
+
+| 用途 | 组件 | 许可证 | 说明 |
+|---|---|---|---|
+| 界面图标 | lucide | **ISC** | 免费商用；39 个预置品类全部命中图标库 57 个 key |
+| 中文字体兜底 | Noto Sans SC / 思源黑体 | **SIL OFL 1.1** | 免费商用；仅**按名引用**，不打包字体文件 |
+| 权限判定 | @casl/ability | **MIT** | 读写二元 + 写隐含读 |
+| 角色范式参考 | Appwrite / Casbin | BSD-3-Clause / Apache-2.0 | 只借鉴设计，未取代码 |
+
+**字体策略**：仓库内**不含任何字体文件**（smoke 有断言守着）。字体栈定义在
+`styles.css` 的 `:root { font-family }`，`theme/fonts.ts` 用 `?raw` 提取后供
+canvas 绘制与 PPTX 导出引用，保证单一来源。系统字体名在前（mac/Windows 观感最好），
+后面跟 OFL 开源中文兜底 —— 精简 Linux / Chromium OS 上没有系统中文字体时，
+点位图与热力图上的中文**不会变成豆腐块**。
+
+> ⚠️ **未采用**：Zitadel / Plane / AppFlowy（AGPL-3.0）、Directus（MSCL-1.0-GPL）、
+> NocoDB / Outline / Twenty（非 OSI 的 Sustainable Use License）。按 AGENTS.md 规约
+> 这些项目的代码与文案一律不碰，只借鉴 MIT / Apache-2.0 / BSD / ISC / OFL 项目。
+
 ## 端口规约
 
 | 服务 | 端口 | 说明 |
