@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react';
-import { App as AntApp, Button, Card, Empty, Grid, Input, InputNumber, Modal, Segmented, Space, Switch, Table, Tag, Tooltip, Typography, theme } from 'antd';
+import { App as AntApp, Button, Card, Empty, Grid, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, theme } from 'antd';
 import type { TableColumnType, TableColumnsType } from 'antd';
 import {
   ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, DownOutlined, DownloadOutlined, EditOutlined, FileExcelOutlined,
@@ -13,6 +13,7 @@ import { PageHeader } from '../components/PageHeader';
 import { catMeta } from '../lib/pointOverlay';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { variantFamily, variantGroups, variantMeta, variantSiblings } from '../data/quoteVariants';
+import { FEE_TEMPLATES, feeAmount, feesTotal, type FeeItem } from '../lib/quoteFees';
 
 const { Text, Link } = Typography;
 
@@ -35,6 +36,8 @@ interface Product {
   rebateL1: number;
   rebateL2: number;
   rebateDesigner: number;
+  /** per_unit 按数量计价（默认）| per_order 按本单总价（数量恒 1，避免与费用区重复计费） */
+  pricingMode?: string;
 }
 
 interface Line {
@@ -50,6 +53,7 @@ interface Line {
 
 /** 计价口径：对外报价按官方指导价或工程价；成本一律取经销价（兼容旧数据回退参考价下限） */
 type PriceMode = 'retail' | 'project';
+
 
 function money(n: number): string {
   return n >= 10000 ? `${(n / 10000).toFixed(n % 10000 === 0 ? 0 : 1)}万` : n.toLocaleString('zh-CN');
@@ -68,6 +72,11 @@ function costPrice(p: Product): number {
 /** 行内对外单价：优先本次谈定的逐项覆盖价，否则按口径取产品标准价 */
 function lineSellPrice(l: Line, mode: PriceMode): number {
   return l.unitPrice ?? sellPrice(l.product, mode);
+}
+
+/** 是否「按本单总价」计价：数量恒 1、单价即本单总价，不再乘数量 */
+function isPerOrder(p: Product): boolean {
+  return p.pricingMode === 'per_order';
 }
 
 /** 导出单元格里的数字：不带货币符号与千分位，方便在 Excel/WPS 里直接求和 */
@@ -464,6 +473,8 @@ export function QuoteStudio(): ReactNode {
   const [project, setProject] = useState('');
   const [customer, setCustomer] = useState('');
   const [mode, setMode] = useState<PriceMode>('retail');
+  /** 附加费用（服务及其他费用）。与设备行分开存，因为它的计费基数与业务含义都不同。 */
+  const [fees, setFees] = useState<FeeItem[]>([]);
   /** 正在换规格的行（以该行产品 id 表示）；null 表示弹窗关闭 */
   const [variantLineId, setVariantLineId] = useState<string | null>(null);
   /** 正在改单价的行（以该行产品 id 表示） */
@@ -493,7 +504,12 @@ export function QuoteStudio(): ReactNode {
   const addProduct = (product: Product): void => {
     setLines((prev) => {
       const hit = prev.find((l) => l.product.id === product.id);
-      if (hit) return prev.map((l) => (l.product.id === product.id ? { ...l, qty: l.qty + 1 } : l));
+      // 按单总价（per_order）的项数量恒为 1：重复点击不再累加，否则同一笔服务费会被加好几次
+      if (hit) {
+        return isPerOrder(product)
+          ? prev
+          : prev.map((l) => (l.product.id === product.id ? { ...l, qty: l.qty + 1 } : l));
+      }
       return [...prev, { product, qty: 1, room: '', note: '' }];
     });
   };
@@ -789,8 +805,29 @@ export function QuoteStudio(): ReactNode {
     const l1 = lines.reduce((s, l) => s + (costPrice(l.product) * l.qty * l.product.rebateL1) / 100, 0);
     const l2 = lines.reduce((s, l) => s + (costPrice(l.product) * l.qty * l.product.rebateL2) / 100, 0);
     const designer = lines.reduce((s, l) => s + (lineSellPrice(l, mode) * l.qty * l.product.rebateDesigner) / 100, 0);
-    return { sell, cost, count, profit: sell - cost, l1, l2, designer };
-  }, [lines, mode]);
+    // 附加费用不进返利计提：返点是按进货额算的，服务费没有进货额。
+    // 毛利含费用——上门安装费对门店同样是收入，不含进去会低估。
+    const feesSum = feesTotal(fees, sell);
+    return { sell, cost, count, fees: feesSum, grand: sell + feesSum, profit: sell + feesSum - cost, l1, l2, designer };
+  }, [lines, mode, fees]);
+
+  // ---------- 附加费用增删改 ----------
+
+  const addFee = (tpl?: { name: string; amount: number | null }): void => {
+    setFees((prev) => {
+      // 同名不重复加：模板点两下不该凭空多出两条一模一样的费用
+      if (tpl && prev.some((f) => f.name === tpl.name)) return prev;
+      return [...prev, { name: tpl?.name ?? '', mode: 'fixed', amount: tpl?.amount ?? 0 }];
+    });
+  };
+
+  const updateFee = (idx: number, patch: Partial<FeeItem>): void => {
+    setFees((prev) => prev.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
+  };
+
+  const removeFee = (idx: number): void => {
+    setFees((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   const exportCsv = (): void => {
     if (!lines.length) {
@@ -814,7 +851,21 @@ export function QuoteStudio(): ReactNode {
         [esc(''), esc(''), esc('经销成本单价'), esc(costPrice(l.product).toLocaleString('zh-CN')), esc('指导/工程/经销'), esc(`${l.product.priceRetail}/${l.product.priceProject}/${l.product.priceDealer}`),
           esc('返点%（一/二/设计师）'), esc(`${l.product.rebateL1}/${l.product.rebateL2}/${l.product.rebateDesigner}`), esc('质保'), esc(l.product.warranty >= 12 && l.product.warranty % 12 === 0 ? `${l.product.warranty / 12}年` : `${l.product.warranty}月`), esc('')],
       ]),
-      [esc(''), esc('对外报价合计'), esc(totals.sell.toLocaleString('zh-CN')), esc('经销成本合计'), esc(totals.cost.toLocaleString('zh-CN')), esc('毛利合计'), esc((totals.sell - totals.cost).toLocaleString('zh-CN')), ...blanks(4)],
+      // 服务及其他费用：设备之外的必收项，必须随单导出，否则客户看到的报价单和屏幕对不上
+      ...(fees.length
+        ? [
+            [esc('附表'), esc('服务及其他费用'), esc('费用名称'), esc('计费方式'), esc('金额/比例'), esc('计费基数'), esc('本项金额'), ...blanks(4)],
+            ...fees.map((f) => [
+              esc(''), esc(''), esc(f.name),
+              esc(f.mode === 'fixed' ? '固定金额' : f.mode === 'percent' ? '按百分比' : '不另收费'),
+              esc(f.mode === 'percent' ? `${plainNum(f.amount)}%` : f.mode === 'none' ? '0' : plainNum(f.amount)),
+              esc(f.mode === 'percent' ? plainNum(totals.sell) : ''),
+              plainNum(feeAmount(f, totals.sell)),
+            ]),
+          ]
+        : []),
+      [esc(''), esc('对外报价合计'), esc(totals.sell.toLocaleString('zh-CN')), esc('服务费合计'), esc(totals.fees.toLocaleString('zh-CN')), esc('报价总计'), esc(totals.grand.toLocaleString('zh-CN')), ...blanks(4)],
+      [esc(''), esc('经销成本合计'), esc(totals.cost.toLocaleString('zh-CN')), esc('毛利合计'), esc(totals.profit.toLocaleString('zh-CN')), esc(''), esc(''), ...blanks(4)],
       [esc(''), esc('一级返利(按进货额)'), esc(totals.l1.toFixed(1)), esc('二级返利(按进货额)'), esc(totals.l2.toFixed(1)), esc('设计师返利(按成交额)'), esc(totals.designer.toFixed(1)), ...blanks(4)],
       // 户型图附表：坐标是归一化比例（0~1，左上角为原点），图本身另存 PNG 一起发给客户
       ...(labelRows.length
@@ -862,7 +913,27 @@ export function QuoteStudio(): ReactNode {
       head([`客户：${customer || '未填写'}`, `计价口径：${modeLabel}`, `设备合计：${totals.count} 件`, `导出时间：${new Date().toLocaleString('zh-CN')}`], 9),
       row(['序号', '房间', '产品名称', '规格', '数量', '单位', '单价', '小计', '备注'], 'th'),
       ...body,
-      row(['', '', '', '', '', '合计', plainNum(totals.sell), '', ''], 'th'),
+      row(['', '', '', '', '', '设备合计', plainNum(totals.sell), '', ''], 'th'),
+      // 服务及其他费用：与设备分块列出，客户能看清哪笔是设备、哪笔是服务
+      ...(fees.length
+        ? [
+            head(['服务及其他费用'], 9),
+            row(['', '费用名称', '计费方式', '金额/比例', '计费基数', '本项金额', '', '', ''], 'th'),
+            ...fees.map((f) =>
+              row([
+                '',
+                f.name,
+                f.mode === 'fixed' ? '固定金额' : f.mode === 'percent' ? '按百分比' : '不另收费',
+                f.mode === 'percent' ? `${plainNum(f.amount)}%` : f.mode === 'none' ? '—' : plainNum(f.amount),
+                f.mode === 'percent' ? plainNum(totals.sell) : '—',
+                plainNum(feeAmount(f, totals.sell)),
+                '',
+                '',
+              ]),
+            ),
+          ]
+        : []),
+      row(['', '', '', '', '', '报价总计', plainNum(totals.grand), '', ''], 'th'),
       // 户型图附表：坐标为 0~1 归一化比例（0~1，左上角为原点）
       ...(labelRows.length
         ? [
@@ -871,7 +942,11 @@ export function QuoteStudio(): ReactNode {
             ...labelRows.map((l) => row(['', l.room, l.x.toFixed(3), l.y.toFixed(3), `${l.count} 件`, plainNum(l.subtotal), '', '', ''])),
           ]
         : []),
-      head(['以上价格不含安装辅材与人工，实际成交价以合同为准；标注「本次单价」的行为逐项谈定价，仅本次报价生效。'], 9),
+      head([
+        fees.length
+          ? '以上报价含上表列出的服务及其他费用；表外未列明的安装辅材与人工需另行约定，实际成交价以合同为准；标注「本次单价」的行为逐项谈定价，仅本次报价生效。'
+          : '以上价格不含安装辅材与人工，实际成交价以合同为准；标注「本次单价」的行为逐项谈定价，仅本次报价生效。',
+      ], 9),
       '</table></body></html>',
     ].join('');
     downloadBlob(new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel' }), `${project || '全屋智能'}-报价单.xls`);
@@ -914,8 +989,13 @@ export function QuoteStudio(): ReactNode {
     },
     { title: '数量', width: 110, render: (_, l) => (
       <Space size={4}>
-        <InputNumber min={1} max={999} value={l.qty} onChange={(v) => setQty(l.product.id, Number(v ?? 0))} size="small" style={{ width: 64 }} />
-        <Text type="secondary" style={{ fontSize: 12 }}>{l.product.unit || '台'}</Text>
+        {isPerOrder(l.product) ? (
+          // 按单总价：数量锁死 1，输入框反而会让人以为能改数量
+          <Tag color="blue" style={{ marginInlineEnd: 0 }}>本单总价</Tag>
+        ) : (
+          <InputNumber min={1} max={999} value={l.qty} onChange={(v) => setQty(l.product.id, Number(v ?? 0))} size="small" style={{ width: 64 }} />
+        )}
+        <Text type="secondary" style={{ fontSize: 12 }}>{isPerOrder(l.product) ? '项' : l.product.unit || '台'}</Text>
       </Space>
     ) },
     {
@@ -1154,6 +1234,73 @@ export function QuoteStudio(): ReactNode {
                 />
               )}
 
+              {/* 附加费用（服务及其他费用）：与设备行分开，因为计费基数和业务含义都不同 */}
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <Text strong style={{ fontSize: 13 }}>服务及其他费用</Text>
+                  <Button size="small" icon={<PlusOutlined />} onClick={() => addFee()}>添加费用</Button>
+                  {FEE_TEMPLATES.map((t) => (
+                    <Button key={t.name} size="small" disabled={fees.some((f) => f.name === t.name)} onClick={() => addFee(t)}>
+                      {t.name}{t.amount !== null && ` ¥${t.amount}`}
+                    </Button>
+                  ))}
+                </div>
+                {fees.length === 0 ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    未添加服务费。如需收费请添加；已约定免费的，可添加一条并选「不另收费」留痕，避免日后对账说不清。
+                  </Text>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {fees.map((f, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <Input
+                          size="small"
+                          style={{ flex: '1 1 200px' }}
+                          value={f.name}
+                          maxLength={40}
+                          placeholder="费用名称（如：上门安装费）"
+                          onChange={(e) => updateFee(i, { name: e.target.value })}
+                        />
+                        <Select<FeeItem['mode']>
+                          size="small"
+                          style={{ width: 128 }}
+                          value={f.mode}
+                          options={[
+                            { value: 'fixed', label: '固定金额' },
+                            { value: 'percent', label: '按百分比' },
+                            { value: 'none', label: '不另收费' },
+                          ]}
+                          onChange={(v) => updateFee(i, { mode: v, amount: v === 'none' ? 0 : f.amount })}
+                        />
+                        <InputNumber
+                          size="small"
+                          style={{ width: 132 }}
+                          value={f.amount}
+                          disabled={f.mode === 'none'}
+                          min={0}
+                          max={f.mode === 'percent' ? 100 : 99999999.99}
+                          precision={2}
+                          addonBefore={f.mode === 'percent' ? '' : '¥'}
+                          addonAfter={f.mode === 'percent' ? '%' : ''}
+                          onChange={(v) => updateFee(i, { amount: Number(v) || 0 })}
+                        />
+                        {f.mode === 'percent' ? (
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            计费基数 ¥{money(totals.sell)}（设备小计）→ 本项 ¥{money((totals.sell * f.amount) / 100)}
+                          </Text>
+                        ) : null}
+                        <Popconfirm title="删除这条费用？" onConfirm={() => removeFee(i)}>
+                          <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={`删除费用 ${f.name || '未命名'}`} />
+                        </Popconfirm>
+                      </div>
+                    ))}
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      费用不参与返利计提（返点按进货额算，服务费没有进货额）；毛利已含费用。
+                    </Text>
+                  </div>
+                )}
+              </div>
+
               {/* 汇总卡：对外报价、成本、毛利、三级返利测算 */}
               <div
                 style={{
@@ -1165,8 +1312,10 @@ export function QuoteStudio(): ReactNode {
               >
                 {[
                   { label: `对外报价合计（${mode === 'retail' ? '指导价' : '工程价'}）`, value: `¥${money(totals.sell)}`, strong: true },
+                  ...(totals.fees > 0 ? [{ label: '服务及其他费用', value: `¥${money(totals.fees)}` }] : []),
+                  { label: '报价总计（含费用）', value: `¥${money(totals.grand)}`, strong: true },
                   { label: `设备 ${totals.count} 件 · 经销成本`, value: `¥${money(totals.cost)}` },
-                  { label: '预估毛利', value: `¥${money(totals.profit)}` },
+                  { label: '预估毛利（含费用）', value: `¥${money(totals.profit)}` },
                   { label: '一级返利（进货额计提）', value: `¥${totals.l1.toFixed(0)}` },
                   { label: '二级返利（进货额计提）', value: `¥${totals.l2.toFixed(0)}` },
                   { label: '设计师返利（成交额计提）', value: `¥${totals.designer.toFixed(0)}` },

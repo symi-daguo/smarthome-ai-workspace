@@ -50,6 +50,25 @@ function formatTime(ts: number): string {
 }
 
 /** 右下角任务球：生成任务浮球（可拖拽、Esc 收起、Home 复位、红点角标） */
+/**
+ * 任务状态。与后端 GenerationJob.status 对齐到这五类即可——
+ * 再细分也不会改变用户该做什么动作（重试 / 核对 / 忽略），只会增加心智负担。
+ */
+type TaskState = 'running' | 'done' | 'failed' | 'unknown' | 'interrupted' | 'canceled';
+
+/** 各状态的一句话说明：重点是告诉用户「能不能直接再点一次」 */
+const STATE_HINT: Record<TaskState, string> = {
+  running: '生成中',
+  done: '',
+  failed: '生成失败',
+  unknown: '额度已扣，结果待核对',
+  interrupted: '服务重启导致中断，可重新提交',
+  canceled: '已取消',
+};
+
+/** 是否属于「需要用户留意的坏态」：徽标与配色都按它区分 */
+const ATTENTION: TaskState[] = ['failed', 'unknown', 'interrupted', 'canceled'];
+
 export function TaskBall(): ReactNode {
   const { token } = theme.useToken();
   const navigate = useNavigate();
@@ -180,20 +199,27 @@ export function TaskBall(): ReactNode {
   };
 
   // 前端即时任务 + 服务端持久任务，按 id 去重（同一任务两边都有时取服务端那份）
+  //
+  // 状态分五类而不是三类：把「扣了额度但结果待核对」（unknown）和「服务重启导致中断」
+  // （interrupted）单独拎出来，是为了让用户知道这两种情况**该不该再点一次**。
+  // 笼统显示「失败」会让人以为没扣钱就重试，反而多扣一次。
   const merged = useMemo(() => {
-    type Row = { id: string; title: string; status: 'running' | 'done'; at: number; failed: boolean };
+    type Row = { id: string; title: string; status: TaskState; at: number };
     const map = new Map<string, Row>();
     for (const t of tasks) {
-      map.set(t.id, { id: t.id, title: t.title, status: t.status === 'running' ? 'running' : 'done', at: t.createdAt, failed: false });
+      map.set(t.id, { id: t.id, title: t.title, status: t.status === 'running' ? 'running' : 'done', at: t.createdAt });
     }
     for (const t of serverTasks) {
-      const st = t.status === 'pending' || t.status === 'running' ? 'running' : 'done';
+      const st = (['pending', 'running'].includes(t.status)
+        ? 'running'
+        : ['failed', 'unknown', 'interrupted', 'canceled'].includes(t.status)
+          ? (t.status as TaskState)
+          : 'done');
       map.set(t.id, {
         id: t.id,
         title: t.title,
         status: st,
         at: new Date(t.createdAt).getTime(),
-        failed: t.status === 'failed',
       });
     }
     return [...map.values()].sort((a, b) => b.at - a.at);
@@ -249,14 +275,20 @@ export function TaskBall(): ReactNode {
                   height: 8,
                   borderRadius: 4,
                   flex: 'none',
-                  background: t.status === 'running' ? token.colorPrimary : t.failed ? token.colorError : token.colorSuccess,
+                  background: t.status === 'running'
+                    ? token.colorPrimary
+                    : t.status === 'unknown'
+                      ? token.colorWarning
+                      : ATTENTION.includes(t.status)
+                        ? token.colorError
+                        : token.colorSuccess,
                 }}
               />
               <Text style={{ flex: 1, fontSize: 12 }} ellipsis={{ tooltip: t.title }}>
                 {t.title}
               </Text>
-              <Text type="secondary" style={{ fontSize: 11, flex: 'none' }}>
-                {t.status === 'running' ? '生成中' : t.failed ? '失败' : formatTime(t.at)}
+              <Text type="secondary" style={{ fontSize: 11, flex: 'none', color: t.status === 'unknown' ? token.colorWarning : undefined }}>
+                {t.status === 'running' ? '生成中' : STATE_HINT[t.status] || formatTime(t.at)}
               </Text>
             </div>
           ))}

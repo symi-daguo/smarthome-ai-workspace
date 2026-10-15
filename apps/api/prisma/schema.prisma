@@ -487,6 +487,14 @@ model Product {
   rebateL1       Int    @default(0)
   rebateL2       Int    @default(0)
   rebateDesigner Int    @default(0)
+  /**
+   * 计价方式：
+   * - `per_unit` 按数量计价（默认），单价 × 数量
+   * - `per_order` 按本单总价：用于「整体安装服务」「系统对接」这类一次性收取的项。
+   *   数量恒为 1，单价即本单总价——不拆成单价×数量，是为了避免同一笔钱
+   *   既按设备计一遍又按服务费计一遍（重复计费）。
+   */
+  pricingMode    String  @default("per_unit")
 
   @@index([category, sortOrder])
   @@index([tenantId, category])

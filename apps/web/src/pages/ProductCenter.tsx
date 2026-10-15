@@ -35,6 +35,8 @@ interface ProductRow {
   rebateL1: number;
   rebateL2: number;
   rebateDesigner: number;
+  /** per_unit 按数量计价（默认）| per_order 按本单总价 */
+  pricingMode: string;
 }
 
 interface ProductForm {
@@ -56,6 +58,7 @@ interface ProductForm {
   rebateL1?: number;
   rebateL2?: number;
   rebateDesigner?: number;
+  pricingMode?: 'per_unit' | 'per_order';
 }
 
 const COLOR_CHOICES = ['#4FA8E0', '#5BA86B', '#D9A036', '#8E7CC3', '#D06A5A', '#5AA8A0', '#C37FB0', '#7A8CA8', '#B07A4A', '#4A90A8'];
@@ -129,10 +132,14 @@ export function ProductCenter(): ReactNode {
             sku: row.sku, barcode: row.barcode, snRule: row.snRule, spec: row.spec, warranty: row.warranty,
             priceRetail: row.priceRetail, priceDealer: row.priceDealer, priceProject: row.priceProject,
             rebateL1: row.rebateL1, rebateL2: row.rebateL2, rebateDesigner: row.rebateDesigner,
+            // 旧数据没有 pricingMode 字段（列是后加的），未知值一律兜底 per_unit，
+            // 不能直接把 string 塞进联合类型
+            pricingMode: row.pricingMode === 'per_order' ? 'per_order' : 'per_unit',
           }
         : {
             category: 'gateway', unit: '台', imageUrl: '', warranty: 12,
             priceRetail: 0, priceDealer: 0, priceProject: 0, rebateL1: 0, rebateL2: 0, rebateDesigner: 0,
+            pricingMode: 'per_unit',
           },
     );
     setEditOpen(true);
@@ -519,6 +526,19 @@ export function ProductCenter(): ReactNode {
               </Form.Item>
             </Col>
           </Row>
+
+          <Form.Item
+            name="pricingMode"
+            label="计价方式"
+            extra="「按本单总价」用于整体安装服务、系统对接这类一次性收取的项：报价里数量恒为 1、单价即本单总价，避免同一笔钱既按设备又按服务费算两遍。"
+          >
+            <Select
+              options={[
+                { value: 'per_unit', label: '按数量计价（单价 × 数量）' },
+                { value: 'per_order', label: '按本单总价（数量恒 1）' },
+              ]}
+            />
+          </Form.Item>
 
           <Divider titlePlacement="left" style={{ fontSize: 13, margin: '4px 0 12px' }}>产品图</Divider>
           <Form.Item name="imageUrl">

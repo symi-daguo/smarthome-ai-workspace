@@ -20,6 +20,31 @@ import { generateViaMinimaxVideo, generateViaOpenaiVideo } from './video-provide
 
 /** 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
 
+/**
+ * 给错误打上「额度已扣」的标记。
+ *
+ * 为什么需要：出图是「先扣额度、再调模型、再落库」，扣费之后的失败**不是**
+ * 「没花钱的失败」。上层（画布作业）据此把状态记成 unknown（结果待核对）
+ * 而不是 failed——笼统报「失败」会让用户以为没扣钱就再点一次，反而多扣一次。
+ *
+ * 用属性而不是改错误类型：错误要原样抛给上层和日志，不能为了加标记改变它的语义。
+ */
+export function markCharged(error: unknown): void {
+  if (error && (typeof error === 'object' || typeof error === 'function')) {
+    try {
+      (error as { charged?: boolean }).charged = true;
+    } catch {
+      // 冻结对象等极端情况打不上标记就作罢，不影响主流程
+    }
+  }
+}
+
+/** 判断一个错误是否发生在扣额度之后 */
+export function isChargedError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { charged?: boolean }).charged === true);
+}
+
+
 // 扣费额度 env 可配（自部署用户按自己的模型成本调整；默认值仅为演示口径）
 const IMAGE_TOKENS = Number(process.env.BILLING_IMAGE_TOKENS ?? 300);
 const VIDEO_TOKENS = Number(process.env.BILLING_VIDEO_TOKENS ?? 1500);
@@ -167,6 +192,27 @@ export class MediaService {
 
     await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
 
+    // 扣额度之后的任何失败都不是「没花钱的失败」。
+    // 上层据此把作业标成 unknown（结果待核对）而不是 failed：
+    // 笼统报「失败」会让用户以为没扣额度就再点一次，反而多扣一次。
+    try {
+      return await this.generateAndStore(opts, cfg, apiKey, prompt, size, editInput);
+    } catch (error) {
+      markCharged(error);
+      throw error;
+    }
+  }
+
+  /** 扣费之后的出图 + 落库。单独抽出便于上面统一标注「已扣费」。 */
+  private async generateAndStore(
+    // 类型直接取自源方法，将来给 generateImage 加字段，这里不会漂移
+    opts: Parameters<MediaService['generateImage']>[0],
+    cfg: Awaited<ReturnType<ModelConfigService['imageConfig']>>,
+    apiKey: string,
+    prompt: string,
+    size: string,
+    editInput: { image: Buffer; mime: string; mask: Buffer } | null,
+  ): Promise<{ id: string; url: string; status: string }> {
     let img: GeneratedImage;
 
     if (editInput) {

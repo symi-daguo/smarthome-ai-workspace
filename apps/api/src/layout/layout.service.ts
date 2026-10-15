@@ -103,6 +103,7 @@ export class LayoutService {
       rebateL1: dto.rebateL1 ?? 0,
       rebateL2: dto.rebateL2 ?? 0,
       rebateDesigner: dto.rebateDesigner ?? 0,
+      pricingMode: dto.pricingMode ?? 'per_unit',
     };
     this.syncLegacyPriceRange(data, dto as Record<string, unknown>);
     return this.prisma.product.create({ data: data as never });
@@ -150,6 +151,7 @@ export class LayoutService {
         sku: src.sku, barcode: src.barcode, snRule: src.snRule, spec: src.spec, warranty: src.warranty,
         priceRetail: src.priceRetail, priceDealer: src.priceDealer, priceProject: src.priceProject,
         rebateL1: src.rebateL1, rebateL2: src.rebateL2, rebateDesigner: src.rebateDesigner,
+        pricingMode: src.pricingMode,
       },
     });
   }

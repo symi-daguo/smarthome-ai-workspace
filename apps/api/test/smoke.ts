@@ -9,6 +9,7 @@ import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
+import { markCharged, isChargedError } from '../src/media/media.service.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
 import { PERMISSIONS, WRITE_IMPLIES_READ } from '../src/rbac/permissions.js';
@@ -331,7 +332,7 @@ async function main(): Promise<void> {
 
   // ---------- 产品中心：我的库 CRUD + 查重 + 复制到我的库 + 租户隔离 ----------
   const auth0 = { headers: { Authorization: `Bearer ${regA.body.token}` } };
-  type ProductRow = { id: string; name: string; tenantId: string | null; brand?: string; imageUrl?: string };
+  type ProductRow = { id: string; name: string; tenantId: string | null; brand?: string; imageUrl?: string; pricingMode?: string };
   const pub = (products.body as ProductRow[]).find((p) => p.tenantId === null);
   check('种子产品均为公共库行', Boolean(pub));
 
@@ -414,6 +415,34 @@ async function main(): Promise<void> {
 
   const patchMine = await request<ProductRow>(base, `/api/products/${myId}`, { ...auth0, method: 'PATCH', body: JSON.stringify({ brand: '改后品牌' }) });
   check('编辑我的库产品', patchMine.status === 200 && patchMine.body.brand === '改后品牌');
+
+  // ---------- 按本单总价（per_order）：防重复计费的核心建模 ----------
+  // 用于「整体安装服务」「系统对接」这类一次性收取的项：数量恒 1、单价即本单总价。
+  // 不建模就只能拆成单价×数量，同一笔钱容易既按设备算一遍又按服务费算一遍。
+  const perOrderBad = await request(base, '/api/products/mine', {
+    ...auth0, method: 'POST', body: JSON.stringify({ name: '非法计价方式', category: 'gateway', pricingMode: 'per_item' }),
+  });
+  check('非法计价方式被拒（400）', perOrderBad.status === 400);
+  const perOrderCreated = await request<ProductRow>(base, '/api/products/mine', {
+    ...auth0, method: 'POST',
+    body: JSON.stringify({ name: '整体安装服务', category: 'gateway', pricingMode: 'per_order', priceRetail: 1500 }),
+  });
+  check(
+    '可创建「按本单总价」产品并持久化 pricingMode',
+    perOrderCreated.status === 201 && perOrderCreated.body?.pricingMode === 'per_order',
+  );
+  const perOrderDefault = await request<ProductRow>(base, '/api/products/mine', {
+    ...auth0, method: 'POST', body: JSON.stringify({ name: '普通设备', category: 'gateway' }),
+  });
+  check(
+    '未指定计价方式时默认为按数量计价（旧数据同样兜底）',
+    perOrderDefault.status === 201 && perOrderDefault.body?.pricingMode === 'per_unit',
+  );
+  const perOrderBack = await request<ProductRow[]>(base, '/api/products', auth0);
+  const perOrderInList = perOrderBack.body.find((p) => p.id === perOrderCreated.body?.id);
+  check('列表返回里带得出 pricingMode（报价页据此锁数量）', perOrderInList?.pricingMode === 'per_order');
+  await request(base, `/api/products/${perOrderCreated.body?.id}`, { ...auth0, method: 'DELETE' });
+  await request(base, `/api/products/${perOrderDefault.body?.id}`, { ...auth0, method: 'DELETE' });
 
   await request(base, `/api/products/${myId}`, { ...auth0, method: 'DELETE' });
   const afterDel = await request<ProductRow[]>(base, '/api/products', auth0);
@@ -1422,6 +1451,38 @@ async function main(): Promise<void> {
     jobsBefore === 0 || tasksAfter.body.length <= jobsBefore,
   );
   void jobId;
+
+  // ---------- 「结果不确定」状态（0.1.66） ----------
+  // 出图是先扣额度再调模型，扣费之后的失败不等于「没花钱的失败」。
+  // 笼统报「失败」会让人以为没扣钱就再点一次，反而多扣一次——所以要能区分开。
+  const chargedErr = new Error('模型超时');
+  markCharged(chargedErr);
+  check('扣额度后的错误能被标记为「已扣费」', isChargedError(chargedErr));
+  check('未标记的错误不算已扣费（普通失败不应被误判成结果待核对）', !isChargedError(new Error('参数校验不过')));
+  const unknownJob = await prisma.generationJob.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      kind: 'image',
+      status: 'unknown',
+      params: { prompt: '结果待核对验证用提示词' },
+      error: '模型超时',
+    },
+  });
+  const unknownList = await request<{ id: string; status: string; error: string | null }[]>(base, '/api/canvas/tasks', authA);
+  const unknownHit = unknownList.body.find((t) => t.id === unknownJob.id);
+  check(
+    '任务中心能带出 unknown 状态与原因（前端据此提示「额度已扣」而非笼统失败）',
+    unknownHit?.status === 'unknown' && Boolean(unknownHit?.error),
+  );
+  // 清空已结束不应把 unknown 一起清掉：它不是「已结束」，是需要用户核对
+  await request(base, '/api/canvas/tasks/finished', { ...authA, method: 'DELETE' });
+  const afterClearUnknown = await request<{ id: string; status: string }[]>(base, '/api/canvas/tasks', authA);
+  check(
+    'unknown 不被「清空已结束」误删（它是待核对，不是已结束）',
+    afterClearUnknown.body.some((t) => t.id === unknownJob.id),
+  );
+  await prisma.generationJob.delete({ where: { id: unknownJob.id } });
 
   // ---------- 素材库投稿：提交 + 我的投稿列表 ----------
   const subFd2 = new FormData();

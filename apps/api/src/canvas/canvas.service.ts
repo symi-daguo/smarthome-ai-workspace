@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { MediaService } from '../media/media.service.js';
+import { MediaService, isChargedError } from '../media/media.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import type { CreateConversationDto, CreateTurnDto, UpdateConversationDto, UpdateTurnDto } from './canvas.schemas.js';
 
@@ -41,13 +41,36 @@ interface JobParams {
 }
 
 @Injectable()
-export class CanvasService {
+export class CanvasService implements OnModuleInit {
   private readonly logger = new Logger(CanvasService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly media: MediaService,
   ) {}
+
+  /**
+   * 启动时把「僵尸作业」标成 interrupted。
+   *
+   * 出图是 fire-and-forget（提交即异步跑），没有队列也没有重试调度器。
+   * 进程重启 / 崩溃时，正在跑或排队中的作业**没人再执行它**，状态会永远停在
+   * running，任务球就一直转圈——这就是「明明生成完了却一直显示生成中」的根因。
+   *
+   * 阈值取 30 分钟：出图正常 1 分钟内结束，30 分钟仍在跑基本可以断定是被中断了。
+   */
+  async onModuleInit(): Promise<void> {
+    const cutoff = new Date(Date.now() - 30 * 60_000);
+    try {
+      const { count } = await this.prisma.generationJob.updateMany({
+        where: { status: { in: ['pending', 'running'] }, updatedAt: { lt: cutoff } },
+        data: { status: 'interrupted', error: '服务重启导致任务中断，可重新提交' },
+      });
+      if (count > 0) this.logger.warn(`启动清理：${count} 条中断的生成作业已标记为 interrupted`);
+    } catch (error) {
+      // 清理失败不能挡住启动：这些作业最坏是任务球一直转圈，不影响其他功能
+      this.logger.warn(`启动清理中断作业失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   // ---------- 对话线 ----------
 
@@ -282,13 +305,17 @@ export class CanvasService {
       await this.appendVariant(params.turnId, asset.url);
     } catch (error) {
       const reason = this.errorText(error);
-      this.logger.warn(`画布作业 ${jobId} 出图失败: ${reason}`);
+      // 扣了额度却没出图，不等于「没花钱的失败」。标成 unknown（结果待核对），
+      // 用户看到的是「这笔钱已经花了、结果待核对」而不是笼统的「失败」——
+      // 后者会让人以为没扣钱就再点一次，反而多扣一次。这正是客诉高发的那一态。
+      const status: string = isChargedError(error) ? 'unknown' : 'failed';
+      this.logger.warn(`画布作业 ${jobId} ${status === 'unknown' ? '结果待核对' : '出图失败'}: ${reason}`);
       try {
         const job = await this.prisma.generationJob.findFirst({ where: { id: jobId, tenantId }, select: { params: true } });
-        await this.prisma.generationJob.update({ where: { id: jobId }, data: { status: 'failed', error: reason } });
+        await this.prisma.generationJob.update({ where: { id: jobId }, data: { status, error: reason } });
         const turnId = (job?.params as unknown as JobParams | undefined)?.turnId;
         if (turnId) {
-          await this.prisma.imageTurn.update({ where: { id: turnId }, data: { status: 'failed', error: reason } });
+          await this.prisma.imageTurn.update({ where: { id: turnId }, data: { status, error: reason } });
         }
       } catch {
         // 收尾失败（如进程正在关闭）不再抛出：作业状态已尽力落库

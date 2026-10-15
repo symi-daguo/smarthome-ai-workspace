@@ -28,6 +28,12 @@ export const createProductSchema = z.object({
   rebateL1: rebateField.optional(),
   rebateL2: rebateField.optional(),
   rebateDesigner: rebateField.optional(),
+  /**
+   * 计价方式：per_unit 按数量计价（默认）| per_order 按本单总价。
+   * per_order 用于「整体安装服务」这类一次性收取的项，数量恒 1、单价即本单总价，
+   * 避免同一笔钱既按设备计一遍又按服务费计一遍。
+   */
+  pricingMode: z.enum(['per_unit', 'per_order']).optional(),
 });
 export const updateProductSchema = createProductSchema.partial();
 export type CreateProductDto = z.infer<typeof createProductSchema>;
