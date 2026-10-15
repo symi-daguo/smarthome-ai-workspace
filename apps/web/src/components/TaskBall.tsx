@@ -11,6 +11,16 @@ const BALL_SIZE = 52;
 const MARGIN = 24;
 const POS_KEY = 'task_ball_pos';
 
+/**
+ * 任务轮询节奏：原先是固定 6s，无任务、接口失败、页面隐藏时照打不误
+ * （listTasks 每次 take:50 全量返回，一天 14400 次）。
+ * 改为按负载自适应，并在失败时指数退避，防止后端故障期间把查询打满。
+ */
+const POLL_ACTIVE = 5000; // 有进行中任务：结果出来要及时看到红点
+const POLL_IDLE = 60000; // 无进行中任务：降频到 1 分钟，仍保留「刷新后红点还在」
+const POLL_BACKOFF_BASE = 10000; // 首次失败 10s，之后翻倍
+const POLL_BACKOFF_MAX = 300000; // 退避封顶 5 分钟，仍会自愈恢复
+
 /** 服务端任务（跨页面/跨刷新可见） */
 interface ServerTask {
   id: string;
@@ -49,6 +59,10 @@ export function TaskBall(): ReactNode {
   const [serverTasks, setServerTasks] = useState<ServerTask[]>([]);
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
   const ballRef = useRef<HTMLDivElement>(null);
+  // 轮询调度状态放 ref 而非 state：调度间隔要在拉取完成后立刻重算，不能等一次渲染
+  const timerRef = useRef<number | null>(null);
+  const failRef = useRef(0);
+  const busyRef = useRef(false);
 
   const defaultPos = useCallback((): { x: number; y: number } => ({
     x: window.innerWidth - BALL_SIZE - MARGIN,
@@ -64,17 +78,48 @@ export function TaskBall(): ReactNode {
   // 任务来自服务端：切页或刷新后红点仍在（此前只读前端内存态，一刷新就丢）
   const loadServerTasks = useCallback(async () => {
     try {
-      setServerTasks(await api<ServerTask[]>('/api/canvas/tasks'));
+      const list = await api<ServerTask[]>('/api/canvas/tasks');
+      setServerTasks(list);
+      busyRef.current = list.some((t) => t.status === 'pending' || t.status === 'running');
+      failRef.current = 0;
     } catch {
-      /* 未登录或接口不可用时静默降级为纯前端任务 */
+      // 不清空 serverTasks：接口抖动时保留上一次的结果，任务球不闪空
+      failRef.current += 1;
     }
   }, []);
 
-  useEffect(() => {
-    void loadServerTasks();
-    const timer = window.setInterval(() => void loadServerTasks(), 6000);
-    return () => window.clearInterval(timer);
+  // 自调度：下一拍的间隔取决于「有没有在跑」与「刚才有没有失败」，
+  // 所以不能用 setInterval——那样间隔在创建时就定死了。
+  const schedule = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    // 标签页隐藏时完全停表：浏览器本就节流后台定时器，继续排程只是徒增服务端压力
+    if (document.hidden) return;
+    const delay = failRef.current > 0
+      ? Math.min(POLL_BACKOFF_MAX, POLL_BACKOFF_BASE * 2 ** Math.min(failRef.current - 1, 5))
+      : busyRef.current
+        ? POLL_ACTIVE
+        : POLL_IDLE;
+    timerRef.current = window.setTimeout(() => {
+      void loadServerTasks().then(schedule);
+    }, delay);
   }, [loadServerTasks]);
+
+  useEffect(() => {
+    void loadServerTasks().then(schedule);
+    // 切回前台立即补同步一次：隐藏期间生成的成果不该要等满一个空闲周期才亮红点
+    const onVisible = (): void => {
+      if (!document.hidden) void loadServerTasks().then(schedule);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    };
+  }, [loadServerTasks, schedule]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {

@@ -109,13 +109,23 @@
 | 反馈单号追踪 | `reportId` | 🔸 我方有 id，用户不可见 |
 | 手动提交表单 + 状态跟踪 | — | ✅ |
 
-### 3.5 任务中心（`task-center.js` 19KB）— ✅ 0.1.45 已补齐
+### 3.5 任务中心（`task-center.js` 19KB）— 🔸 0.1.62 重新核对
+
+> **2026-10-15 修正**：本节原记「服务端任务列表 ⬜（我方仅前端）」「任务球位置持久化 ⬜」
+> 「红点纯前端状态」，与代码不符，已逐条复核后重标。判定依据见
+> [audit §7.13 / §7.14](./audit-2026-10-13.md)。
 
 | 能力 | 参考站函数线索 | 我方 |
 |---|---|---|
-| 服务端任务列表 | `/api/generation-tasks` | ⬜（我方仅前端） |
-| 任务球位置持久化 | `restorePosition` / `savePosition` / `placeBall` | ⬜ |
-| 未读红点 + toast | `hasNew` / `visibleTasks` / `toast` | 🔸 有红点，纯前端状态 |
+| 服务端任务列表 | `/api/generation-tasks` | ✅ `/api/canvas/tasks`（`canvas.controller.ts:100`）+ `canvas.service.ts:350` 取最近 50 条 |
+| 任务球位置持久化 | `restorePosition` / `savePosition` / `placeBall` | ✅ `TaskBall.tsx:12` localStorage + Home 键复位 |
+| 未读红点 + toast | `hasNew` / `visibleTasks` / `toast` | 🔸 有红点；状态为前端 + 服务端合并去重（`TaskBall.tsx:138`），**无完成 toast** |
+| **三档自适应轮询 + 指数退避** | `scheduleSync`（5s/60s/退避 300s 封顶） | ✅ **0.1.62 已修**（此前固定 6s 无视负载） |
+| **页面隐藏不轮询 + 切回补同步** | `document.hidden` / `visibilitychange` | ✅ **0.1.62 已修** |
+| 9 态任务状态机 | `queued/running/settlement_pending`＋`unknown/partial/interrupted`＋`done/failed/canceled` | 🔸 我方 4 态（`GenerationJob.status`）。`unknown`/`partial` 是客诉高发区，**真实差距** |
+| 软删除（不删生成结果） | `task.hidden = true` | 🔸 我方「清空已结束」直接 DELETE（`tasks/finished`），语义不同 |
+| 任务点回原会话/工作区 | `openConversation` / `openPlan2Project` | ⬜ 我方仅「查看全部历史」跳工作台 |
+
 
 ### 3.6 其他
 
