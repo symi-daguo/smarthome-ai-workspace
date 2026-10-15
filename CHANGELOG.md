@@ -41,11 +41,35 @@
 - 扫描器的**判据本身就是 bug 源**：漏了尺寸下限，把图标算进「图片留白」。
   指标工具的噪声比没指标更糟 —— 会让人去修不存在的问题。
 
+### Re（REA 静态逆向：拿到参考站的确切实现，无需登录）
+
+登录态卡住逐屏比对后，改走**静态逆向**这条路 —— 它反而更硬。
+REA 6.4.0 解析参考站 15 个脚本（701 KB / 56290 语义节点），
+再取服务端渲染 HTML 与 `/styles.css`，拿到百宝箱卡片的原始 CSS：
+
+```css
+.space-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; }
+.space-card { display:flex; flex-direction:column; padding:0; overflow:hidden; border-radius:8px; }
+.sc-cover  { display:block; width:100%; aspect-ratio:16/10; overflow:hidden; }
+.sc-cover img { width:100%; height:100%; object-fit:cover; }     /* ← 填满不靠猜 */
+.space-card.locked .sc-soon { position:absolute; top:8px; right:8px; ... }  /* 相对图片区定位 */
+```
+
+**核心只有三条**：图片区自己定比例 + `width:100%` 跟着卡片走；`object-fit:cover` 裁切填满；
+角标相对**图片区**绝对定位，而不是相对某个写死的宽度算。
+
+**DOM 实测纠正了一个认知**：参考站 18 张 `space-card` 里 **0 张带「张数」角标** ——
+唯一的角标是 `.space-card.locked .sc-soon`（橙色「即将上线」标记）。
+所以用户截图里的「3 张海报」是**我方自有的角标**，参考站并没有，它是差异化点、**不是要消除的对象**；
+要消除的是**它的位置算法**（`calc(50% - 196px + 6px)` 与卡片宽度脱钩）。
+
+> 方法论：静态逆向比截图比对更硬 —— 给的是原始 CSS 与 DOM，不用猜「是不是这里留白」，
+> 也不受登录态影响。这次 15 个脚本全部离线解析完成，**登录态不再阻塞后续比对**。
+
 ### 未完成（诚实标注）
 
-参考站逐屏比对**仍未做**：页面无障碍树里同时存在「客户登录」表单与已登录内容，
-无法确认登录表单是否覆盖在页面上，量到的可能不是登录后的「智能百宝箱」。
-已请用户在同一个标签页确认登录态，等回复后继续。
+参考站**登录后页面**的逐屏比对仍未做（截图里的应用界面需要鉴权）。
+但卡���这一处已通过静态逆向拿到确切实现并完成对齐，其余板块可以按同样方式继续。
 
 ### 门禁
 
