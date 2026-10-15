@@ -17,6 +17,7 @@
     "smoke": "pnpm --filter @app/api smoke",
     "db:migrate": "pnpm --filter @app/api prisma:migrate",
     "db:seed": "pnpm --filter @app/api prisma:seed",
-    "docker:prune": "docker image prune -f && docker builder prune -af --filter \"until=24h\""
+    "docker:prune": "docker image prune -f && docker builder prune -af --filter \"until=24h\"",
+    "ops:check": "bash scripts/ops-check.sh"
   }
 }
