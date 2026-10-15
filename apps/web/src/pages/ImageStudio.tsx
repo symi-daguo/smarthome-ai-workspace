@@ -2,6 +2,7 @@ import {
   AppstoreOutlined,
   BulbOutlined,
   DeleteOutlined,
+  HighlightOutlined,
   LeftOutlined,
   PlusOutlined,
   RightOutlined,
@@ -9,7 +10,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import { Alert, App as AntApp, Button, Empty, Grid, Input, Modal, Segmented, Select, Space, Spin, Typography, Upload, theme } from 'antd';
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   IMAGE_WORKFLOWS,
@@ -23,6 +24,7 @@ import {
 } from '../data/imageWorkflows';
 import { api, fileUrl } from '../lib/api';
 import { compressImage } from '../lib/compress';
+import { RegionSelector, type RegionSelection } from '../components/RegionSelector';
 import { useActiveConfig } from '../lib/configStore';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
@@ -89,6 +91,11 @@ function arrToLines(list: string[]): string {
   return list.join('\n');
 }
 
+/** 提交幂等键：失败（尤其超时这种「不知道成没成」）保留复用，成功才清除。
+ *  这样弱网重试 / 重复点击会被后端识别成同一次请求，不会二次出图、二次扣额度。 */
+const newRequestId = (): string =>
+  globalThis.crypto?.randomUUID?.() ?? `r-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 export function ImageStudio(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
@@ -115,9 +122,16 @@ export function ImageStudio(): ReactNode {
   const [assets, setAssets] = useState<{ id: string; title: string }[]>([]);
   const [reversing, setReversing] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [history, setHistory] = useState<string[]>([]);
+  // 历史同时留资产 id：圈选局部重绘要把 id 与遮罩一起回传后端，只存 URL 取不到
+  const [history, setHistory] = useState<{ id: string; url: string }[]>([]);
   const [histIdx, setHistIdx] = useState(0);
   const preview = history[histIdx] ?? null;
+  /** 待圈选重绘的图（存整条记录，重绘成功后要追加新图） */
+  const [regionFor, setRegionFor] = useState<{ id: string; url: string } | null>(null);
+  const [redrawNote, setRedrawNote] = useState('');
+  const [redrawing, setRedrawing] = useState(false);
+  const reqIdRef = useRef<string | null>(null);
+  const redrawIdRef = useRef<string | null>(null);
 
   // 工作流状态：切模式只重置本模式的专属字段，参考图与模型保留
   const [wfKey, setWfKey] = useState<WorkflowKey>('free');
@@ -295,21 +309,63 @@ export function ImageStudio(): ReactNode {
       return;
     }
     setGenerating(true);
+    const rid = reqIdRef.current ?? newRequestId();
+    reqIdRef.current = rid;
     try {
       // 自由生图沿用原后缀；各业务工作流的组装文案自带质感与免文字要求，不再重复追加
       const body = isFree ? `${full}，真实室内摄影质感，高清细节，无多余文字水印` : full;
-      const r = await api<{ url: string }>('/api/media/images', {
+      const r = await api<{ id: string; url: string; deduped?: boolean }>('/api/media/images', {
         method: 'POST',
-        body: JSON.stringify({ prompt: body, size, fitVideo, background }),
+        body: JSON.stringify({ prompt: body, size, fitVideo, background, clientRequestId: rid }),
       });
+      reqIdRef.current = null;
       const url = fileUrl(`${r.url}?t=${Date.now()}`);
-      setHistory((prev) => [url, ...prev]);
+      setHistory((prev) => [{ id: r.id, url }, ...prev]);
       setHistIdx(0);
-      message.success('图片已生成并保存到「我的资料库」');
+      message.success(r.deduped ? '这次提交此前已成功出图，直接取回原图（未重复扣额度）' : '图片已生成并保存到「我的资料库」');
     } catch (e) {
       message.error((e as Error).message || '生成失败');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  /**
+   * 圈选局部重绘：只重画圈内的区域，圈外保持原始像素（后端走 images/edits）。
+   * 提示词用「要改什么」这句人话，不带原图描述——带了模型会把整张按描述重画，
+   * 那就不是局部重绘了。不填则退回本次提示词，保证一定能出一个结果。
+   */
+  const redrawRegion = async (sel: RegionSelection): Promise<void> => {
+    const note = redrawNote.trim() || prompt.trim();
+    if (note.length < 2) {
+      message.warning('先写一句要怎么改，模型才知道圈里要变成什么样');
+      return;
+    }
+    setRedrawing(true);
+    const rid = redrawIdRef.current ?? newRequestId();
+    redrawIdRef.current = rid;
+    try {
+      const r = await api<{ id: string; url: string; deduped?: boolean }>('/api/media/images', {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: note,
+          size,
+          imageAssetId: sel.imageAssetId,
+          maskDataUrl: sel.maskDataUrl,
+          clientRequestId: rid,
+          title: '局部重绘',
+        }),
+      });
+      redrawIdRef.current = null;
+      setRegionFor(null);
+      setRedrawNote('');
+      setHistory((prev) => [{ id: r.id, url: fileUrl(`${r.url}?t=${Date.now()}`) }, ...prev]);
+      setHistIdx(0);
+      message.success(r.deduped ? '该次重绘此前已完成，直接取回结果' : '局部已重绘，原图保留在历史里');
+    } catch (e) {
+      message.error((e as Error).message || '局部重绘失败');
+    } finally {
+      setRedrawing(false);
     }
   };
 
@@ -651,14 +707,38 @@ export function ImageStudio(): ReactNode {
         >
           {preview ? (
             <>
-              <img src={preview} alt="生成结果" style={{ width: '100%', borderRadius: 16 }} />
-              {history.length > 1 ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 10 }}>
-                  <Button size="small" shape="circle" icon={<LeftOutlined />} disabled={histIdx >= history.length - 1} onClick={() => setHistIdx((i) => Math.min(history.length - 1, i + 1))} />
-                  <Text type="secondary" style={{ fontSize: 12 }}>{history.length - histIdx} / {history.length}（本次会话）</Text>
-                  <Button size="small" shape="circle" icon={<RightOutlined />} disabled={histIdx === 0} onClick={() => setHistIdx((i) => Math.max(0, i - 1))} />
+              <img src={preview.url} alt="生成结果" style={{ width: '100%', borderRadius: 16 }} />
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10, padding: '0 10px 12px' }}>
+                {history.length > 1 ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <Button size="small" shape="circle" icon={<LeftOutlined />} disabled={histIdx >= history.length - 1} onClick={() => setHistIdx((i) => Math.min(history.length - 1, i + 1))} />
+                    <Text type="secondary" style={{ fontSize: 12 }}>{history.length - histIdx} / {history.length}（本次会话）</Text>
+                    <Button size="small" shape="circle" icon={<RightOutlined />} disabled={histIdx === 0} onClick={() => setHistIdx((i) => Math.max(0, i - 1))} />
+                  </div>
+                ) : null}
+                {/* 圈选局部重绘：只有支持遮罩的出图通道才可用，后端对不支持的通道会明确拒绝而不是整张重画 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Input
+                    size="small"
+                    style={{ flex: 1, minWidth: 160 }}
+                    value={redrawNote}
+                    onChange={(e) => setRedrawNote(e.target.value)}
+                    placeholder="圈里要怎么改？留空则沿用当前提示词"
+                    allowClear
+                  />
+                  <Button
+                    size="small"
+                    icon={<HighlightOutlined />}
+                    loading={redrawing}
+                    onClick={() => setRegionFor(preview)}
+                  >
+                    圈选局部重绘
+                  </Button>
                 </div>
-              ) : null}
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  圈选后只重画圈内区域，圈外保持原样；出图通道需为 OpenAI 兼容端点，否则会明确拒绝。
+                </Text>
+              </div>
             </>
           ) : generating ? (
             <Spin tip="生成中…" size="large"><div style={{ width: 200, height: 120 }} /></Spin>
@@ -726,6 +806,16 @@ export function ImageStudio(): ReactNode {
             </div>
           )}
         </Modal>
+
+      {/* 圈选局部重绘：遮罩与原图 id 交给后端走 images/edits，圈外像素不动 */}
+      {regionFor && (
+        <RegionSelector
+          open
+          imageUrl={fileUrl(regionFor.url.split('?')[0])}
+          onCancel={() => setRegionFor(null)}
+          onConfirm={(sel) => void redrawRegion(sel)}
+        />
+      )}
     </div>
   );
 }

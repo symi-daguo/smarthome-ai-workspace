@@ -384,6 +384,10 @@ model MediaAsset {
   // generating | ready | failed
   status    String   @default("ready")
   error     String?
+  // 提交幂等键：同一请求重放（弱网超时后重试、跨标签页重复提交）命中已有记录直接返回，
+  // 不重复出图、不重复扣额度。DB 唯一约束才是真防线，前端那层只为体验。
+  // 可空且允许多个 NULL——不带该键的老调用方行为不变。
+  clientRequestId String? @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

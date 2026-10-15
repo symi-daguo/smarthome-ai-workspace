@@ -90,8 +90,10 @@ export class MediaService {
     /** 局部重绘：原图资产 id + 遮罩 dataURL（二者需同时提供） */
     imageAssetId?: string;
     maskDataUrl?: string;
+  /** 提交幂等键：命中已有产物直接返回，不重复出图也不重复扣额度 */
+  clientRequestId?: string;
     title?: string;
-  }): Promise<{ id: string; url: string; status: string }> {
+  }): Promise<{ id: string; url: string; status: string; deduped?: boolean }> {
     const cfg = await this.modelConfig.imageConfig();
     // 校验在扣费前：key 缺失直接拒绝，不白扣额度（批量生图场景尤其重要）
     const apiKey = cfg.apiKey ?? '';
@@ -100,6 +102,18 @@ export class MediaService {
         code: 'IMAGE_KEY_MISSING',
         message: cfg.provider === 'openai' ? '生图 API Key 未配置（provider=openai），请在「模型配置」页填写' : '生图 API Key 未配置，请在「模型配置」页填写 MiniMax Key',
       });
+    }
+
+    // 幂等：同一提交键直接返回已有产物。放在所有扣费之前——
+    // 弱网超时后重试、跨标签页重复提交，靠这里避免第二次出图 + 第二次扣额度。
+    // 按租户查，避免撞上别的租户恰好用了同一个键。
+    if (opts.clientRequestId) {
+      const existing = await this.prisma.mediaAsset.findFirst({
+        where: { tenantId: opts.tenantId, clientRequestId: opts.clientRequestId },
+      });
+      if (existing) {
+        return { id: existing.id, url: `/api/media/assets/${existing.id}/file`, status: existing.status, deduped: true };
+      }
     }
 
     // 两个参数在此转成「真实生效的输入」，而不是透传给上游却不生效：
@@ -117,17 +131,15 @@ export class MediaService {
     const fitHint = opts.fitVideo ? '，严格保持参考图构图与主体位置，画面边缘自然过渡不被硬裁切' : '';
     const prompt = `${opts.prompt}${bgHint}${fitHint}`;
 
-    await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
-
-    let img: GeneratedImage;
-
-    // 局部重绘需要像素级遮罩参数（mask / inpaint region）。
+    // 局部重绘的入参与能力校验放在扣费**之前**（同上面 KEY_MISSING 的理由）：
+    // 参数不全或通道不支持而被拒绝的请求，不该让用户白扣额度。
     // 查证 MiniMax 官方 /v1/image_generation 的请求 schema（platform.minimax.io/docs/api-reference/image-generation-i2i）：
     // 只有 model / prompt / subject_reference / aspect_ratio / width / height / response_format / seed / n /
     // prompt_optimizer，**没有 mask、没有 inpainting 区域、没有 denoise 强度**。
     // subject_reference 是「参考图主体一致性」（type=character，用于保持人物特征），
     // 拿它冒充遮罩重绘会让用户以为圈选生效、实际整张重画——这正是这里要避免的。
     // 所以：没有 mask 语义的 provider 明确拒绝，而不是静默降级。
+    let editInput: { image: Buffer; mime: string; mask: Buffer } | null = null;
     if (opts.maskDataUrl || opts.imageAssetId) {
       // 参数完整性先于能力判断：只给一半是请求错误（400），不是能力不支持（503）
       if (!opts.imageAssetId || !opts.maskDataUrl) {
@@ -150,15 +162,23 @@ export class MediaService {
       const srcBuf = await readFile(this.resolveSafe(src.filePath));
       const maskBuf = Buffer.from(opts.maskDataUrl.replace(/^data:image\/\w+;base64,/, ''), 'base64');
       if (!maskBuf.length) throw new BadRequestException('INVALID_MASK');
+      editInput = { image: srcBuf, mime: src.mimeType || 'image/png', mask: maskBuf };
+    }
+
+    await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
+
+    let img: GeneratedImage;
+
+    if (editInput) {
       img = await generateViaOpenaiEdit({
         baseUrl: cfg.baseUrl,
         apiKey,
         model: cfg.model,
         prompt,
         size,
-        image: srcBuf,
-        imageMime: src.mimeType || 'image/png',
-        mask: maskBuf,
+        image: editInput.image,
+        imageMime: editInput.mime,
+        mask: editInput.mask,
       });
     } else if (cfg.provider === 'comfyui') {
       img = await generateViaComfyui({
@@ -204,6 +224,7 @@ export class MediaService {
         mimeType,
         sizeBytes,
         status: 'ready',
+        clientRequestId: opts.clientRequestId ?? null,
       },
     });
     return { id: asset.id, url: `/api/media/assets/${asset.id}/file`, status: 'ready' };

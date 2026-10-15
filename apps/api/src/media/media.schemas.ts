@@ -11,8 +11,15 @@ export const generateImageSchema = z.object({
   /** 背景意图：transparent / white 会写进提示词约束；auto 不干预 */
   background: z.enum(['auto', 'transparent', 'white']).default('auto'),
   /**
+   * 提交幂等键（可选）：弱网超时重试、跨标签页重复提交时带同一个键，
+   * 命中已有产物直接返回，不再出图也不再扣额度。不带则行为与从前完全一致。
+   */
+  clientRequestId: z.string().max(64).optional(),
+  /**
    * 局部重绘：原图资产 id + 遮罩 dataURL（二者必须同时提供）。
-   * 遮罩约定与 OpenAI 一致：**不透明区域会被重绘，透明区域保持原样**。
+   * 遮罩约定与 OpenAI 官方一致：**全透明区域会被重绘，不透明区域保持原样**
+   * （OpenAI Images API 对 mask 的定义即 "fully transparent areas indicate where the image should be edited"，
+   *  与 `RegionSelector` 把圈选处「擦」成透明的做法一致）。
    * 目前只有 provider=openai 支持（走 images/edits），其余 provider 会明确拒绝而不是静默忽略。
    */
   imageAssetId: z.string().max(40).optional(),

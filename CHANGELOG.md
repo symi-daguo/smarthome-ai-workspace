@@ -2,6 +2,74 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.63] - 2026-10-15
+
+新建 [replica/gap-backlog-2026-10-15.md](./replica/gap-backlog-2026-10-15.md)：
+把参考站四板块比对出的 17 条缺口按**真实业务价值**排序（扣错钱 > 客诉 > 冷启动 > 体验），
+划成 5 个批次。本版完成批次 1（P0 + P2）。
+
+### Fix（局部重绘被拒绝时白扣额度）
+
+接彩平图局部重绘时查出来的**确定性额度损失**（`media.service.ts`）：
+
+原执行顺序是 `API Key 校验 → consume 扣额度 → mask 参数校验(400) → 通道能力校验(503) → 真出图`。
+用户在 MiniMax 通道上圈选局部重绘时，**额度先被扣掉，然后才收到「该通道不支持遮罩」**。
+而代码自己在 `:96` 写着「校验在扣费前…不白扣额度」——代码违背了自己声明的意图。
+
+已把 mask 入参校验、通道能力校验、读原图三段整体提到 `consume` 之前，
+用 `editInput` 把校验结果带过扣费线，真正的 `generateViaOpenaiEdit` 仍在扣费之后。
+不改行为语义，只是不再为必然失败的请求扣钱。
+
+### Fix（遮罩约定注释与 OpenAI 官方定义相反）
+
+`media.schemas.ts` 原注释写「不透明区域会被重绘，透明区域保持原样」——
+与 OpenAI 官方定义**正好相反**。查证四个独立来源（`@openai/openai` TS SDK、
+`openai-interface` Rust crate、`openai` Ruby gem、LiteLLM 文档）一致：
+「fully transparent areas indicate where the image should be edited」，即**透明处才是重绘区**。
+
+`RegionSelector` 的实现（整幅不透明 → 圈选处擦成透明）是对的，后端原样透传 mask 不做反转，
+所以**行为正确，只有注释是反的**。这种注释比没有注释更危险——未来维护者照它「修正」实现，
+会把局部重绘变成「重画圈外、保留圈内」的反向逻辑。已改为指向官方定义原文。
+
+### Feature（生成类提交幂等键，防重复扣额度）
+
+额度是本项目唯一对外收费口径。此前我方只有**作业级**幂等
+（`canvas.service.ts:264` 同一 `jobId` 不重复执行），防不住「用户点两次 → 两个不同 jobId → 双倍扣额度」；
+单页连点被 `loading={generating}` 挡住，但弱网重试、切走再回来重发、跨标签页都没兜。
+
+- `MediaAsset` 加 `clientRequestId String? @unique`，
+  migration `20261015150000_media_client_request_id`（可空，允许多个 NULL，不带键的老调用方行为不变）
+- `generateImage` 在**所有扣费之前**按 `(tenantId, clientRequestId)` 查重，
+  命中直接返回原产物并带 `deduped: true`。**DB 唯一约束才是真防线**，前端那层只为体验
+- 前端策略是**失败保留键、成功清除**：超时时后端若有记录则取回，若无则真生成；
+  业务失败（后端未建记录）复用同一个键也无害
+
+**验收**：3 条 smoke 覆盖（DB 预置带键产物模拟「上次成功但响应丢了」），331/331 全绿。
+
+**剩余未接入**：生视频、封面、海报、智能体对话尚未带该键，留到批次 2 逐个入口接。
+
+### Feature（彩平图红笔圈选局部重绘接线）
+
+G-05 是纯接线，**后端零改动**——`generateImage` 本来就返回 `{ id, url, status }`，
+只是前端以前只取 `url`，把资产 id 丢了。
+
+- `ImageStudio` 历史从 `string[]` 改成 `{ id, url }[]`；从 URL 反解 id 复用
+  `RegionSelector` 已导出的 `assetIdFromUrl`，不重复实现
+- 结果区加「圈里要怎么改」输入 + 「圈选局部重绘」按钮，复用 `components/RegionSelector.tsx`
+- 提示词用「要改什么」这句人话而**不带原图描述**——带了模型会把整张按描述重画，那就不是局部重绘了
+
+### Docs（审计新增 §7.16–§7.18）
+
+新增缺口清单文档，并把 G-01/G-05/G-18 标记完成、附验收证据。
+
+### 门禁
+
+`pnpm typecheck ✓ / pnpm build ✓ / pnpm smoke 331/331`（新增 3 条幂等用例）
+
+> **踩坑记录**：`pnpm smoke` 跑的是 `dist/test/smoke.js`（编译产物），
+> 改了 `apps/api/test/smoke.ts` 后必须先 `pnpm build`，否则跑的是旧代码——
+> 表现为「用例数没变、全绿」，很容易误判成新用例已通过。
+
 ## [0.1.62] - 2026-10-15
 
 走完参考站最后四个板块（智能体 / 智能方案 / 任务中心 / 报价）的逐屏比对。

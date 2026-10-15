@@ -1457,6 +1457,54 @@ async function main(): Promise<void> {
     notSupported.status === 503 && notSupported.body.code === 'IMAGE_EDIT_UNSUPPORTED',
   );
 
+  // ---------- 生成提交幂等键：重复提交不重复出图、不重复扣额度 ----------
+  // 场景是「上一次其实成功了，但响应在弱网里丢了，用户又点了一次」。
+  // 用 DB 预置一条带该键的产物来模拟这个状态：请求应当直接取回原产物，
+  // 而不是再出一次图、再扣一次额度——额度是本项目唯一对外收费口径，不能重复扣。
+  const idemKey = `smoke-idem-${randomUUID()}`;
+  const seededAsset = await prisma.mediaAsset.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      kind: 'image',
+      title: '幂等验证',
+      prompt: '幂等验证用提示词',
+      filePath: 'images/smoke-idempotent.png',
+      mimeType: 'image/png',
+      sizeBytes: 0,
+      status: 'ready',
+      clientRequestId: idemKey,
+    },
+  });
+  const idemReplay = await request<{ id: string; url: string; deduped?: boolean }>(base, '/api/media/images', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ prompt: '幂等验证用提示词', clientRequestId: idemKey }),
+  });
+  check(
+    '同一提交键重复提交直接取回原产物（deduped=true，不重复扣额度）',
+    idemReplay.status === 201 && idemReplay.body?.deduped === true && idemReplay.body?.id === seededAsset.id,
+  );
+  const idemOtherKey = await request<{ deduped?: boolean }>(base, '/api/media/images', {
+    ...authA,
+    method: 'POST',
+    // 换一个键：不该命中已有记录。这里带遮罩，让请求在通道能力校验处就被拒
+    // （503），既能验证不误判，又不会真的触发出图调用白烧额度。
+    body: JSON.stringify({
+      prompt: '幂等验证用提示词',
+      imageAssetId: '00000000-0000-0000-0000-000000000000',
+      maskDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+      clientRequestId: `${idemKey}-other`,
+    }),
+  });
+  check(
+    '换一个提交键不会被误判为重复（deduped 不为 true）',
+    idemOtherKey.body?.deduped !== true,
+  );
+  const stillOne = await prisma.mediaAsset.count({ where: { clientRequestId: idemKey } });
+  check('幂等键在库中唯一（重放没有产生第二条产物）', stillOne === 1);
+  await prisma.mediaAsset.delete({ where: { id: seededAsset.id } });
+
   // ---------- 局部重绘链路：mask 必须真正到达出图层，不能被静默丢弃 ----------
   // 关键回归点：画布 turns 端点若没把 mask 透传给 generateImage，用户圈选后会变成「整张重画」，
   // 而 UI 上却显示「圈选重绘」。这里用「provider 不支持 → 作业必须 failed」来证明链路是通的：
