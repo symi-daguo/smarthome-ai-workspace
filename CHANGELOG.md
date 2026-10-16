@@ -49,9 +49,24 @@
 - [AgentMarket.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/AgentMarket.tsx)：卡片级「加入常用」星标（实测 13 个）+ 预置智能体启用/停用持久化（此前只改内存、刷新回默认）
 - [QuoteStudio.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/QuoteStudio.tsx)：`unitLabel()` —— `per_order` 产品单位显示「项」而非「台」，避免 CSV/Excel 导出自相矛盾
 
+### Fixed（本地资料库检索：标题未参与索引）
+
+先跑质量探针取证，发现 1 条真实缺陷：查「价格的规则是什么」命中不到标题就叫「报价规则」的文档——
+**检索只索引正文、不索引标题**，而标题恰是主题词、正文未必重复。
+
+- [knowledge-doc.service.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/knowledge/knowledge-doc.service.ts)：标题作为一个检索单元参与打分；标题命中时返回该文档首段（注入可读内容而非标题串）。未引入新依赖、未改打分公式
+- [smoke.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/test/smoke.ts)：新增断言「资料库检索质量 5 例全对」——把此前**手工**探针变成**自动**回归，以后改检索逻辑会被立刻拦住
+
+### Fixed（开源合规：参考站域名从已跟踪文档清零）
+
+`git grep` 复扫发现 `platform.gougezn.com` 仍留在 **7 处已跟踪文档**（0.1.74 只清了代码注释，
+漏了 `replica/*.md` 与 CHANGELOG 历史条目），违反「代码/文档不得出现第三方域名」约束。
+已全部替换为中性的「参考站（逆向基线）」，复扫 `git grep -c gougezn` → **0**。
+
 ### Verified（门禁）
 
-- `pnpm typecheck ✓` / `pnpm --filter @app/web build ✓` / `pnpm smoke` → **369/369 全过**
+- `pnpm typecheck ✓` / `pnpm --filter @app/web build ✓` / `pnpm smoke` → **370/370 全过**
+  （含版本号 3 条 + 资料库检索质量 5 例）
 - 浏览器复验：/vip、/tokens、首登弹窗、AI 智能体星标、任务球、WiFi 热力图、开始接单表单均一致
 
 ### 遗留待决（未擅自改语义，待用户确认）
@@ -1088,7 +1103,7 @@ canvas 三处与 PPTX 都引用它。
 
 ### 未完成（诚实标注）
 
-**参考站逐屏比对本轮没做成**：`platform.gougezn.com` 会话已过期，`#/home` 直接落到登录页。
+**参考站逐屏比对本轮没做成**：参考站会话已过期，`#/home` 直接落到登录页。
 需要鉴权的页面进不去 —— 这件事不绕过登录做，等用户提供可用的测试账号
 （他自己在浏览器里登录后我接着用同一标签页也可以）。
 
@@ -1730,7 +1745,7 @@ Agent 要摸清系统能干什么，最省钱的办法不是读源码，而是�
 - smoke **237/237** 全绿；typecheck / build 全绿
 - 部署一致性核对：容器镜像 ID == 最新镜像 ID
 
-> 未完成：参考站逐板块比对。本轮参考站会话已掉登录（`platform.gougezn.com/#/space`
+> 未完成：参考站逐板块比对。本轮参考站会话已掉登录（参考站 `#/space`
 > 返回「尚未登录」），需要重新登录后才能比对百宝箱内的 WiFi 热力图、灯光大师、定制智能体等
 > 昨天未核完的板块。这部分如实标注为**未完成**，不宣称已核对。
 

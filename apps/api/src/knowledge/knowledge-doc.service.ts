@@ -36,17 +36,23 @@ export function rankLocalChunks(
 
   const scored: KnowledgeChunk[] = [];
   for (const doc of docs) {
-    for (const chunk of chunkText(doc.content)) {
-      // 覆盖率 = 查询有多少个二元组在段落里出现。必须用覆盖率而不是原始命中数：
-      // 长段落天然包含更多二元组，只按命中数排会让最长的那段永远第一。
-      const bag = new Set(bigrams(chunk));
+    const chunks = [...chunkText(doc.content)];
+    // 标题必须参与检索：标题常是「报价规则 / 品牌话术 / 产品资料」这类主题词，
+    // 而正文未必重复出现这些词。只索引正文时，用户问「价格的规则是什么」会命中不到
+    // 标题就叫「报价规则」的文档（实测复现），召回率直接漏一档。
+    // 标题命中时返回该文档首段而不是标题本身——注入给模型的是可读内容，不是标题串。
+    const units = chunks.length
+      ? [{ text: doc.title, content: chunks[0] }, ...chunks.map((c) => ({ text: c, content: c }))]
+      : [{ text: doc.title, content: doc.title }];
+    for (const unit of units) {
+      const bag = new Set(bigrams(unit.text));
       let hits = 0;
       for (const g of grams) if (bag.has(g)) hits += 1;
       if (hits === 0) continue;
       const coverage = hits / grams.length;
       scored.push({
         title: doc.title,
-        content: chunk,
+        content: unit.content,
         // 覆盖率为主要权重，命中数为次要权重（同样覆盖率时命中多的更相关）
         score: coverage * 10 + Math.min(hits, 20) * 0.1,
         source: '本地资料库',

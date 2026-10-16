@@ -1,6 +1,6 @@
 # 全站复刻完整度对照清单
 
-> 基线：REA 静态逆向 `platform.gougezn.com` 全部 **14 个脚本 / 701 KB**
+> 基线：REA 静态逆向参考站（逆向基线）全部 **14 个脚本 / 701 KB**
 > （`app.js` 341KB、`quote-workbench.js` 88KB、`wifi-heatmap.js` 58KB、
 > `plan2-workspace.js` 27KB、`task-center.js` 19KB、`agent-gallery.js` 14KB、
 > `image-scene-video.js` 13KB、`fault-report.js` 12KB、其余 6 个共 15KB）

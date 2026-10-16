@@ -14,6 +14,7 @@ import { markCharged, isChargedError } from '../src/media/media.service.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
 import { PERMISSIONS, WRITE_IMPLIES_READ } from '../src/rbac/permissions.js';
+import { rankLocalChunks } from '../src/knowledge/knowledge-doc.service.js';
 
 const MANIFEST_KEYS = MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
 
@@ -1547,6 +1548,32 @@ async function main(): Promise<void> {
       ...authA, method: 'POST', body: JSON.stringify({ query: '' }),
     });
     check('空查询被拒（400）', kbEmpty.status === 400);
+
+    // 检索质量门禁（纯函数，不依赖数据库）：
+    // 之前这 7 条是手工探针，改动检索逻辑时无法自动拦住回归。做成断言后长期守着。
+    // 其中「价格的规则是什么」是标题索引缺失的复现用例——只索引正文时会漏掉标题为「报价规则」的文档。
+    const rankDocs = [
+      { title: '报价规则', content: '上门安装费 200 元，综合布线费 500 元，系统调试费 300 元。赠品不参与计提。' },
+      { title: '品牌话术', content: '客户砍价时给出三档应对话术：守住价格、赠送服务、限时权益。' },
+      { title: '产品资料', content: '智能窗帘电机支持米家与小度双生态，续航 6 个月。' },
+    ];
+    const rankCases: [string, string | null][] = [
+      ['上门安装费多少钱', '报价规则'],
+      ['窗帘电机续航', '产品资料'],
+      ['客户砍价话术', '品牌话术'],
+      ['价格的规则是什么', '报价规则'],
+      ['游泳池水质检测', null],
+    ];
+    const rankFail = rankCases
+      .map(([q, want]) => {
+        const got = rankLocalChunks(rankDocs, q, 2)[0]?.title ?? null;
+        return { q, want, got };
+      })
+      .filter((r) => r.got !== r.want);
+    check(
+      `资料库检索质量 5 例全对（错例：${rankFail.map((r) => `${r.q}→${r.got ?? '空'} 期望${r.want ?? '空'}`).join('; ') || '无'}）`,
+      rankFail.length === 0,
+    );
   }
 
   // ---------- 智能灯光问诊（G-16） ----------

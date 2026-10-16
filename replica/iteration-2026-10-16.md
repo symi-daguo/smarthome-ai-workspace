@@ -183,4 +183,67 @@ Vite 构建时注入，前端不再手写；smoke 增加断言防止再次漂移
   本部署已明确不提供在线支付，「充值」前提不成立；但改返点口径属**产品语义决策**，需用户确认后再改。
 - **F6**：开源前需清理演示库测试数据（内容提取任务/文档、验证素材）。
 
+### T4 本地知识库优化 ✅ 已完成（取证 → 修复 → 门禁）
+
+**取证（先跑探针，不凭感觉改）**：对现有 `rankLocalChunks` 跑 5 条代表查询，发现 **1 条真实缺陷**：
+
+```
+PASS | 上门安装费多少钱 -> 报价规则
+PASS | 窗帘电机续航     -> 产品资料
+PASS | 客户砍价话术     -> 品牌话术
+FAIL | 价格的规则是什么 -> 品牌话术   ← 期望「报价规则」
+PASS | 游泳池水质检测   -> 空（不硬凑）
+```
+
+**根因**：检索**只索引正文、不索引文档标题**。标题恰恰是「报价规则 / 品牌话术 / 产品资料」这类主题词，
+正文里未必重复出现 → 标题命中为 0，整篇文档被丢弃。
+
+**修复**（[knowledge-doc.service.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/src/knowledge/knowledge-doc.service.ts)）：
+把「文档标题」也作为一个检索单元参与打分；标题命中时返回该文档**首段**（注入给模型的是可读内容而非标题串）。
+未引入新依赖、未改打分公式（仍是「覆盖度为主 + 命中数为次」）。
+
+**修复后复验**：5/5 PASS（含此前失败的用例）。
+
+**门禁化**（[smoke.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/test/smoke.ts)）：新增断言
+`资料库检索质量 5 例全对` —— 把此前**手工**探针的 7 条变成**自动**回归，
+以后改检索逻辑会被立刻拦住。`pnpm smoke` → **370/370 全过**。
+
+### T5 开发工具链核查 ✅ 已完成
+
+| 类别 | 现状 | 结论 |
+|---|---|---|
+| 复刻 skill 包 | `.claude/skills/replica-*` 共 **11 个**（recon/architect/backend/frontend/build/design/diff/brand/launch/test/deploy） | 本地 vendored，**无版本元数据**；pack 完整，本轮实际使用了 recon/design/build/diff 的方法论 |
+| 浏览器 skill | `agent-browser`（CLI + CDP） | **本轮实际使用**：登录、逐路由取证、eval 取 DOM 证据、截图。版本 `agent-browser upgrade` 可自更新 |
+| MCP | 按项目会话隔离（`~/.trae-cn/mcps/s_aisaas-*`）；可用 **Chrome DevTools / Context7 / GitHub / Sequential Thinking / web_research** | 本轮用到的：agent-browser（浏览器）；未强依赖其余 |
+| 插件 | `trae-remote-official` 系列（lark / build-web-apps / office-plugin-mac / ppt-generator / superpowers 等） | 由平台管理，非仓库内资产，**无需也不应写入仓库** |
+
+> 说明：仓库内**不应**收录任何 MCP/插件配置（含凭据），只有 `.claude/skills/replica-*` 这类纯方法论文本随仓库走。
+
+### T6 开源合规复扫 ✅ 发现并修复 1 处真实问题
+
+**扫描范围与方法**（全部针对**已跟踪文件**，用 `git grep` 而非全盘 grep，避免命中运行期产物）：
+
+| 扫描项 | 命令 | 结果 |
+|---|---|---|
+| 外部域名 | `git grep -nE "https?://..."` | LLM provider API（deepseek/openai/minimax/…）属**配置示例**，保留；局域网 IP `192.168.2.27` 属调试记录，无害 |
+| **参考站域名** | `git grep -n "gougezn"` | **❌ 发现 7 处残留**（见下）→ **已修，复扫为 0** |
+| 备案号 | `git grep -niE "备案\|ICP备"` | 无（仅"备案"一词的普通用法） |
+| 硬编码凭据 | `git grep -nE "(password\|secret\|apiKey\|token)\s*[:=]\s*['\"]…"` | 无 |
+| `.env` 入库 | `git ls-files \| grep '\.env$'` | **未入库** ✅ |
+| 测试凭据 | `grep -E "Test@12345\|Admin@123456\|138…"` | 仅**我们自己的** seed 默认值与冒烟 fixture（含生产 fail-fast 守卫），非参考站凭据 ✅ |
+
+**F8（新增）参考站域名残留 —— 已修复**：`platform.gougezn.com` 出现在 7 处已跟踪文档，
+违反「代码/文档不得出现第三方域名」硬约束（0.1.74 只清了**代码注释**，漏了 `replica/*.md` 与 CHANGELOG 历史条目）：
+
+| 文件 | 位置 | 处理 |
+|---|---|---|
+| CHANGELOG.md | 2 处历史条目 | → 「参考站」 |
+| replica/ai-canvas-spec.md | 第 3 行 | → 「参考站（逆向基线）」 |
+| replica/audit-2026-10-13.md | §3.1、§7.6 | → 「参考站」 |
+| replica/full-parity-matrix.md | 第 3 行 | → 「参考站（逆向基线）」 |
+| replica/gap-backlog-2026-10-15.md | 第 3 行 | → 「参考站（逆向基线）」 |
+
+**复扫确认**：`git grep -c gougezn` → **空（已清零）**。
+
+
 
