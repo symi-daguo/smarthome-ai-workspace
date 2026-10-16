@@ -32,6 +32,8 @@ export interface PlanForExport {
 const W = 13.333;
 const H = 7.5;
 const MX = 0.66; // 左右外边距
+/** 户型页左栏图片框（英寸），与前端卡片的图片区保持同一比例 */
+const FLOOR_BOX: [number, number] = [8.6, 6.15];
 import { FONT_PPTX } from '../theme/fonts';
 const FONT = FONT_PPTX;
 
@@ -188,11 +190,24 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
       floorplan = null;
     }
   }
+  if (floorplan) {
+    // 预裁成左栏框的比例：PPTX 的 addImage 只会按给定 w/h 缩放，
+    // 不预裁就得靠 contain 留白，或者拉伸变形。户型图变形最难看。
+    const [bw, bh] = FLOOR_BOX;
+    try {
+      floorplan.data = await coverCrop(floorplan.data, bw, bh, 'center');
+      floorplan.ratio = bw / bh;
+    } catch {
+      /* 裁剪失败保留原图，宁可留白也不变形 */
+    }
+  }
   if (!floorplan && plan.floorplanUrl && plan.layoutPoints?.length) {
     try {
       const composed = await compositePoints(plan.floorplanUrl, plan.layoutPoints, 1400);
-      const ratio = await imageRatio(composed);
-      floorplan = { data: composed, ratio };
+      const [bw, bh] = FLOOR_BOX;
+      // 先合成点位再裁剪：点位图标已经画在图上，跟着一起裁，不会与点位错位
+      const data = await coverCrop(composed, bw, bh, 'center');
+      floorplan = { data, ratio: bw / bh };
     } catch {
       floorplan = null;
     }
@@ -220,8 +235,8 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
   const fileName = `${plan.title}-${plan.edition === 'private' ? '私宅' : plan.edition === 'presale' ? '售前' : '标准'}方案-V${plan.versionNo}-${new Date().toISOString().slice(0, 10)}.pptx`;
   // 浏览器里不能用 writeFile：那是 Node 端 API，会静默什么都不落盘，
   // 按钮转一圈然后什么都没有。write({outputType:'blob'}) 才是浏览器路径。
-  const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
-  downloadBlob(blob, fileName);
+  const buf = (await pptx.write({ outputType: 'arraybuffer' })) as ArrayBuffer;
+  downloadBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }), fileName);
 }
 
 /* ---------- primitives ---------- */
@@ -478,11 +493,8 @@ function floorplanSlide(
   const boxW = x - 0.4;
   const boxH = H - 0.9;
   if (floorplan?.data) {
-    const r = floorplan.ratio || 1.4;
-    let w = boxW;
-    let h = w / r;
-    if (h > boxH) { h = boxH; w = h * r; }
-    slide.addImage({ data: floorplan.data, x: (boxW - w) / 2, y: 0.45 + (boxH - h) / 2, w, h });
+    // 主流程已按 FLOOR_BOX 预裁过，这里直接铺满，不留白
+    slide.addImage({ data: floorplan.data, x: 0, y: 0.45, w: boxW, h: boxH });
   } else if (img) {
     // 没有上传户型图时用实景兜底，但要在图上说明，别让客户以为是自家户型
     slide.addImage({ data: img, x: 0, y: 0.45, w: boxW, h: boxH });

@@ -106,7 +106,9 @@ function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit:
   }, [hasFloorplan, plan.floorplanUrl, plan.layoutPoints]);
 
   if (useRendered) return { src: plan.renderedFloorplanUrl as string, label: 'AI 精装修效果图', fit: 'cover' };
-  if (hasFloorplan) return { src: composite ?? (plan.floorplanUrl as string), label: '客户户型 · 设备点位图', fit: 'contain' };
+  // 户型图也用 cover 铺满：contain 会在卡片内留出上下白边，PPT 里非常难看。
+  // 点位图标是合成进图里的，裁剪时会跟着一起裁，不会与点位错位。
+  if (hasFloorplan) return { src: composite ?? (plan.floorplanUrl as string), label: '客户户型 · 设备点位图', fit: 'cover' };
   return { src: '', label: '空间动线实景', fit: 'cover' };
 }
 
