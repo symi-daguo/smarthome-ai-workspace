@@ -1,9 +1,7 @@
 import {
-  CopyOutlined,
   DownloadOutlined,
   LockOutlined,
   LogoutOutlined,
-  PlusOutlined,
   SyncOutlined,
 } from '@ant-design/icons';
 import {
@@ -17,7 +15,6 @@ import {
   Empty,
   Form,
   Input,
-  Modal,
   Progress,
   Radio,
   Row,
@@ -36,7 +33,7 @@ import { UserAvatar } from '../components/UserAvatar';
 import { useAuth, type UserProfile } from '../store/AuthContext';
 import { setShowBilling } from '../layouts/MainLayout';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
-import { BRAND_GRADIENT, INK_BLACK, pageContainerStyle } from '../theme/tokens';
+import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
 const { useToken } = theme;
@@ -65,11 +62,12 @@ const PLAN_META: Record<string, { label: string; color: string }> = {
   ENTERPRISE: { label: '团队档', color: 'purple' },
 };
 
+// 账本只有两种真实来源：注册/管理员发放（GRANT）与调用消耗（CONSUME）。
+// RECHARGE / REFUND 是建表时的枚举占位，后端从未写入过（发放统一走 GRANT），
+// 且「充值」一词与本项目免费商用、全员最高权限的定位冲突，故不再在前端映射。
 const REASON_META: Record<string, { label: string; color: string }> = {
-  GRANT: { label: '注册发放', color: 'blue' },
+  GRANT: { label: '额度发放', color: 'blue' },
   CONSUME: { label: '消耗', color: 'red' },
-  RECHARGE: { label: '充值', color: 'green' },
-  REFUND: { label: '退还', color: 'orange' },
 };
 
 interface StorageStat {
@@ -91,35 +89,6 @@ const PRICE_CHIPS = [
   '额度单价由部署者按自有模型成本配置',
 ];
 
-interface PlanDef {
-  key: string;
-  name: string;
-  tokens: string;
-  perks: string[];
-  highlight?: boolean;
-}
-
-/**
- * 额度档位参考值——**不是订阅商品，也不锁任何功能**。
- *
- * 计价与发额度都由部署者决定（`BILLING_*_TOKENS` 环境变量 + 管理员按账号发放），
- * 这里的数字只是给部署者一个分配参考：给不同角色配多少额度合适。
- * 之前写成「入门包/标准包/团队包 + 按部署者定价」，容易被理解成订阅制，
- * 与本项目开源免费的定位冲突，故改为「档位参考」。
- */
-const PLANS: PlanDef[] = [
-  { key: 'basic', name: '轻量档', tokens: '80,000 token', perks: ['适合个人体验', '基础功能全覆盖', '社区支持'] },
-  { key: 'standard', name: '门店常用档', tokens: '1,600,000 token', perks: ['适合门店日常', '11 套方案风格库', '点位/报价工具'], highlight: true },
-  { key: 'enterprise', name: '团队档', tokens: '30,000,000 token', perks: ['适合多账号协作', '知识库与素材库', '优先支持'] },
-];
-
-/** 邀请码：用户 id 派生稳定 6 位码（返点结算 0.2.0 接入后端） */
-function inviteCode(userId: string): string {
-  let h = 0;
-  for (const c of userId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h.toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
-}
-
 export function TokenCenter(): ReactNode {
   const { message, modal } = AntApp.useApp();
   const { token } = useToken();
@@ -130,8 +99,6 @@ export function TokenCenter(): ReactNode {
   const [balance, setBalance] = useState<TokenBalance | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [rechargeOpen, setRechargeOpen] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<string>('standard');
   const [pwdForm] = Form.useForm();
   const [pwdLoading, setPwdLoading] = useState(false);
   const [profileForm] = Form.useForm<{ displayName: string; avatarColor: string | { toHexString?: () => string } }>();
@@ -163,15 +130,6 @@ export function TokenCenter(): ReactNode {
   const granted = ledger.filter((e) => e.delta > 0).reduce((sum, e) => sum + e.delta, 0);
   const total = balance ? balance.tokenBalance + consumed : 0;
   const usedPct = total > 0 ? Math.min(100, Math.round((consumed / total) * 100)) : 0;
-  const code = user ? inviteCode(user.id) : '------';
-
-  const confirmRecharge = (): void => {
-    modal.info({
-      title: '支付通道即将开放',
-      content: '本项目开源免费，不设付费墙、不做在线支付。额度由部署者自行设定与发放，这里展示的是分配参考档位。',
-      okText: '我知道了',
-    });
-  };
 
   const changePassword = async (values: { oldPassword: string; newPassword: string; confirm: string }): Promise<void> => {
     if (values.newPassword !== values.confirm) {
@@ -284,16 +242,6 @@ export function TokenCenter(): ReactNode {
       <PageHeader
         title="个人中心"
         description="额度以统一 token 记账，发放与消耗全程留痕；额度由部署者分配，本部署不提供在线支付"
-        extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setRechargeOpen(true)}
-            style={{ background: BRAND_GRADIENT, border: 'none' }}
-          >
-            额度档位参考
-          </Button>
-        }
       />
 
       {error ? <Alert type="warning" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
@@ -429,41 +377,7 @@ export function TokenCenter(): ReactNode {
           </Card>
         </Col>
 
-        {/* 第二行：左=邀请，右=备份治理（管理员）/改密占位 */}
-        <Col xs={24} lg={12}>
-          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
-            <Text strong style={{ fontSize: 15 }}>邀请好友 · 首充双方各得 10% 额度</Text>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                marginTop: 12,
-                padding: '10px 14px',
-                borderRadius: 10,
-                background: token.colorPrimaryBg,
-              }}
-            >
-              <Text style={{ fontSize: 14 }}>
-                邀请码：<Text strong style={{ color: token.colorPrimary, fontSize: 16, letterSpacing: 1 }}>{code}</Text>
-              </Text>
-              <Button
-                size="small"
-                icon={<CopyOutlined />}
-                onClick={() => {
-                  void navigator.clipboard?.writeText(`${window.location.origin}/register?invite=${code}`).catch(() => undefined);
-                  message.success('邀请链接已复制');
-                }}
-              >
-                复制邀请链接
-              </Button>
-            </div>
-            <Text type="secondary" style={{ fontSize: 12.5, display: 'block', marginTop: 10 }}>
-              把专属链接发给朋友，TA 注册后首次充值时，你和 TA 各得充值额 10% 的额度奖励。返点结算将在 0.2.0 上线。
-            </Text>
-          </Card>
-        </Col>
+        {/* 第二行：备份治理（管理员）+ 改密 + 账号安全；邀请返点已随「免费商用、全员最高权限」定位移除 */}
         {isAdmin ? (
           <Col xs={24} lg={12}>
             <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
@@ -573,53 +487,6 @@ export function TokenCenter(): ReactNode {
         />
       </Card>
 
-      <Modal
-        title="额度档位参考"
-        open={rechargeOpen}
-        width={760}
-        onCancel={() => setRechargeOpen(false)}
-        onOk={confirmRecharge}
-        okText="知道了"
-        cancelText="稍后再说"
-        destroyOnClose
-      >
-        <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
-          {PLANS.map((plan) => {
-            const selected = selectedPlan === plan.key;
-            return (
-              <Col xs={24} sm={8} key={plan.key}>
-                <Card
-                  hoverable
-                  size="small"
-                  onClick={() => setSelectedPlan(plan.key)}
-                  style={{
-                    borderColor: selected ? token.colorPrimary : token.colorBorderSecondary,
-                    borderWidth: selected ? 2 : 1,
-                    background: plan.highlight && !selected ? token.colorPrimaryBg : token.colorBgContainer,
-                  }}
-                >
-                  <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                    <Space>
-                      <Text strong>{plan.name}</Text>
-                      {plan.highlight ? <Tag color="purple">推荐</Tag> : null}
-                    </Space>
-                    <Text type="secondary" style={{ fontSize: 12 }}>{plan.tokens}</Text>
-                    {plan.perks.map((perk) => (
-                      <Text key={perk} type="secondary" style={{ fontSize: 12 }}>· {perk}</Text>
-                    ))}
-                  </Space>
-                </Card>
-              </Col>
-            );
-          })}
-        </Row>
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginTop: 16 }}
-          message="额度按统一 token 计量，不同 AI 能力按单价扣减。开源版无付费墙：能力不因额度锁定，额度只用于让部署者能看清成本、避免误用。实际发放由管理员在后台按账号进行。"
-        />
-      </Modal>
     </div>
   );
 }
