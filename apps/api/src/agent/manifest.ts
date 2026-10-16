@@ -113,6 +113,8 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'GET /api/lighting/{id}': ['content:read'],
   'PATCH /api/lighting/{id}': ['content:read'],
   'DELETE /api/lighting/{id}': ['content:generate'],
+  'GET /api/lighting/diagnose/modes': ['content:read'],
+  'POST /api/lighting/diagnose': ['content:generate'],
 
   'GET /api/canvas/conversations': ['content:read'],
   'POST /api/canvas/conversations': ['content:read'],
@@ -337,6 +339,8 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'GET', p: '/api/lighting', d: '灯光场景列表', risk: R },
       { m: 'POST', p: '/api/lighting', d: '保存场景（灯具坐标已归一化 0-1）', risk: W, q: { 'fixtures[].circuit': '所属电气回路 id，空串=未归组' } },
       { m: 'GET', p: '/api/lighting/{id}', d: '场景详情', risk: R },
+      { m: 'GET', p: '/api/lighting/diagnose/modes', d: '灯光问诊任务定义（五项任务 + 每项三题）', risk: R },
+      { m: 'POST', p: '/api/lighting/diagnose', d: '灯光问诊：按任务与作答生成分级建议（扣额度，不给毫米级施工参数）', risk: W },
       { m: 'PATCH', p: '/api/lighting/{id}', d: '改场景', risk: W },
       { m: 'DELETE', p: '/api/lighting/{id}', d: '删场景', risk: D },
     ],

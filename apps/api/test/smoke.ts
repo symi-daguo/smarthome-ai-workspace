@@ -1531,6 +1531,27 @@ async function main(): Promise<void> {
   check('越界页码被拒（400，不会误改别的页）', badIndex.status === 400);
   await prisma.planProject.delete({ where: { id: editSeed.id } });
 
+  // ---------- 智能灯光问诊（G-16） ----------
+  {
+    const modes = await request<{ modes: { id: string; questions: { id: string; options: string[] }[] }[]; boundary: string }>(
+      base, '/api/lighting/diagnose/modes', authA,
+    );
+    const list = modes.body?.modes ?? [];
+    check('问诊任务定义为五项', modes.status === 200 && list.length === 5);
+    check(
+      '每项任务都有三道选择题且选项非空（前端据此渲染，缺一就渲染不出）',
+      list.length === 5 && list.every((m) => m.questions.length === 3 && m.questions.every((q) => q.options.length >= 3)),
+    );
+    check(
+      '带边界声明（灯位建议会被当施工依据，不写清楚会出人祸）',
+      Boolean(modes.body?.boundary) && /不输出毫米级|精确灯具参数/.test(modes.body?.boundary ?? ''),
+    );
+    const badMode = await request(base, '/api/lighting/diagnose', {
+      ...authA, method: 'POST', body: JSON.stringify({ modeId: 'x'.repeat(80), answers: {} }),
+    });
+    check('超长 modeId 被拒（400）', badMode.status === 400);
+  }
+
   // ---------- 对话附件：真内容必须到达模型，不能只给文件名摘要（G-12） ----------
   // 修复前的行为是前端拼一行「[附件 a.pdf(PDF,123KB)]」进 prompt，
   // 模型只收到文件名——用户以为 AI 读过了，其实什么都没发生。

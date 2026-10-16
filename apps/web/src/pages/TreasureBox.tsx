@@ -40,6 +40,7 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
       { key: 'wifi-heat', img: '/images/tools/tool-wifi-heat.jpg', name: 'WiFi 热力图', desc: '拖拽设备，生成信号覆盖', to: '/device-layout?mode=wifi' },
       { key: 'device-layout', img: '/images/tools/tool-device-layout.jpg', name: '智能设备点位布局', desc: '拖拽布点，导出图纸与设备清单', to: '/device-layout' },
       { key: 'light-plan', img: '/images/tools/tool-light-plan.jpg', name: '灯光点位效果图', desc: '编辑灯带，导出高清灯光平面图', to: '/device-layout?mode=light' },
+      { key: 'light-diagnosis', img: '/images/tools/tool-light-scene.jpg', name: '智能灯光问诊', desc: '五项任务逐题问诊，给出分级问题与灯组建议', to: '/lighting-diagnosis' },
       { key: 'light-scene', img: '/images/tools/tool-light-scene.jpg', name: '智能灯光场景演示', desc: '上传效果图，手工编排每盏灯的时间轴并生成视频', to: '/lighting' },
     ],
   },
