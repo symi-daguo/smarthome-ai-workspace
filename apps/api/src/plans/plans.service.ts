@@ -378,7 +378,15 @@ export class PlansService {
   async updatePage(
     tenantId: string,
     id: string,
-    dto: { index: number; heading?: string; body?: string; narration?: string },
+    dto: {
+      index: number;
+      heading?: string;
+      subtitle?: string;
+      body?: string;
+      narration?: string;
+      bullets?: string[];
+      quote?: string;
+    },
   ) {
     const plan = await this.detail(tenantId, id);
     const pages = plan.pages as unknown as PlanPage[];
@@ -388,8 +396,12 @@ export class PlansService {
     pages[dto.index] = {
       ...pages[dto.index],
       ...(dto.heading !== undefined ? { heading: dto.heading.slice(0, 200) } : {}),
+      ...(dto.subtitle !== undefined ? { subtitle: dto.subtitle.slice(0, 200) } : {}),
       ...(dto.body !== undefined ? { body: dto.body.slice(0, 8000) } : {}),
       ...(dto.narration !== undefined ? { narration: dto.narration.slice(0, 8000) } : {}),
+      // 空行直接丢掉：TextArea 里多敲一个回车不该存成一条空要点
+      ...(dto.bullets !== undefined ? { bullets: dto.bullets.map((b) => b.trim().slice(0, 300)).filter(Boolean) } : {}),
+      ...(dto.quote !== undefined ? { quote: dto.quote.slice(0, 300) } : {}),
     };
     return this.prisma.planProject.update({
       where: { id },

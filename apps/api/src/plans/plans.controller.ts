@@ -98,7 +98,15 @@ export class PlansController {
     @Param('index') index: string,
     @Body(new ZodValidationPipe(updatePlanPageSchema)) dto: UpdatePlanPageDto,
   ) {
-    return this.plans.updatePage(user.activeTenantId as string, id, { index: Number(index), heading: dto.heading, body: dto.body, narration: dto.narration });
+    return this.plans.updatePage(user.activeTenantId as string, id, {
+      index: Number(index),
+      heading: dto.heading,
+      subtitle: dto.subtitle,
+      body: dto.body,
+      narration: dto.narration,
+      bullets: dto.bullets,
+      quote: dto.quote,
+    });
   }
 
   @RequirePermissions('content:generate')

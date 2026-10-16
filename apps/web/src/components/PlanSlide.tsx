@@ -28,6 +28,23 @@ interface BudgetItem {
   max: number;
 }
 
+/**
+ * 各页型实际渲染的要点条数（与下面各 Slide 组件里的 slice 上限一一对应）。
+ *
+ * 放在渲染文件里而不是编辑弹窗里：这是**渲染的真实约束**，编辑提示与它同源，
+ * 以后调整某个页型的 slice 时只改一处，不会出现"提示说 5 条、实际只显示 4 条"。
+ */
+export const PAGE_BULLET_LIMIT: Record<PlanPage['type'], number> = {
+  cover: 3,
+  brand: 4,
+  needs: 5,
+  ecosystem: 5,
+  scene: 5,
+  layout: 6,
+  budget: 6,
+  delivery: 5,
+};
+
 /** 解析预算页要点"分项名：下限-上限"为图表数据；无法解析的退回普通要点 */
 function parseBudget(bullets: string[]): BudgetItem[] | null {
   const items: BudgetItem[] = [];

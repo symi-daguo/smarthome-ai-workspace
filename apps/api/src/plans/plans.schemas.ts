@@ -35,8 +35,18 @@ export type CreatePlanDto = z.infer<typeof createPlanSchema>;
 
 export const updatePlanPageSchema = z.object({
   heading: z.string().max(200).optional(),
+  subtitle: z.string().max(200).optional(),
   body: z.string().max(8000).optional(),
   narration: z.string().max(8000).optional(),
+  /**
+   * 页面要点（每页卡片式要点的文字来源）。
+   * 此前 bullets 只由模型生成、前后端都改不了——门店想改一个措辞都做不到。
+   * 上限 20 条是防粘贴滥用，不按页型卡死：卡死了用户在弹窗里会丢数据，
+   * 而渲染侧本来就有 slice 兜底，超出的不显示而已。
+   */
+  bullets: z.array(z.string().max(300)).max(20).optional(),
+  /** 底部引言（一页一句价值收束语） */
+  quote: z.string().max(300).optional(),
 });
 export type UpdatePlanPageDto = z.infer<typeof updatePlanPageSchema>;
 

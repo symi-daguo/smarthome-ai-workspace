@@ -11,7 +11,7 @@ import {
   PlusOutlined,
   RightOutlined,
 } from '@ant-design/icons';
-import { App as AntApp, Button, Drawer, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
+import { Alert, App as AntApp, Button, Drawer, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
@@ -19,7 +19,7 @@ import { newRequestId } from '../lib/request-id';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText } from '../lib/planPptx';
-import { PlanSlide } from '../components/PlanSlide';
+import { PlanSlide, PAGE_BULLET_LIMIT } from '../components/PlanSlide';
 
 const { Text, Title } = Typography;
 
@@ -149,7 +149,11 @@ export function PlanStudio(): ReactNode {
   const [generating, setGenerating] = useState(false);
   /** 提交幂等键：失败保留、成功清除，详见 lib/request-id.ts */
   const reqIdRef = useRef<string | null>(null);
-  const [editing, setEditing] = useState<{ index: number; heading: string; body: string; narration: string } | null>(null);
+  // 编辑中的那一页。bullets 用纯文本存（一行一条），保存时再拆成数组——
+// 用户手上通常就是一段多行文案，让他对着 JSON 数组改是不合理的
+const [editing, setEditing] = useState<{
+    index: number; heading: string; subtitle: string; bullets: string; body: string; narration: string; quote: string;
+  } | null>(null);
   const [savingPage, setSavingPage] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<PlanListItem[]>([]);
@@ -241,13 +245,35 @@ export function PlanStudio(): ReactNode {
     }
   };
 
+  /** 打开某页的编辑弹窗。三个入口（卡片点击 / 回车 / 修改当前页）共用一份字段映射 */
+  const startEdit = (index: number, p: PlanPage): void => {
+    setEditing({
+      index,
+      heading: p.heading,
+      subtitle: p.subtitle ?? '',
+      // bullets 是数组，编辑时按行拆成纯文本——用户手上是一段多行文案，不是 JSON
+      bullets: (p.bullets ?? []).join('\n'),
+      body: p.body,
+      narration: p.narration,
+      quote: p.quote ?? '',
+    });
+  };
+
   const savePage = async (): Promise<void> => {
     if (!editing || !plan) return;
     setSavingPage(true);
     try {
       const updated = await api<PlanDetail>(`/api/plans/${plan.id}/pages/${editing.index}`, {
         method: 'PATCH',
-        body: JSON.stringify({ heading: editing.heading, body: editing.body, narration: editing.narration }),
+        body: JSON.stringify({
+          heading: editing.heading,
+          subtitle: editing.subtitle,
+          // 一行一条；空行在提示里就能看出来，服务端也会再过滤一次
+          bullets: editing.bullets.split(/\r?\n/),
+          body: editing.body,
+          narration: editing.narration,
+          quote: editing.quote,
+        }),
       });
       setPlan(updated);
       setEditing(null);
@@ -647,8 +673,8 @@ export function PlanStudio(): ReactNode {
               key={i}
               role="button"
               tabIndex={0}
-              onClick={() => setEditing({ index: i, heading: p.heading, body: p.body, narration: p.narration })}
-              onKeyDown={(e) => e.key === 'Enter' && setEditing({ index: i, heading: p.heading, body: p.body, narration: p.narration })}
+              onClick={() => startEdit(i, p)}
+              onKeyDown={(e) => e.key === 'Enter' && startEdit(i, p)}
               style={{
                 background: token.colorBgContainer,
                 border: `1px solid ${token.colorBorderSecondary}`,
@@ -744,7 +770,7 @@ export function PlanStudio(): ReactNode {
               >
                 {plan.renderedFloorplanAssetId ? '重新生成精装修' : '生成精装修效果图'}
               </Button>
-              <Button size="small" icon={<EditOutlined />} onClick={() => setEditing({ index: activePage, heading: active.heading, body: active.body, narration: active.narration })}>
+              <Button size="small" icon={<EditOutlined />} onClick={() => startEdit(activePage, active)}>
                 修改当前页
               </Button>
             </div>
@@ -852,14 +878,45 @@ export function PlanStudio(): ReactNode {
         width={680}
       >
         {editing ? (
-          <div>
-            <Text strong style={{ display: 'block', marginBottom: 6 }}>页标题</Text>
-            <Input value={editing.heading} onChange={(e) => setEditing({ ...editing, heading: e.target.value })} maxLength={200} style={{ marginBottom: 14 }} />
-            <Text strong style={{ display: 'block', marginBottom: 6 }}>正文文案</Text>
-            <Input.TextArea rows={5} value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} maxLength={8000} showCount style={{ marginBottom: 14 }} />
-            <Text strong style={{ display: 'block', marginBottom: 6 }}>本页讲解稿（销售当面讲解用，客户阅读模式不显示）</Text>
-            <Input.TextArea rows={4} value={editing.narration} onChange={(e) => setEditing({ ...editing, narration: e.target.value })} maxLength={8000} />
-          </div>
+          (() => {
+            // 条数上限取自渲染侧的同一张表，超出的不会显示——当场说明比存完再让用户纳闷好
+            const limit = PAGE_BULLET_LIMIT[plan?.pages[editing.index].type ?? 'scene'] ?? 5;
+            const lines = editing.bullets.split(/\r?\n/).filter((l) => l.trim());
+            const over = lines.length - limit;
+            return (
+              <div>
+                <Text strong style={{ display: 'block', marginBottom: 6 }}>页标题</Text>
+                <Input value={editing.heading} onChange={(e) => setEditing({ ...editing, heading: e.target.value })} maxLength={200} style={{ marginBottom: 14 }} />
+                <Text strong style={{ display: 'block', marginBottom: 6 }}>副标题</Text>
+                <Input value={editing.subtitle} onChange={(e) => setEditing({ ...editing, subtitle: e.target.value })} maxLength={200} style={{ marginBottom: 14 }} />
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text strong>页面要点（一行一条）</Text>
+                  <Text type={over > 0 ? 'warning' : 'secondary'} style={{ fontSize: 12 }}>
+                    {over > 0 ? `超出的 ${over} 条不会显示` : `${lines.length} / 最多显示 ${limit} 条`}
+                  </Text>
+                </div>
+                <Input.TextArea
+                  rows={Math.min(8, Math.max(3, lines.length + 1))}
+                  value={editing.bullets}
+                  onChange={(e) => setEditing({ ...editing, bullets: e.target.value })}
+                  placeholder={'如：\n全屋 200+ 子设备稳定接入\n灯光支持调光调色与场景联动\n安防与门锁联动，开门自动开灯'}
+                  style={{ marginBottom: 14 }}
+                />
+                <Text strong style={{ display: 'block', marginBottom: 6 }}>正文文案</Text>
+                <Input.TextArea rows={5} value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} maxLength={8000} showCount style={{ marginBottom: 14 }} />
+                <Text strong style={{ display: 'block', marginBottom: 6 }}>底部引言（一页一句价值收束语）</Text>
+                <Input value={editing.quote} onChange={(e) => setEditing({ ...editing, quote: e.target.value })} maxLength={300} style={{ marginBottom: 14 }} />
+                <Text strong style={{ display: 'block', marginBottom: 6 }}>本页讲解稿（销售当面讲解用，客户阅读模式不显示）</Text>
+                <Input.TextArea rows={4} value={editing.narration} onChange={(e) => setEditing({ ...editing, narration: e.target.value })} maxLength={8000} />
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginTop: 12 }}
+                  message="保存后分享页与导出会自动剔除「待确认 / 暂无 / TBD」这类内部语句"
+                />
+              </div>
+            );
+          })()
         ) : null}
       </Modal>
 

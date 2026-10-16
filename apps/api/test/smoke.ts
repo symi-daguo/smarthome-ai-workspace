@@ -1484,6 +1484,52 @@ async function main(): Promise<void> {
   );
   await prisma.generationJob.delete({ where: { id: unknownJob.id } });
 
+  // ---------- 逐页编辑：要点/副标题/引言此前改不了（0.1.68） ----------
+  // 此前 PATCH 页面只接受 heading/body/narration，而页面主要视觉内容是 bullets——
+  // 门店想改一个措辞都做不到。创建方案要调 LLM（贵），这里直接预置方案再测编辑端点。
+  const editSeed = await prisma.planProject.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      title: '逐页编辑验证',
+      style: 'A',
+      edition: 'standard',
+      pageCount: 9,
+      pages: [{ type: 'scene', heading: '旧标题', subtitle: '', body: '正文', bullets: ['旧要点一'], narration: '' }],
+      versionNo: 1,
+    },
+  });
+  const patchPage = await request(base, `/api/plans/${editSeed.id}/pages/0`, {
+    ...authA,
+    method: 'PATCH',
+    body: JSON.stringify({
+      heading: '新标题',
+      subtitle: '新副标题',
+      bullets: ['要点一', '   ', '要点二'],
+      quote: '一句价值收束',
+    }),
+  });
+  check('可编辑页面要点 / 副标题 / 引言（此前只有标题和两个大文本框）', patchPage.status === 200);
+  const editedPlan = await prisma.planProject.findUnique({ where: { id: editSeed.id } });
+  const editedPage = (editedPlan?.pages as { bullets?: string[]; subtitle?: string; quote?: string }[] | null)?.[0];
+  check(
+    '空行被过滤，不会存成一条空要点',
+    Array.isArray(editedPage?.bullets) && editedPage.bullets.length === 2 && editedPage.bullets[0] === '要点一',
+  );
+  check(
+    '副标题与引言已持久化（读库验证，不只看接口返回）',
+    editedPage?.subtitle === '新副标题' && editedPage?.quote === '一句价值收束',
+  );
+  const tooManyBullets = await request(base, `/api/plans/${editSeed.id}/pages/0`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ bullets: Array.from({ length: 25 }, (_, i) => `第${i + 1}条`) }),
+  });
+  check('要点超过 20 条被拒（400，防粘贴滥用撑爆方案记录）', tooManyBullets.status === 400);
+  const badIndex = await request(base, `/api/plans/${editSeed.id}/pages/99`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ heading: '越界' }),
+  });
+  check('越界页码被拒（400，不会误改别的页）', badIndex.status === 400);
+  await prisma.planProject.delete({ where: { id: editSeed.id } });
+
   // ---------- 素材库投稿：提交 + 我的投稿列表 ----------
   const subFd2 = new FormData();
   subFd2.append('file', new Blob([Buffer.from('fake-mp4-bytes')], { type: 'video/mp4' }), 'clip.mp4');
