@@ -5,6 +5,7 @@ import { App as AntApp, Button, Card, Empty, Grid, Input, InputNumber, Modal, Se
 import { api, fileUrl } from '../lib/api';
 import { loadCategoryDict } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
+import { downloadBlob } from '../lib/download';
 import { catMeta, compositePoints, compositeHeatmap, compositeLightPlan, enhanceFloorplan, loadImage } from '../lib/pointOverlay';
 import {
   compositeWifiPlan,
@@ -77,15 +78,6 @@ interface LayoutPoint {
 
 let pointSeq = 0;
 const nextPointId = (): string => `p${Date.now().toString(36)}${(pointSeq += 1)}`;
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
 
 /** 导出标注图纸：按模式选择合成函数 */
 async function exportAnnotatedPng(baseSrc: string, points: LayoutPoint[], title: string, mode: Mode): Promise<void> {

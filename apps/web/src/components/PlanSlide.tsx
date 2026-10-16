@@ -1,3 +1,4 @@
+import { catMeta } from '../lib/pointOverlay';
 import { PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, imgFilter, imgPosition, imgSize, CARD_SHADOW, CARD_SHADOW_SOFT, type PlanPage, type PlanTheme } from '../data/planThemes';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -35,6 +36,8 @@ interface BudgetItem {
  * 以后调整某个页型的 slice 时只改一处，不会出现"提示说 5 条、实际只显示 4 条"。
  */
 export const PAGE_BULLET_LIMIT: Record<PlanPage['type'], number> = {
+  // 户型与点位页是图示页：只有整页大图 + 品类汇总，没有可编辑的要点条
+  floorplan: 0,
   cover: 3,
   brand: 4,
   needs: 5,
@@ -80,6 +83,33 @@ function pageImage(page: PlanPage): string {
   return page.type === 'scene' ? sceneImage(page.subtitle + page.heading) : PAGE_IMAGE[page.type];
 }
 
+/**
+ * 方案户型图的最终画面：AI 精装修渲染图 > 户型+点位合成图 > 无。
+ *
+ * 抽出来是因为空间动线页与户型点位页都要这张图，两处各写一遍合成逻辑
+ * 迟早只改一处，客户看到的两个页面就对不上。
+ */
+function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit: 'cover' | 'contain' } {
+  const useRendered = Boolean(plan.renderedFloorplanUrl);
+  const hasFloorplan = !useRendered && Boolean(plan.floorplanUrl && plan.layoutPoints?.length);
+  const [composite, setComposite] = useState<string | null>(null);
+  useEffect(() => {
+    if (!hasFloorplan) {
+      setComposite(null);
+      return;
+    }
+    let alive = true;
+    void compositePoints(plan.floorplanUrl as string, plan.layoutPoints ?? [], 1200)
+      .then((url) => { if (alive) setComposite(url); })
+      .catch(() => { if (alive) setComposite(null); });
+    return () => { alive = false; };
+  }, [hasFloorplan, plan.floorplanUrl, plan.layoutPoints]);
+
+  if (useRendered) return { src: plan.renderedFloorplanUrl as string, label: 'AI 精装修效果图', fit: 'cover' };
+  if (hasFloorplan) return { src: composite ?? (plan.floorplanUrl as string), label: '客户户型 · 设备点位图', fit: 'contain' };
+  return { src: '', label: '空间动线实景', fit: 'cover' };
+}
+
 export function PlanSlide({ page: raw, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
   // 客户可见的出口在这里统一净化一次。
   //
@@ -91,6 +121,11 @@ export function PlanSlide({ page: raw, index, plan, t }: { page: PlanPage; index
     ...raw,
     // 净化后为空则退回原文：宁可多显示一句，也不要标题凭空消失
     heading: customerText(raw.heading) || raw.heading,
+    // 正文与副标题同样要净化：模型最常把「待确认」「暂无资料」写进正文，
+    // 只净 heading/bullets 的话，客户在分享页照样看得见待办语句。
+    body: customerText(raw.body) || raw.body,
+    subtitle: customerText(raw.subtitle) || raw.subtitle,
+    quote: customerText(raw.quote) || raw.quote,
     bullets: raw.bullets.map(customerText).filter(Boolean),
   }), [raw]);
   switch (page.type) {
@@ -102,6 +137,7 @@ export function PlanSlide({ page: raw, index, plan, t }: { page: PlanPage; index
     case 'scene': return <SceneSlide page={page} index={index} plan={plan} t={t} />;
     case 'budget': return <BudgetSlide page={page} index={index} plan={plan} t={t} />;
     case 'delivery': return <DeliverySlide page={page} index={index} plan={plan} t={t} />;
+    case 'floorplan': return <FloorplanSlide page={page} index={index} plan={plan} t={t} />;
   }
 }
 
@@ -118,12 +154,12 @@ function Frame({ t, children, style }: { t: PlanTheme; children: ReactNode; styl
 function Folio({ page, index, t }: { page: PlanPage; index: number; t: PlanTheme }): ReactNode {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.6cqw' }}>
-      <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 800, color: t.accent, letterSpacing: '0.1em' }}>
+      <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 800, color: t.accent, letterSpacing: '0.1em', whiteSpace: 'nowrap', flex: 'none' }}>
         {String(index + 1).padStart(2, '0')}
       </span>
-      <span style={{ width: 2, height: '1.6cqw', minHeight: 8, background: t.accent, alignSelf: 'center' }} />
-      <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 700, color: t.text }}>{PAGE_TYPE_LABEL[page.type]}</span>
-      {page.subtitle ? <span style={{ fontSize: 'clamp(5px,1.15cqw,10px)', color: t.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{page.subtitle}</span> : null}
+      <span style={{ width: 2, height: '1.6cqw', minHeight: 8, background: t.accent, alignSelf: 'center', flex: 'none' }} />
+      <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 700, color: t.text, whiteSpace: 'nowrap', flex: 'none' }}>{PAGE_TYPE_LABEL[page.type]}</span>
+      {page.subtitle ? <span style={{ fontSize: 'clamp(5px,1.15cqw,10px)', color: t.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{page.subtitle}</span> : null}
     </div>
   );
 }
@@ -141,11 +177,13 @@ function Claim({ page, t, size = 'clamp(9px,2.9cqw,22px)' }: { page: PlanPage; t
 function PointCard({ n, text, t, strong = true }: { n: number; text: string; t: PlanTheme; strong?: boolean }): ReactNode {
   const [h, ...r] = text.split(/[：|｜]/);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '1.6cqw', background: t.surface, borderRadius: '1.4cqw', padding: '1.3cqw 1.8cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a` }}>
+    // flex:1 + minHeight:0 让要点卡在列内均分高度：条数越多卡越扁，但绝不溢出画布。
+    // 原来按内容取自然高度，6 条时总高超过 16:9 画布，底部卡片和页脚被裁掉。
+    <div style={{ display: 'flex', alignItems: 'center', gap: '1.6cqw', background: t.surface, borderRadius: '1.4cqw', padding: '1.1cqw 1.8cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a`, flex: '1 1 0', minHeight: 0 }}>
       <span style={{ width: '3.4cqw', height: '3.4cqw', minWidth: 13, minHeight: 13, borderRadius: '50%', background: `linear-gradient(135deg, ${t.accent}, ${t.accent}bb)`, color: '#fff', fontSize: '1.5cqw', fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', boxShadow: `0 2px 5px ${t.accent}66` }}>
         {String(n).padStart(2, '0')}
       </span>
-      <span style={{ fontSize: 'clamp(6px,1.45cqw,12px)', color: t.text, lineHeight: 1.5 }}>
+      <span style={{ fontSize: 'clamp(6px,1.45cqw,12px)', color: t.text, lineHeight: 1.5, minWidth: 0, overflow: 'hidden' }}>
         {r.length ? <><b style={{ color: t.text }}>{h}</b><span style={{ color: t.accent, margin: '0 0.4cqw' }}>·</span><span style={{ color: t.sub }}>{r.join(' ')}</span></> : text}
       </span>
     </div>
@@ -264,37 +302,8 @@ function BrandSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
 
 /** 空间动线：左竖实景图 + 右编号要点卡列；优先用精装修渲染图，无则用"户型+点位"合成图，无则用场景实景图 */
 function LayoutSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
-  // 优先级：精装修渲染图 > 户型+点位合成图 > 场景实景图
-  const useRendered = Boolean(plan.renderedFloorplanUrl);
-  const hasFloorplan = !useRendered && Boolean(plan.floorplanUrl && plan.layoutPoints?.length);
-  const [composite, setComposite] = useState<string | null>(null);
-  useEffect(() => {
-    if (!hasFloorplan) {
-      setComposite(null);
-      return;
-    }
-    let alive = true;
-    void compositePoints(plan.floorplanUrl as string, plan.layoutPoints ?? [], 1200)
-      .then((url) => { if (alive) setComposite(url); })
-      .catch(() => { if (alive) setComposite(null); });
-    return () => { alive = false; };
-  }, [hasFloorplan, plan.floorplanUrl, plan.layoutPoints]);
-  let src: string;
-  let label: string;
-  let fit: 'cover' | 'contain' = 'cover';
-  if (useRendered) {
-    src = plan.renderedFloorplanUrl as string;
-    label = 'AI 精装修效果图';
-    fit = 'cover';
-  } else if (hasFloorplan) {
-    src = composite ?? (plan.floorplanUrl as string);
-    label = '客户户型 · 设备点位图';
-    fit = 'contain';
-  } else {
-    src = pageImage(page);
-    label = '空间动线实景';
-    fit = 'cover';
-  }
+  const { src: visual, label, fit } = useFloorplanVisual(plan);
+  const src = visual || pageImage(page);
   return (
     <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
       <div style={{ display: 'flex', gap: '4%', height: '100%' }}>
@@ -309,7 +318,7 @@ function LayoutSlide({ page, index, plan, t }: { page: PlanPage; index: number; 
           <Folio page={page} index={index} t={t} />
           <Claim page={page} t={t} />
           <div style={{ fontSize: 'clamp(6px,1.35cqw,11.5px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw', marginBottom: '1.6cqw' }}>{page.body}</div>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '1.25cqw' }}>
             {page.bullets.slice(0, 6).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
           </div>
           <div style={{ marginTop: '1.4cqw', display: 'flex', alignItems: 'center', gap: '2cqw' }}>
@@ -340,7 +349,7 @@ function NeedsSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
           <div style={{ marginTop: 'auto' }}><QuoteBar quote={page.quote} t={t} /></div>
           <div style={{ marginTop: '1.6cqw' }}><Footer plan={plan} t={t} /></div>
         </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.3cqw' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '1.3cqw' }}>
           {page.bullets.slice(0, 5).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
         </div>
       </div>
@@ -398,7 +407,7 @@ function SceneSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
       <div style={{ position: 'absolute', left: '36%', top: 0, right: 0, bottom: 0, padding: '5% 5% 3.5%', display: 'flex', flexDirection: 'column' }}>
         <Folio page={page} index={index} t={t} />
         <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw', marginBottom: '1.8cqw' }}>{page.body}</div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '1.25cqw' }}>
           {page.bullets.slice(0, 5).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
         </div>
         <div style={{ marginTop: '1.6cqw' }}><QuoteBar quote={page.quote} t={t} /></div>
@@ -490,6 +499,60 @@ function DeliverySlide({ page, index, plan, t }: { page: PlanPage; index: number
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '2cqw', marginTop: '2cqw' }}>
+          <div style={{ flex: 1 }}><QuoteBar quote={page.quote} t={t} /></div>
+          <Footer plan={plan} t={t} />
+        </div>
+      </div>
+    </Frame>
+  );
+}
+
+/**
+ * 户型与设备点位页。
+ *
+ * 为什么单独一页：空间动线页里的户型图要和文案并排，只占三成宽，
+ * 客户现场根本看不清点位。门店真正要给客户看的是「哪台装在哪」，
+ * 得一张整页大图 —— 参考站的页数公式同样把户型图算成独立页
+ * （`app.js:3427`：`核心模块 + 额外户型图 + 素材展示页`）。
+ *
+ * 图用 contain 而不是 cover：户型图被裁掉一半比看不清楚更严重。
+ */
+function FloorplanSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
+  const { src: visual, label, fit } = useFloorplanVisual(plan);
+  const src = visual || plan.floorplanUrl || pageImage(page);
+  // 按品类汇总点位：客户看的是「装了多少、都是些什么」，不是逐个编号
+  const summary = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of plan.layoutPoints ?? []) m.set(p.category, (m.get(p.category) ?? 0) + 1);
+    return [...m.entries()].map(([category, count]) => ({ label: catMeta(category).label, count })).slice(0, 8);
+  }, [plan.layoutPoints]);
+
+  return (
+    <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ display: 'flex', gap: '4%', flex: 1, minHeight: 0 }}>
+          <ImagePanel
+            src={src}
+            t={t}
+            label={label}
+            fit={fit}
+            style={{ flex: 1, minWidth: 0 }}
+          />
+          <div style={{ width: '30%', flex: 'none', display: 'flex', flexDirection: 'column' }}>
+            <Folio page={page} index={index} t={t} />
+            <Claim page={page} t={t} size="clamp(8px,2.2cqw,17px)" />
+            <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw' }}>{page.body}</div>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.8cqw', marginTop: '1.8cqw' }}>
+              {summary.map((s) => (
+                <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '1.2cqw', padding: '0.7cqw 1.2cqw', background: t.surface, borderRadius: '1cqw', border: `1px solid ${t.accent}1a`, flex: '1 1 0', minHeight: 0 }}>
+                  <span style={{ fontSize: 'clamp(6px,1.25cqw,10.5px)', color: t.text, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>{s.label}</span>
+                  <span style={{ fontSize: 'clamp(6px,1.5cqw,12px)', color: t.accent, fontWeight: 800 }}>{s.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2cqw', marginTop: '1.8cqw' }}>
           <div style={{ flex: 1 }}><QuoteBar quote={page.quote} t={t} /></div>
           <Footer plan={plan} t={t} />
         </div>

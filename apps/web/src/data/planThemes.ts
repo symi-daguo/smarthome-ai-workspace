@@ -39,7 +39,7 @@ export function planTheme(styleKey: string): PlanTheme {
 }
 
 export interface PlanPage {
-  type: 'cover' | 'brand' | 'layout' | 'needs' | 'ecosystem' | 'scene' | 'budget' | 'delivery';
+  type: 'cover' | 'brand' | 'layout' | 'needs' | 'ecosystem' | 'scene' | 'budget' | 'delivery' | 'floorplan';
   heading: string;
   subtitle: string;
   body: string;
@@ -59,6 +59,7 @@ export const PAGE_TYPE_LABEL: Record<PlanPage['type'], string> = {
   scene: '核心场景拆解',
   budget: '预算规划与性价比方案',
   delivery: '落地交付与售后闭环',
+  floorplan: '户型与设备点位',
 };
 
 /**
@@ -66,6 +67,8 @@ export const PAGE_TYPE_LABEL: Record<PlanPage['type'], string> = {
  * c1 客厅落地窗灯带 / c2 家庭影院 / c3 玄关走廊感应灯 / c4 夜间卧室 / c5 餐厅暖光吊灯
  */
 export const PAGE_IMAGE: Record<PlanPage['type'], string> = {
+  // 户型页优先用门店上传的图，这里只是没上传时的兜底实景
+  floorplan: '/images/cases/c4.jpg',
   cover: '/images/cases/c1.jpg',
   brand: '/images/cases/c5.jpg',
   layout: '/images/cases/c3.jpg',

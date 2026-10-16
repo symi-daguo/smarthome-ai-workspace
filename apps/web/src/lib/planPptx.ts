@@ -1,7 +1,9 @@
 import PptxGenJS from 'pptxgenjs';
 import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } from '../data/planThemes';
-import { compositePoints } from './pointOverlay';
+import { catMeta, compositePoints } from './pointOverlay';
 import { customerText } from './planSanitize';
+import { withFloorplanPage } from './planPages';
+import { downloadBlob } from './download';
 
 /**
  * 方案 PPT 生成器（16:9 原生可编辑幻灯片）。
@@ -196,7 +198,9 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
     }
   }
 
-  plan.pages.forEach((p, i) => {
+  // 有户型图素材时补一页「户型与设备点位」：分享页/预览/PPTX 必须页数一致
+  const outPages = withFloorplanPage(plan.pages, Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl)).pages;
+  outPages.forEach((p, i) => {
     const slide = pptx.addSlide();
     slide.background = { color: hex(t.bg) };
     switch (p.type) {
@@ -208,12 +212,16 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
       case 'scene': sceneSlide(slide, p, i, plan, t, img(p)); break;
       case 'budget': budgetSlide(slide, p, i, plan, t, pptx); break;
       case 'delivery': deliverySlide(slide, p, i, plan, t, img(p), pptx); break;
+      case 'floorplan': floorplanSlide(slide, p, i, plan, t, img(p), floorplan); break;
     }
     if (p.narration) slide.addNotes(p.narration);
   });
 
   const fileName = `${plan.title}-${plan.edition === 'private' ? '私宅' : plan.edition === 'presale' ? '售前' : '标准'}方案-V${plan.versionNo}-${new Date().toISOString().slice(0, 10)}.pptx`;
-  await pptx.writeFile({ fileName });
+  // 浏览器里不能用 writeFile：那是 Node 端 API，会静默什么都不落盘，
+  // 按钮转一圈然后什么都没有。write({outputType:'blob'}) 才是浏览器路径。
+  const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
+  downloadBlob(blob, fileName);
 }
 
 /* ---------- primitives ---------- */
@@ -435,6 +443,56 @@ function sceneSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
   footer(slide, plan, t, x, 6.85, w);
 }
 
+/**
+ * 户型与设备点位页（PPTX 版）。
+ *
+ * 图用 contain：户型图被裁掉一半比看不清楚更严重。右侧按品类汇总点位，
+ * 客户要确认的是「装了多少、都是些什么」，不是逐个编号。
+ */
+function floorplanSlide(
+  slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme,
+  img: string, floorplan: { data: string; ratio: number } | null,
+): void {
+  const rightW = 4.1;
+  const x = W - rightW - MX;
+  folio(slide, p, i, t, x, 0.5, rightW);
+  claim(slide, p, t, x, 1.05, rightW, 0.9, 19);
+  slide.addText(p.body, { x, y: 2.05, w: rightW, h: 1.5, fontSize: 10.5, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.55, valign: 'top', margin: 0 });
+
+  // 品类汇总
+  const m = new Map<string, number>();
+  for (const pt of plan.layoutPoints ?? []) m.set(pt.category, (m.get(pt.category) ?? 0) + 1);
+  const rows = [...m.entries()].slice(0, 8);
+  const top = 3.7;
+  const rowH = rows.length ? Math.min(0.42, (5.5 - top) / rows.length) : 0;
+  rows.forEach(([category, count], ri) => {
+    const y = top + ri * (rowH + 0.1);
+    slide.addShape('roundRect', { x, y, w: rightW, h: rowH, fill: { color: hex(t.surface) }, line: { color: hex(t.accent), transparency: 82, width: 0.5 }, rectRadius: 0.08 });
+    slide.addText(catMeta(category).label, { x: x + 0.16, y, w: rightW - 1.0, h: rowH, fontSize: 10, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0 });
+    slide.addText(String(count), { x: x + rightW - 0.9, y, w: 0.74, h: rowH, fontSize: 12, bold: true, color: hex(t.accent), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
+  });
+  quoteBar(slide, p, t, x, 5.85, rightW);
+  footer(slide, plan, t, x, 6.85, rightW);
+
+  // 左侧整页大图
+  const boxW = x - 0.4;
+  const boxH = H - 0.9;
+  if (floorplan?.data) {
+    const r = floorplan.ratio || 1.4;
+    let w = boxW;
+    let h = w / r;
+    if (h > boxH) { h = boxH; w = h * r; }
+    slide.addImage({ data: floorplan.data, x: (boxW - w) / 2, y: 0.45 + (boxH - h) / 2, w, h });
+  } else if (img) {
+    // 没有上传户型图时用实景兜底，但要在图上说明，别让客户以为是自家户型
+    slide.addImage({ data: img, x: 0, y: 0.45, w: boxW, h: boxH });
+  }
+  slide.addText(
+    floorplan?.data ? (plan.renderedFloorplanUrl ? 'AI 精装修效果 · 点位同步' : '客户户型 · 设备点位图') : '空间实景示意（非客户户型）',
+    { x: 0.22, y: H - 0.75, w: boxW - 0.44, h: 0.32, fontSize: 9.5, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 35 }, fontFace: FONT, valign: 'middle', margin: 0 },
+  );
+}
+
 function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, pptx: PptxGenJS): void {
   const items = parseBudget(p.bullets)?.slice(0, 6);
   const leftW = 3.9;
@@ -512,7 +570,7 @@ function deliverySlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: Pla
 /** 导出完整讲稿（每页讲解稿汇总为文本文件） */
 export function buildNarrationText(plan: PlanForExport): string {
   const lines = [`# ${plan.title} · 完整讲解稿`, `版本 V${plan.versionNo}`, ''];
-  plan.pages.forEach((p, i) => {
+  withFloorplanPage(plan.pages, Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl)).pages.forEach((p, i) => {
     // 标题与讲解稿都过净化：讲解稿是直接发给客户的，
     // 里面留着「待客户确认现场条件」这类内部语句会直接引发追问
     const heading = customerText(p.heading) || p.heading;

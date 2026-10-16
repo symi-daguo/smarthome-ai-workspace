@@ -14,10 +14,12 @@ import {
   RightOutlined,
 } from '@ant-design/icons';
 import { Alert, App as AntApp, Button, Drawer, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
+import { downloadBlob } from '../lib/download';
 import { newRequestId } from '../lib/request-id';
+import { withFloorplanPage } from '../lib/planPages';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText } from '../lib/planPptx';
@@ -255,6 +257,11 @@ const [editing, setEditing] = useState<{
 
   /** 打开某页的编辑弹窗。三个入口（卡片点击 / 回车 / 修改当前页）共用一份字段映射 */
   const startEdit = (index: number, p: PlanPage): void => {
+    // 户型与点位页由已上传的户型图推导出来，没有可改的文案
+    if (p.type === 'floorplan') {
+      message.info('「户型与设备点位」由已上传的户型图自动生成，改图即可，不用改文案');
+      return;
+    }
     setEditing({
       index,
       heading: p.heading,
@@ -391,12 +398,9 @@ const [editing, setEditing] = useState<{
 
   const doDownloadScript = (): void => {
     if (!plan) return;
-    const blob = new Blob([buildNarrationText(plan)], { type: 'text/markdown;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${plan.title}-完整讲稿.md`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    // 走共用的 downloadBlob：本地那版在 a.click() 之后立刻 revokeObjectURL，
+    // 下载还没开始就被撤掉，讲稿点了没反应。共用的那版延迟 5 秒释放。
+    downloadBlob(new Blob([buildNarrationText(plan)], { type: 'text/markdown;charset=utf-8' }), `${plan.title}-完整讲稿.md`);
   };
 
   // 讲稿同样是发出去的文件，和 PPTX 走同一道门
@@ -411,7 +415,6 @@ const [editing, setEditing] = useState<{
   };
 
   const t = planTheme(plan?.style ?? style);
-  const active = plan?.pages[activePage];
   // 幻灯片 plan 视图：带户型图与点位（空间动线页配图）
   const slidePlan = {
     store: plan?.store ?? '',
@@ -419,6 +422,15 @@ const [editing, setEditing] = useState<{
     renderedFloorplanUrl: plan?.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
     layoutPoints: plan?.layoutPoints ?? null,
   };
+  // 有户型图素材时补一页「户型与设备点位」。syntheticAt 是插入点：
+  // 存文案前用它把索引映射回真实页，虚拟页没有文案，也不参与扣费与版本号。
+  const view = useMemo(
+    () => withFloorplanPage(plan?.pages ?? [], Boolean(slidePlan.floorplanUrl || slidePlan.renderedFloorplanUrl)),
+    [plan?.pages, slidePlan.floorplanUrl, slidePlan.renderedFloorplanUrl],
+  );
+  const realIndexOf = (viewIndex: number): number =>
+    view.syntheticAt >= 0 && viewIndex >= view.syntheticAt ? viewIndex - 1 : viewIndex;
+  const active = view.pages[activePage];
   // 分配建议：预算有效时按占比给出建议金额，用户改过的分类用覆盖值（清空即恢复跟随建议）
   const splitRows = ECOSYSTEM_SPLIT.map((row) => {
     const override = splitOverride[row.key];
@@ -713,13 +725,13 @@ const [editing, setEditing] = useState<{
       {/* 步骤 2：逐页审稿（幻灯片缩略图 + 文字卡片） */}
       {step === 1 && plan ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-          {plan.pages.map((p, i) => (
+          {view.pages.map((p, i) => (
             <div
               key={i}
               role="button"
               tabIndex={0}
-              onClick={() => startEdit(i, p)}
-              onKeyDown={(e) => e.key === 'Enter' && startEdit(i, p)}
+              onClick={() => startEdit(realIndexOf(i), p)}
+              onKeyDown={(e) => e.key === 'Enter' && startEdit(realIndexOf(i), p)}
               style={{
                 background: token.colorBgContainer,
                 border: `1px solid ${token.colorBorderSecondary}`,
@@ -760,7 +772,7 @@ const [editing, setEditing] = useState<{
       {step === 2 && plan && active ? (
         <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
           <div style={{ width: 300, flex: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {plan.pages.map((p, i) => (
+            {view.pages.map((p, i) => (
               <div
                 key={i}
                 role="button"
@@ -815,7 +827,7 @@ const [editing, setEditing] = useState<{
               >
                 {plan.renderedFloorplanAssetId ? '重新生成精装修' : '生成精装修效果图'}
               </Button>
-              <Button size="small" icon={<EditOutlined />} onClick={() => startEdit(activePage, active)}>
+              <Button size="small" icon={<EditOutlined />} onClick={() => startEdit(realIndexOf(activePage), active)}>
                 修改当前页
               </Button>
             </div>
@@ -880,7 +892,7 @@ const [editing, setEditing] = useState<{
               <Button size="small" href={shareUrl} target="_blank">客户视角</Button>
             </div>
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 14 }}>
-              分享链接展示已确认的完整版本（{plan.pages.length} 页 · 文案版本 {plan.versionNo}）。修改方案后，重新打开分享即为客户看到的最新版本。
+              分享链接展示已确认的完整版本（{view.pages.length} 页 · 文案版本 {plan.versionNo}）。修改方案后，重新打开分享即为客户看到的最新版本。
             </Text>
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
               全屏播放支持 ← → 翻页、Home / End 跳首尾、F 切换全屏、Esc 退出。
@@ -1022,7 +1034,7 @@ const [editing, setEditing] = useState<{
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Text strong style={{ display: 'block' }} ellipsis={{ tooltip: h.title }}>{h.title}</Text>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  {h.customer || '未填客户'} · {h.area || '未填面积'} · {h.pageCount} 页 · 版本 {h.versionNo} · {h.updatedAt.slice(5, 16).replace('T', ' ')}
+                  {h.customer || '未填客户'} · {h.area || '未填面积'} · {h.pageCount} 页文案 · 版本 {h.versionNo} · {h.updatedAt.slice(5, 16).replace('T', ' ')}
                 </Text>
               </div>
               <Button size="small" onClick={() => void openPlan(h.id)}>打开</Button>

@@ -27,6 +27,7 @@ import {
 import dayjs from 'dayjs';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, tokenStore } from '../lib/api';
+import { downloadBlob } from '../lib/download';
 import { tokenToYuan } from '../lib/money';
 import { PageHeader } from '../components/PageHeader';
 import { UserAvatar } from '../components/UserAvatar';
@@ -213,12 +214,8 @@ export function TokenCenter(): ReactNode {
       const res = await fetch('/api/admin/backup', { headers: { Authorization: `Bearer ${tokenStore.get() ?? ''}` } });
       if (!res.ok) throw new Error(`备份失败 ${res.status}`);
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      // 走共用的 downloadBlob：立即 revoke 会让下载还没开始就失效，点了没反应
+      downloadBlob(blob, `backup-${new Date().toISOString().slice(0, 10)}.json`);
       message.success('全库 JSON 已导出（产物文件在 uploads 卷，迁移时一并备份）');
     } catch (err: unknown) {
       message.error(err instanceof Error ? err.message : String(err));

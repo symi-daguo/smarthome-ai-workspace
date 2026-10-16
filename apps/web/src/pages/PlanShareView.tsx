@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { planTheme, type PlanPage } from '../data/planThemes';
 import { PlanSlide } from '../components/PlanSlide';
+import { withFloorplanPage } from '../lib/planPages';
 
 const { Text } = Typography;
 
@@ -60,6 +61,9 @@ export function PlanShareView(): ReactNode {
     layoutPoints: plan.layoutPoints ?? null,
   };
 
+  // 有户型图素材时补一页「户型与设备点位」：参考站同样把户型图算成独立页
+  const shown = withFloorplanPage(plan.pages, Boolean(slidePlan.floorplanUrl || slidePlan.renderedFloorplanUrl));
+
   return (
     <div className="plan-share-page" style={{ minHeight: '100vh', background: t.bg, padding: '24px 16px 64px' }}>
       <div className="plan-print-bar" style={{ maxWidth: 960, margin: '0 auto 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -72,8 +76,7 @@ export function PlanShareView(): ReactNode {
         </button>
       </div>
       <div style={{ maxWidth: 960, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
-        {plan.pages.map((p, i) => (
-          <div key={i} style={{ boxShadow: '0 2px 16px rgba(0,0,0,.08)' }}>
+        {shown.pages.map((p, i) => (          <div key={i} style={{ boxShadow: '0 2px 16px rgba(0,0,0,.08)' }}>
             <PlanSlide page={p} index={i} plan={slidePlan} t={t} />
           </div>
         ))}

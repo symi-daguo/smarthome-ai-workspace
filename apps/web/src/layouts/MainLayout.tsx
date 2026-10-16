@@ -425,7 +425,7 @@ export function MainLayout(): ReactNode {
                         {p.title}
                       </div>
                       <div style={{ fontSize: 11, color: token.colorTextTertiary, marginTop: 2 }}>
-                        智能方案 · {p.pageCount} 页 · 文案版本 {p.versionNo} · {formatConvTime(item.ts)}
+                        智能方案 · {p.pageCount} 页文案 · 文案版本 {p.versionNo} · {formatConvTime(item.ts)}
                       </div>
                     </div>
                     <Dropdown
