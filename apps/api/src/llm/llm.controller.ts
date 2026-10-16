@@ -37,6 +37,7 @@ export class ChatController {
     return this.llm.chat({
       model: dto.model,
       prompt: dto.prompt,
+      attachments: dto.attachments,
       systemPrompt: dto.systemPrompt,
       rag: { tenantId: user.activeTenantId as string, userId: user.id, scene: 'chat' },
     });

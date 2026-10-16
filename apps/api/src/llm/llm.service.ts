@@ -23,6 +23,61 @@ export interface RagContext {
   query?: string;
 }
 
+/** OpenAI 兼容的多模态内容块 */
+type ChatContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+
+/** 单个附件的字符上限：再多也会被模型截断，白白占 token */
+const ATTACH_TEXT_LIMIT = 8000;
+
+/**
+ * 把附件真正组装进用户消息。
+ *
+ * **修复的是「看似能用、实则完全没用」**：此前前端只把「文件名(类型,大小)」拼进
+ * 提示词，模型只收到一行 `[附件 a.pdf(PDF, 123KB)]`——用户以为 AI 读过附件了。
+ *
+ * 三类分开处理，因为它们对模型的价值完全不同：
+ * - 图片 → 传 `image_url` 块，模型能**看**
+ * - 文本类（txt/md/csv/json）→ 解 base64 内联，模型能**读**
+ * - PDF/zip 等二进制 → **不假装给了内容**，明确告知未附带并引导去「内容提取」
+ *   （那里已有 mammoth/pdfjs 的解析能力，不在这里重复造一遍）
+ *
+ * 导出供 smoke 直接断言：这段逻辑决定了"用户以为 AI 看过附件"是不是真的，
+ * 属于不能只靠人工看一眼的部分。
+ */
+export function buildUserContent(
+  prompt: string,
+  attachments?: { name: string; dataUrl: string }[],
+): string | ChatContentPart[] {
+  if (!attachments?.length) return prompt;
+  const parts: ChatContentPart[] = [{ type: 'text', text: prompt }];
+  const unreadable: string[] = [];
+  for (const a of attachments) {
+    const m = /^data:([^;,]+);base64,(.*)$/s.exec(a.dataUrl);
+    if (!m) {
+      unreadable.push(a.name);
+      continue;
+    }
+    const mime = m[1].toLowerCase();
+    if (mime.startsWith('image/')) {
+      parts.push({ type: 'image_url', image_url: { url: a.dataUrl } });
+    } else if (mime.startsWith('text/') || mime === 'application/json') {
+      const text = Buffer.from(m[2], 'base64').toString('utf8');
+      const cut = text.length > ATTACH_TEXT_LIMIT ? `\n…（已截断，原文共 ${text.length} 字）` : '';
+      parts.push({ type: 'text', text: `【附件 ${a.name}】\n${text.slice(0, ATTACH_TEXT_LIMIT)}${cut}` });
+    } else {
+      unreadable.push(a.name);
+    }
+  }
+  if (unreadable.length) {
+    parts.push({
+      type: 'text',
+      text: `（附件 ${unreadable.join('、')} 属 PDF/压缩包类二进制，本次**未附带内容**，不要假设你看过它们；需要读取请到「内容提取」上传后引用。）`,
+    });
+  }
+  // 没有任何附件真的带上了内容时，退回纯字符串：部分模型对纯文本数组格式兼容不好
+  return parts.length === 1 ? prompt : parts;
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -63,6 +118,8 @@ export class LlmService {
     systemPrompt?: string;
     maxTokens?: number;
     rag?: RagContext;
+    /** 附件 dataURL；图片走多模态、文本类内联、二进制明确告知未附带 */
+    attachments?: { name: string; dataUrl: string }[];
   }): Promise<{ reply: string; model: string; latencyMs: number }> {
     const cfg = await this.modelConfig.chatConfig();
     const key = cfg.apiKey;
@@ -73,11 +130,11 @@ export class LlmService {
       });
     }
 
-    const messages: { role: 'system' | 'user'; content: string }[] = [];
+    const messages: { role: 'system' | 'user'; content: string | ChatContentPart[] }[] = [];
     let system = input.systemPrompt ?? '';
     if (input.rag) system += await this.ragContext(input.rag, input.prompt);
     if (system.trim()) messages.push({ role: 'system', content: system.trim() });
-    messages.push({ role: 'user', content: input.prompt });
+    messages.push({ role: 'user', content: buildUserContent(input.prompt, input.attachments) });
 
     const model = cfg.model ?? input.model;
     const start = Date.now();

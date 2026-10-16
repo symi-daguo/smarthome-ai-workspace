@@ -9,6 +9,7 @@ import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
+import { buildUserContent } from '../src/llm/llm.service.js';
 import { markCharged, isChargedError } from '../src/media/media.service.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
@@ -1529,6 +1530,49 @@ async function main(): Promise<void> {
   });
   check('越界页码被拒（400，不会误改别的页）', badIndex.status === 400);
   await prisma.planProject.delete({ where: { id: editSeed.id } });
+
+  // ---------- 对话附件：真内容必须到达模型，不能只给文件名摘要（G-12） ----------
+  // 修复前的行为是前端拼一行「[附件 a.pdf(PDF,123KB)]」进 prompt，
+  // 模型只收到文件名——用户以为 AI 读过了，其实什么都没发生。
+  {
+    const img = buildUserContent('这张图里是什么', [
+      { name: '户型图.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' },
+    ]);
+    const isMultimodal = Array.isArray(img);
+    check(
+      '图片附件按多模态 image_url 传出（模型能看见）',
+      isMultimodal && JSON.stringify(img).includes('image_url') && JSON.stringify(img).includes('data:image/png;base64'),
+    );
+    const txt = buildUserContent('总结一下', [
+      { name: '需求.txt', dataUrl: `data:text/plain;base64,${Buffer.from('客户要三室两厅，重点在主卧智能').toString('base64')}` },
+    ]);
+    check(
+      '文本附件内容真的内联进请求（不只是文件名）',
+      Array.isArray(txt) && JSON.stringify(txt).includes('三室两厅'),
+    );
+    const pdf = buildUserContent('看下这份方案', [
+      { name: '方案.pdf', dataUrl: 'data:application/pdf;base64,JVBERi0=' },
+    ]);
+    const pdfJson = JSON.stringify(pdf);
+    check(
+      'PDF 等二进制明确告知「未附带内容」，不假装给过',
+      Array.isArray(pdf) && pdfJson.includes('未附带内容') && pdfJson.includes('内容提取'),
+    );
+    check(
+      '没有任何可读附件时退回纯字符串（部分模型对纯文本数组兼容不好）',
+      buildUserContent('你好', []) === '你好' && buildUserContent('你好') === '你好',
+    );
+    const longText = buildUserContent('读一下', [
+      { name: '长文.txt', dataUrl: `data:text/plain;base64,${Buffer.from('啊'.repeat(20000)).toString('base64')}` },
+    ]);
+    check('超长文本被截断并注明原长度（不白烧 token）', JSON.stringify(longText).includes('已截断'));
+    const badData = await request(base, '/api/llm/chat', {
+      ...authA,
+      method: 'POST',
+      body: JSON.stringify({ model: 'x', prompt: '测试', attachments: Array.from({ length: 6 }, () => ({ name: 'a.txt', dataUrl: 'data:text/plain;base64,YQ==' })) }),
+    });
+    check('附件超过 5 个被拒（400，防请求体失控）', badData.status === 400);
+  }
 
   // ---------- 交付前校对门禁（G-08） ----------
   // 确认只对当前版本有效：改任何一页文案都必须重新确认，

@@ -9,6 +9,12 @@ export interface ChatMessage {
   createdAt: number;
 }
 
+/** 随请求上行的附件最小形状（内容用 dataURL 内联） */
+export interface SendAttachment {
+  name: string;
+  dataUrl: string;
+}
+
 export interface WorkbenchConversation {
   key: string;
   label: string;
@@ -87,7 +93,7 @@ interface ChatStoreValue {
   setActiveKey: (key: string | null) => void;
   createNew: () => void;
   remove: (key: string) => void;
-  send: (text: string, agent?: string, systemPrompt?: string) => void;
+  send: (text: string, agent?: string, systemPrompt?: string, attachments?: SendAttachment[]) => void;
   sending: boolean;
   tasks: GenTask[];
   clearFinished: () => void;
@@ -131,7 +137,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
   );
 
   const send = useCallback(
-    (text: string, agent?: string, systemPrompt?: string) => {
+    (text: string, agent?: string, systemPrompt?: string, attachments?: SendAttachment[]) => {
       const content = text.trim();
       if (!content || sending) return;
 
@@ -196,6 +202,11 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
           model: config.chatModel || 'MiniMax-M3',
           prompt: content,
           systemPrompt: effPrompt ?? systemPromptFor(effAgent),
+          // 附件真内容随请求上行；此前只把「文件名(类型,大小)」拼进 prompt，
+          // 模型其实什么都没看到（见 llm.service.ts 的 buildUserContent 注释）
+          ...(attachments?.length
+            ? { attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })) }
+            : {}),
         }),
       })
         .then((r) => finish(r.reply))

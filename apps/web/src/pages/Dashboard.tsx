@@ -232,13 +232,10 @@ export function Dashboard(): ReactNode {
     const content = value.trim();
     if (!content || sending) return;
     // 附件以摘要形式追加到提示词中，模型可参考（图片用 <img src> data URL）
-    const promptWithAttachments = attachments.length
-      ? content +
-        '\n\n[附件 ' +
-        attachments.map((a) => `${a.name}(${a.kind}, ${Math.round(a.size / 1024)}KB)`).join('、') +
-        ']'
-      : content;
-    send(promptWithAttachments, agentRef.current, promptRef.current);
+    // 附件内容随请求上行给模型（后端按图片/文本类分别处理），
+    // 这里不再拼「文件名(类型,大小)」的假摘要——那只会让模型以为自己看过附件
+    const promptWithAttachments = content;
+    send(promptWithAttachments, agentRef.current, promptRef.current, attachments);
     agentRef.current = undefined;
     promptRef.current = undefined;
     setInput('');
