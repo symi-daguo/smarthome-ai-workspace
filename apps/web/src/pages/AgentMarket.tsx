@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AGENT_CATEGORIES, SEED_AGENTS, type AgentDef } from '../data/agents';
 import { listCustomAgents, createCustomAgent, deleteCustomAgent, type CustomAgent } from '../data/customAgents';
+import { useAuth } from '../store/AuthContext';
 
 const { Text, Title } = Typography;
 
-type SortKey = 'default' | 'usage' | 'name';
+type SortKey = 'default' | 'usage' | 'name' | 'saved';
 
 const SORT_LABELS: Record<SortKey, string> = {
+  saved: '常用优先',
   default: '默认排序',
   usage: '按热度',
   name: '按名称',
@@ -22,8 +24,31 @@ interface CreateForm {
   systemPrompt: string;
 }
 
+/**
+ * 收藏（「常用」）的存储键按账号分。
+ * 多账号共用浏览器很常见，不分键就会出现「我在这台机器上把别人的常用改了」。
+ * 与参考站同款语义：只存本机、换设备不同步，所以界面上要如实说明。
+ */
+const savedKey = (accountId: string): string => `agent_saved_v1:${accountId}`;
+
+const readSaved = (accountId: string): Set<string> => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(savedKey(accountId)) || '[]');
+    return new Set(Array.isArray(raw) ? raw : []);
+  } catch {
+    return new Set();
+  }
+};
+
+/** 自建智能体与预置智能体共用一套收藏集合：预置用 key，自建统一加 custom_ 前缀避免撞号 */
+const saveIdOf = (a: { key?: string; id?: string }): string =>
+  (a.key as string) ?? `custom_${a.id}`;
+
 export function AgentMarket(): ReactNode {
   const { message } = AntApp.useApp();
+  const { user } = useAuth();
+  const accountId = user?.id ?? 'anonymous';
+  const [saved, setSaved] = useState<Set<string>>(() => new Set());
   const { token } = theme.useToken();
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
@@ -49,6 +74,24 @@ export function AgentMarket(): ReactNode {
     };
   }, []);
 
+  // 换账号时重新读收藏：同一台机器上两个账号的「常用」不该是同一份
+  useEffect(() => {
+    setSaved(readSaved(accountId));
+  }, [accountId]);
+
+  const toggleSave = (id: string): void => {
+    const next = new Set(saved);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSaved(next);
+    try {
+      localStorage.setItem(savedKey(accountId), JSON.stringify([...next]));
+    } catch {
+      // 不静默降级：用户以为存下了，下次打开发现没了，比当场报错更气人
+      message.warning('浏览器未允许保存，常用设置仅在本次浏览中有效。');
+    }
+  };
+
   const openAgent = (a: AgentDef): void => {
     if (!a.enabled) {
       message.warning(`「${a.name}」未启用，先打开卡片右下角开关`);
@@ -70,11 +113,18 @@ export function AgentMarket(): ReactNode {
 
   const visible = useMemo(() => {
     let list = agents;
-    if (category !== '全部' && category !== '我的智能体') list = list.filter((a) => a.category === category);
+    if (category === '常用') {
+      // 「常用」是虚拟分类：只看被收藏的预置智能体
+      list = list.filter((a) => saved.has(saveIdOf(a)));
+    } else if (category !== '全部' && category !== '我的智能体') {
+      list = list.filter((a) => a.category === category);
+    }
     if (sort === 'usage') list = [...list].sort((a, b) => b.usage - a.usage);
     if (sort === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    // 常用优先：收藏的排前面，其余保持原顺序
+    if (sort === 'saved') list = [...list].sort((a, b) => Number(saved.has(saveIdOf(b))) - Number(saved.has(saveIdOf(a))));
     return list;
-  }, [agents, category, sort]);
+  }, [agents, category, sort, saved]);
 
   const toggle = (key: string, enabled: boolean): void => {
     setAgents((prev) => prev.map((a) => (a.key === key ? { ...a, enabled } : a)));
@@ -123,7 +173,7 @@ export function AgentMarket(): ReactNode {
         }}
       >
         <Title level={3} style={{ margin: 0, marginRight: 16 }}>{category === '我的智能体' ? '我的智能体' : '全部智能体'}</Title>
-        {AGENT_CATEGORIES.map((c) => {
+        {[...AGENT_CATEGORIES, '常用'].map((c) => {
           const active = category === c;
           return (
             <span
@@ -228,6 +278,31 @@ export function AgentMarket(): ReactNode {
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     人设：{a.systemPrompt.slice(0, 24)}{a.systemPrompt.length > 24 ? '…' : ''}
                   </Text>
+                  {/* 收藏开关在可点击卡片内部，必须 stopPropagation，否则点开关会同时跳转进对话 */}
+                  <div
+                    role="switch"
+                    aria-checked={saved.has(saveIdOf(a))}
+                    aria-label={`${a.name}：加入常用`}
+                    tabIndex={0}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleSave(saveIdOf(a));
+                      }
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, cursor: 'pointer', width: 'fit-content' }}
+                  >
+                    <Switch
+                      size="small"
+                      checked={saved.has(saveIdOf(a))}
+                      onChange={() => toggleSave(saveIdOf(a))}
+                    />
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      {saved.has(saveIdOf(a)) ? '已加入常用' : '加入常用'}
+                    </Text>
+                  </div>
                 </div>
                 {/* 删除控件置于可点击卡片之外：Popconfirm 弹层经 portal 渲染，React 事件沿组件树冒泡，放卡片内会触发跳转 */}
                 <Popconfirm
@@ -250,7 +325,19 @@ export function AgentMarket(): ReactNode {
           </div>
         )
       ) : visible.length === 0 ? (
-        <Empty description="该分类下暂无智能体" style={{ marginTop: 64 }} />
+        <Empty
+          // 空态分两种并各给引导：只写「暂无」用户不知道下一步该做什么
+          description={
+            category === '常用' ? (
+              <Text type="secondary">
+                还没有常用智能体。打开卡片底部的「加入常用」开关，把常用的放在一起。
+              </Text>
+            ) : (
+              <Text type="secondary">该分类下暂无智能体，试试其他分类</Text>
+            )
+          }
+          style={{ marginTop: 64 }}
+        />
       ) : (
         <div
           style={{
