@@ -28,7 +28,14 @@ const { Title, Text, Paragraph } = Typography;
 
 const BRAND_SOLID = '#5B5BF0';
 
-const VALUE_POINTS = ['智能方案、效果图、灯光场景、营销文案，全链路 AI 生成', '三档会员与统一 token 计费，用量透明可控', '多租户与细粒度权限，团队协作开箱即用'];
+// 措辞跟着 README 的「开源定位」走：不做付费墙、不卖套餐。
+// 原来这里写的是「三档会员与统一 token 计费」——那是订阅制口径，
+// 与本项目开源自部署的定位矛盾，而登录页是用户第一眼看到的地方。
+const VALUE_POINTS = [
+  '智能方案、效果图、灯光场景、营销文案，全链路 AI 生成',
+  '开源自部署免费，额度透明可控，每个 token 花在哪都查得到',
+  '多租户与细粒度权限，团队协作开箱即用',
+];
 
 const ERROR_LABEL: Record<string, string> = {
   INVALID_CREDENTIALS: '手机号或密码错误',
