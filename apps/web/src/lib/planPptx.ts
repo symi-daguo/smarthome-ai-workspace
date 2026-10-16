@@ -1,6 +1,7 @@
 import PptxGenJS from 'pptxgenjs';
 import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } from '../data/planThemes';
 import { compositePoints } from './pointOverlay';
+import { customerText } from './planSanitize';
 
 /**
  * 方案 PPT 生成器（16:9 原生可编辑幻灯片）。
@@ -512,8 +513,11 @@ function deliverySlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: Pla
 export function buildNarrationText(plan: PlanForExport): string {
   const lines = [`# ${plan.title} · 完整讲解稿`, `版本 V${plan.versionNo}`, ''];
   plan.pages.forEach((p, i) => {
-    lines.push(`## 第 ${i + 1} 页 · ${PAGE_TYPE_LABEL[p.type]}：${p.heading}`);
-    lines.push(p.narration || '（无讲解稿）');
+    // 标题与讲解稿都过净化：讲解稿是直接发给客户的，
+    // 里面留着「待客户确认现场条件」这类内部语句会直接引发追问
+    const heading = customerText(p.heading) || p.heading;
+    lines.push(`## 第 ${i + 1} 页 · ${PAGE_TYPE_LABEL[p.type]}：${heading}`);
+    lines.push(customerText(p.narration) || '（无讲解稿）');
     lines.push('');
   });
   return lines.join('\n');

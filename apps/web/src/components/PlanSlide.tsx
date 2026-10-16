@@ -1,7 +1,8 @@
 import { PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, imgFilter, imgPosition, imgSize, CARD_SHADOW, CARD_SHADOW_SOFT, type PlanPage, type PlanTheme } from '../data/planThemes';
 import type { CSSProperties, ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { compositePoints, type PointLike } from '../lib/pointOverlay';
+import { customerText } from '../lib/planSanitize';
 
 interface SlidePlan {
   store: string;
@@ -62,7 +63,19 @@ function pageImage(page: PlanPage): string {
   return page.type === 'scene' ? sceneImage(page.subtitle + page.heading) : PAGE_IMAGE[page.type];
 }
 
-export function PlanSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
+export function PlanSlide({ page: raw, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
+  // 客户可见的出口在这里统一净化一次。
+  //
+  // 为什么放在组件里而不是 4 个调用点各自处理：PlanSlide 被编辑预览、客户放映、
+  // 分享页（PlanShareView）三处复用，逐个调用点净化必然漏一处，而漏掉的那处
+  // 就是客户直接看到的页面。改名成 page 后，下面所有子组件拿到的都是净化后的值，
+  // 无需改动它们内部任何一行。
+  const page = useMemo<PlanPage>(() => ({
+    ...raw,
+    // 净化后为空则退回原文：宁可多显示一句，也不要标题凭空消失
+    heading: customerText(raw.heading) || raw.heading,
+    bullets: raw.bullets.map(customerText).filter(Boolean),
+  }), [raw]);
   switch (page.type) {
     case 'cover': return <CoverSlide page={page} plan={plan} t={t} />;
     case 'brand': return <BrandSlide page={page} index={index} plan={plan} t={t} />;
