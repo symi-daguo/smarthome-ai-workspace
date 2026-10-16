@@ -1531,6 +1531,24 @@ async function main(): Promise<void> {
   check('越界页码被拒（400，不会误改别的页）', badIndex.status === 400);
   await prisma.planProject.delete({ where: { id: editSeed.id } });
 
+  // ---------- 本地资料库（零配置 AI 召回） ----------
+  {
+    const kb = await request<{ docs: unknown[]; activeChars: number; totalChars: number }>(base, '/api/knowledge/docs', authA);
+    check('本地资料库列表可查（含生效量/累计量字数）', kb.status === 200 && Array.isArray(kb.body?.docs));
+    const kbUpload = await request(base, '/api/knowledge/docs/upload', {
+      ...authA, method: 'POST', body: JSON.stringify({ hello: 'world' }),
+    });
+    check('资料上传缺少文件时被拒（400）', kbUpload.status === 400);
+    const kbSearch = await request<{ content?: string }[]>(base, '/api/knowledge/docs/search', {
+      ...authA, method: 'POST', body: JSON.stringify({ query: '上门安装费多少钱' }),
+    });
+    check('召回预览可用（用户得能确认 AI 查不查得到）', kbSearch.status === 201 || kbSearch.status === 200);
+    const kbEmpty = await request(base, '/api/knowledge/docs/search', {
+      ...authA, method: 'POST', body: JSON.stringify({ query: '' }),
+    });
+    check('空查询被拒（400）', kbEmpty.status === 400);
+  }
+
   // ---------- 智能灯光问诊（G-16） ----------
   {
     const modes = await request<{ modes: { id: string; questions: { id: string; options: string[] }[] }[]; boundary: string }>(

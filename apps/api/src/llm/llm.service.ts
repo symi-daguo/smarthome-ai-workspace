@@ -2,6 +2,7 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { ModelConfigService } from './model-config.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { formatKnowledgeContext, searchExternalKnowledge } from '../knowledge/knowledge-adapter.js';
+import { rankLocalChunks } from '../knowledge/knowledge-doc.service.js';
 
 /**
  * OpenAI 兼容 chat 客户端（多模型适配层）
@@ -87,17 +88,30 @@ export class LlmService {
     private readonly prisma: PrismaService,
   ) {}
 
-  /** 外部知识库检索并拼上下文；异常降级空串 + 审计 */
+  /** 知识库检索并拼上下文；外部引擎优先，不可用时回落到内置本地资料库 */
   private async ragContext(rag: RagContext, fallbackQuery: string): Promise<string> {
+    const query = (rag.query ?? fallbackQuery).slice(0, 300);
     try {
       const cfg = await this.modelConfig.knowledgeConfig();
-      if (!cfg.enabled || cfg.provider === 'none') return '';
-      const chunks = await searchExternalKnowledge(cfg, (rag.query ?? fallbackQuery).slice(0, 300));
-      await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${chunks.length} hits`);
-      return formatKnowledgeContext(chunks);
+      if (cfg.enabled && cfg.provider !== 'none' && cfg.baseUrl) {
+        const chunks = await searchExternalKnowledge(cfg, query);
+        await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${chunks.length} hits (${cfg.provider})`);
+        return formatKnowledgeContext(chunks);
+      }
     } catch (e) {
-      this.logger.warn(`知识库检索降级（${rag.scene}）: ${e instanceof Error ? e.message : String(e)}`);
-      await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> degraded`);
+      // 外部引擎不可达不应让对话失败——回落到本地资料库，这正是零配置兜底的意义
+      this.logger.warn(`外部知识库不可用，回落本地资料库（${rag.scene}）: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
+      const docs = await this.prisma.knowledgeDoc.findMany({
+        where: { tenantId: rag.tenantId, enabled: true },
+        select: { title: true, content: true },
+      });
+      const local = rankLocalChunks(docs, query);
+      await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${local.length} hits (local)`);
+      return formatKnowledgeContext(local);
+    } catch (e) {
+      this.logger.warn(`本地资料库检索降级（${rag.scene}）: ${e instanceof Error ? e.message : String(e)}`);
       return '';
     }
   }

@@ -16,6 +16,7 @@ import {
 } from 'antd';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
+import { LocalKnowledgePanel } from '../components/LocalKnowledgePanel';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
@@ -281,6 +282,12 @@ export function KnowledgeBase(): ReactNode {
       <Text type="secondary">
         上传你的产品资料、报价规则、品牌话术等，之后所有智能体回答都会优先参考你的资料——一次上传，处处生效
       </Text>
+
+      {/* 本地资料库与下面的「内容提取资料」语义不同：前者供 AI 召回，后者是提取工作流的输入。
+          放在同一页但分成两块，用户不会以为它们是同一份东西。 */}
+      <div style={{ marginTop: 16 }}>
+        <LocalKnowledgePanel />
+      </div>
 
       <div
         style={{

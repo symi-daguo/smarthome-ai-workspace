@@ -59,4 +59,6 @@ export class KnowledgeController {
     const chunks = await this.knowledge.search(user.activeTenantId as string, user.id, dto.query);
     return { chunks };
   }
+
+
 }

@@ -446,6 +446,27 @@ model PlanProject {
   @@index([tenantId, createdAt])
 }
 
+// ---------- 账号级本地资料库（零配置 AI 资料召回） ----------
+// 定位：上传一次 → 所有 AI 对话按需召回参考。外部知识库引擎（WeKnora/Obsidian）
+// 走 knowledgeConfig 的 provider 配置，那条路召回更强但要用户自己部署；
+// 这条是零配置兜底，开箱即用，不装任何东西就能让 AI 懂门店自己的资料。
+model KnowledgeDoc {
+  id        String   @id @default(uuid())
+  tenantId  String
+  title     String
+  fileName  String   @default("")
+  fileType  String   @default("")
+  /** 解析后的纯文本全文；检索与切块都用它 */
+  content   String
+  chars     Int      @default(0)
+  /** 按份开关：false = 暂不参与召回。配合总开关用 */
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, enabled])
+}
+
 // ---------- S3 产品库与点位布局（百宝箱"智能设备点位布局"） ----------
 
 // 全局共享产品目录（种子数据；租户自建产品留待后续）

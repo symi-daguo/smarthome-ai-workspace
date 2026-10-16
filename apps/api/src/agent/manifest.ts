@@ -162,6 +162,11 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'DELETE /api/knowledge/external': ['knowledge:manage'],
   'POST /api/knowledge/external/search': ['knowledge:manage'],
   'POST /api/knowledge/external/test': ['knowledge:manage'],
+  'GET /api/knowledge/docs': ['knowledge:manage'],
+  'POST /api/knowledge/docs/upload': ['knowledge:manage'],
+  'POST /api/knowledge/docs/{id}/toggle': ['knowledge:manage'],
+  'DELETE /api/knowledge/docs/{id}': ['knowledge:manage'],
+  'POST /api/knowledge/docs/search': ['knowledge:read'],
 
   'GET /api/content/extractions': ['content:extract'],
   'GET /api/content/extractions/{id}': ['content:extract'],
@@ -431,6 +436,11 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'DELETE', p: '/api/knowledge/external', d: '断开外部源', risk: D },
       { m: 'POST', p: '/api/knowledge/external/search', d: '在外部源里检索', risk: R },
       { m: 'POST', p: '/api/knowledge/external/test', d: '测连通性', risk: R },
+      { m: 'GET', p: '/api/knowledge/docs', d: '本地资料库列表（含生效量/累计量字数）', risk: R },
+      { m: 'POST', p: '/api/knowledge/docs/upload', d: '上传资料并解析入库（同名视为更新，单份≤8万字）', risk: W },
+      { m: 'POST', p: '/api/knowledge/docs/{id}/toggle', d: '按份开关：是否参与 AI 召回', risk: W },
+      { m: 'DELETE', p: '/api/knowledge/docs/{id}', d: '删除一份资料（只删库里的行，原文件在 uploads 卷另行管理）', risk: D },
+      { m: 'POST', p: '/api/knowledge/docs/search', d: '预览本地资料召回效果（验证「AI 到底查不查得到」）', risk: R },
     ],
   },
   {

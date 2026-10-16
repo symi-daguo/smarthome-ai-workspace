@@ -29,6 +29,8 @@ const BACKUP_TABLES = [
   'materialSubmission',
   // 0.1.53 Agent 机器接入：机器账号与 API Key 丢了就得全部重新签发，快照丢了就再也回不到操作前
   'apiKey', 'changeSnapshot',
+  // 0.1.75 本地资料库：漏了它，备份恢复后门店资料会凭空消失
+  'knowledgeDoc',
 ] as const;
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
