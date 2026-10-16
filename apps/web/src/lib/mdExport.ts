@@ -10,7 +10,7 @@
  * 3. **Word 命名空间** `xmlns:o` / `xmlns:w` 不能少，
  *    少了 Word 只会当成普通网页打开，排版全丢。
  *
- * 参考实现：platform.gougezn.com `app.js:1436-1482`（2026-10-16 REA 复核）
+ * 设计依据：replica/audit-2026-10-13.md §7.24（记录了同类工具的对照实现与取舍）
  */
 import { downloadBlob } from './download';
 

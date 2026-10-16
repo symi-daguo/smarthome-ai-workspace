@@ -21,6 +21,16 @@ export const COMMON_NOTES = {
   tenant: '多租户：默认用 token 里的首个成员身份；跨租户时带 `X-Tenant-Id: <tenantId>`。',
   errors: '错误体 `{ statusCode, message, error }`。message 是稳定的英文错误码，可据此分支，不要匹配中文文案。',
   idempotency: '写操作建议带 `X-Request-Id`，审计日志按它串联成一次动作，便于回溯。',
+  // 防重复扣费与审计串联是两件事：前者防「用户/agent 重试导致重复出图重复扣额度」，
+  // 后者只是把日志串起来。不写清楚的话，agent 重试会静默多扣一次额度。
+  chargeIdempotency: [
+    '**会扣额度的生成接口，务必带 `clientRequestId`（请求体字段，≤64 字符）**：',
+    '  `POST /api/media/images`（生图/局部重绘）、`POST /api/media/videos`（生视频）、`POST /api/plans`（方案生成）。',
+    '同一个键重放会直接返回首次产物并带 `deduped: true`，**不重复出图、不重复扣额度**。',
+    '生成时请用随机 id（如 UUID）并在**结果未知（超时/网络中断）时复用同一个键重试**；',
+    '确认成功后换一个新键，表示这是一次新的生成意图。',
+    '不带这个键的调用仍可用，但弱网重试或重复提交会二次扣费。',
+  ].join('\n'),
   snapshotProtocol: [
     '动数据前：`POST /api/agent/snapshots {label}` 拿 id（label 写清楚这一步要干什么）。',
     '破坏性操作（risk=destructive）若未带 `X-Snapshot-Id`，系统会自动打一份 auto 快照，仍会放行但请去 /api/agent/snapshots 确认。',

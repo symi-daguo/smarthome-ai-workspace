@@ -2,6 +2,53 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.74] - 2026-10-16
+
+面向开源发布的合规与可接入性收尾。
+
+### Fix（能力清单漏了防重复扣费，外部 agent 会白扣额度）
+
+`manifest` 的 `notes.idempotency` 只讲了 `X-Request-Id`（**审计串联**），
+而 0.1.63–0.1.65 做的 `clientRequestId`（**防重复扣费**）是另一回事，**没写进说明**。
+外部 agent 按清单调用生成接口时不会带这个键，弱网重试照样二次扣费——
+本项目修好的东西，接入方看不到，等于白修。
+
+新增 `notes.chargeIdempotency`：列出三个会扣额度的接口（生图/生视频/方案生成）、
+重放语义（返回 `deduped:true` 不重复扣费）、以及"结果未知时复用同一键、成功后换新键"的用法。
+
+### 新增：Agent 接入指南
+
+外部 agent（豆包 / Trae / MiniMax / Claude Code / WorkBuddy / 自研脚本）此前拿不到说明书。
+新增 `Agent接入指南.md`：三种接入方式（能力清单 / OpenAPI `/api/docs` / REST）、
+服务账号与 API Key 流程、权限模型与 `?effective=1`、**会扣额度接口必须带 `clientRequestId`**、
+动数据前的快照协议、错误码表、各平台接入要点、三步自我校验。
+
+### 品牌中性化（开源合规）
+
+代码注释里三处外部域名改为指向仓库内审计章节
+（`replica/audit-2026-10-13.md` §7.20 / §7.24 / §7.26）——
+代码里不再出现任何第三方站点标识，溯源链通过章节号仍完整。
+
+`README.md` 与 `NOTICE.md` 早已声明 clean-room 原则（参考素材仅本地留存、不入库），本次复核确认无违反。
+
+### 字体与宽屏的代码层复核
+
+- **字体**：仓库内无任何 woff/ttf/otf/eot（不打包字体文件，只按名引用系统字体，
+  后接 SIL OFL 1.1 的 Noto/思源兜底）；全站无一处写死字体名，全部走 `theme/fonts.ts` 单一来源，
+  门禁有断言守着
+- **宽屏**：`pageContainerStyle` 为 `width:100%` 无固定宽度上限，全站无固定像素宽度约束
+
+### 仓库卫生
+
+清理工作区残留（均未入库，`.gitignore` 早已覆盖）：
+`.ref-site/` 3.8M（含参考站原始截图）、`replica/screens/` 5.3M、
+`replica/diffs/` 172K、`replica/clone-screens/` 1.4M，以及 9 个 `.DS_Store`。
+共 **10.7MB 移入回收站**（可恢复）。审计结论本身以文字形式记在 md 里，不依赖截图。
+
+### 门禁
+
+`pnpm typecheck ✓ / pnpm build ✓ / pnpm smoke 362/362`
+
 ## [0.1.73] - 2026-10-16
 
 ### Fix（修正一条审计结论：灯光三入口我方覆盖 2/3，不是 1/3）
