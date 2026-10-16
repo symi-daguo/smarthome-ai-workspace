@@ -1,5 +1,5 @@
-import { DeleteOutlined, FireFilled, PlusOutlined } from '@ant-design/icons';
-import { App as AntApp, Button, Dropdown, Empty, Form, Grid, Input, Modal, Popconfirm, Switch, Typography, theme } from 'antd';
+import { DeleteOutlined, FireFilled, PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import { App as AntApp, Button, Dropdown, Empty, Form, Grid, Input, Modal, Popconfirm, Switch, Tooltip, Typography, theme } from 'antd';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AGENT_CATEGORIES, SEED_AGENTS, type AgentDef } from '../data/agents';
@@ -41,8 +41,24 @@ const readSaved = (accountId: string): Set<string> => {
 };
 
 /** 自建智能体与预置智能体共用一套收藏集合：预置用 key，自建统一加 custom_ 前缀避免撞号 */
-const saveIdOf = (a: { key?: string; id?: string }): string =>
-  (a.key as string) ?? `custom_${a.id}`;
+const saveIdOf = (a: { key?: string; id?: string }): string => (a.key as string) ?? `custom_${a.id}`;
+
+/**
+ * 预置智能体的「启用/停用」是本机偏好，和收藏同语义：按账号分键存 localStorage。
+ * 之前只改 React 内存，刷新即回默认值——用户关掉一个智能体，隔天又冒出来。
+ * 存的值只列出「被显式关掉」的 key，其余按 SEED_AGENTS 的默认启用状态，
+ * 这样以后给 SEED_AGENTS 新增智能体时不会被一份旧名单误伤。
+ */
+const disabledKey = (accountId: string): string => `agent_disabled_v1:${accountId}`;
+
+const readDisabled = (accountId: string): Set<string> => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(disabledKey(accountId)) || '[]');
+    return new Set(Array.isArray(raw) ? raw : []);
+  } catch {
+    return new Set();
+  }
+};
 
 export function AgentMarket(): ReactNode {
   const { message } = AntApp.useApp();
@@ -77,6 +93,8 @@ export function AgentMarket(): ReactNode {
   // 换账号时重新读收藏：同一台机器上两个账号的「常用」不该是同一份
   useEffect(() => {
     setSaved(readSaved(accountId));
+    const off = readDisabled(accountId);
+    setAgents((prev) => prev.map((a) => ({ ...a, enabled: a.enabled && !off.has(a.key) })));
   }, [accountId]);
 
   const toggleSave = (id: string): void => {
@@ -128,6 +146,14 @@ export function AgentMarket(): ReactNode {
 
   const toggle = (key: string, enabled: boolean): void => {
     setAgents((prev) => prev.map((a) => (a.key === key ? { ...a, enabled } : a)));
+    // 只落「被关掉的」，开着的走 SEED_AGENTS 默认值，新增智能体不会被旧名单压成停用
+    const off = new Set(agents.filter((a) => !a.enabled && a.key !== key).map((a) => a.key));
+    if (!enabled) off.add(key);
+    try {
+      localStorage.setItem(disabledKey(accountId), JSON.stringify([...off]));
+    } catch {
+      message.warning('浏览器未允许保存，启用状态仅在本次浏览中有效。');
+    }
   };
 
   const submitCreate = async (): Promise<void> => {
@@ -392,14 +418,30 @@ export function AgentMarket(): ReactNode {
                     <FireFilled style={{ color: '#F5533D' }} /> 使用热度 {a.usage} 次
                   </Text>
                   <div style={{ flex: 1 }} />
-                  <Switch
-                    size="small"
-                    checked={a.enabled}
-                    onClick={(_, e) => e.stopPropagation()}
-                    onChange={(checked) => {
-                      toggle(a.key, checked);
-                    }}
-                  />
+                  {/* 「常用」分类筛的就是预置智能体，这里不给入口，那个分类就永远是空的 */}
+                  <Tooltip title={saved.has(a.key) ? '取消常用' : '加入常用'}>
+                    <Button
+                      size="small"
+                      type="text"
+                      aria-label={`${a.name}：加入常用`}
+                      aria-pressed={saved.has(a.key)}
+                      icon={saved.has(a.key) ? <StarFilled style={{ color: '#FAAD14' }} /> : <StarOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSave(a.key);
+                      }}
+                    />
+                  </Tooltip>
+                  <Tooltip title={a.enabled ? '点此停用' : '点此启用'}>
+                    <Switch
+                      size="small"
+                      checked={a.enabled}
+                      onClick={(_, e) => e.stopPropagation()}
+                      onChange={(checked) => {
+                        toggle(a.key, checked);
+                      }}
+                    />
+                  </Tooltip>
                 </div>
               </div>
             </div>

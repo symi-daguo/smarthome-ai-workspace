@@ -60,9 +60,9 @@ interface LedgerEntry {
  * 将来真要加 LIFETIME 套餐，在这里补一行即可，不要在前端另造取值。
  */
 const PLAN_META: Record<string, { label: string; color: string }> = {
-  BASIC: { label: '基础版', color: 'default' },
-  STANDARD: { label: '标准版', color: 'blue' },
-  ENTERPRISE: { label: '企业版', color: 'purple' },
+  BASIC: { label: '基础档', color: 'default' },
+  STANDARD: { label: '标准档', color: 'blue' },
+  ENTERPRISE: { label: '团队档', color: 'purple' },
 };
 
 const REASON_META: Record<string, { label: string; color: string }> = {
@@ -283,7 +283,7 @@ export function TokenCenter(): ReactNode {
     <div style={pageContainerStyle}>
       <PageHeader
         title="个人中心"
-        description="额度以统一 token 记账、按部署配置展示；注册赠送额度与充值额度合并管理"
+        description="额度以统一 token 记账，发放与消耗全程留痕；额度由部署者分配，本部署不提供在线支付"
         extra={
           <Button
             type="primary"
@@ -291,7 +291,7 @@ export function TokenCenter(): ReactNode {
             onClick={() => setRechargeOpen(true)}
             style={{ background: BRAND_GRADIENT, border: 'none' }}
           >
-            充值额度
+            额度档位参考
           </Button>
         }
       />
@@ -369,7 +369,7 @@ export function TokenCenter(): ReactNode {
               />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
                 <Space direction="vertical" size={0}>
-                  <Text style={{ fontSize: 13 }}>顶栏显示额度与会员</Text>
+                  <Text style={{ fontSize: 13 }}>顶栏显示额度与开源说明</Text>
                   <Text type="secondary" style={{ fontSize: 12 }}>默认隐藏，开源免费使用下这两项没有实际意义</Text>
                 </Space>
                 <Switch checked={showBilling} onChange={(v) => { setShowBillingState(v); setShowBilling(v); }} />

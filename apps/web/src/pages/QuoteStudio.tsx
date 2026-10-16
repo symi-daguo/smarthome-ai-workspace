@@ -79,6 +79,11 @@ function isPerOrder(p: Product): boolean {
   return p.pricingMode === 'per_order';
 }
 
+/** 计件单位：按本单总价的产品不存在「台/套」件数，写成「项」，否则 CSV/Excel 交付给客户会自相矛盾 */
+function unitLabel(p: Product): string {
+  return isPerOrder(p) ? '项' : p.unit || '台';
+}
+
 /** 导出单元格里的数字：不带货币符号与千分位，方便在 Excel/WPS 里直接求和 */
 function plainNum(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(2);
@@ -845,7 +850,7 @@ export function QuoteStudio(): ReactNode {
       ...orderedLines.flatMap((l, i) => [
         [
           esc(i + 1), esc(l.room), esc(l.product.sku), esc(l.product.barcode), esc(l.product.snRule ? `${l.product.snRule}****` : ''),
-          esc(catMeta(l.product.category).label), esc(l.product.name), esc(l.product.spec), esc(l.product.unit || '台'), l.qty,
+          esc(catMeta(l.product.category).label), esc(l.product.name), esc(l.product.spec), esc(unitLabel(l.product)), l.qty,
           esc(`${plainNum(lineSellPrice(l, mode))}${l.unitPrice != null ? '*' : ''}`),
         ],
         [esc(''), esc(''), esc('经销成本单价'), esc(costPrice(l.product).toLocaleString('zh-CN')), esc('指导/工程/经销'), esc(`${l.product.priceRetail}/${l.product.priceProject}/${l.product.priceDealer}`),
@@ -899,7 +904,7 @@ export function QuoteStudio(): ReactNode {
         l.product.name,
         l.product.spec,
         l.qty,
-        l.product.unit || '台',
+        unitLabel(l.product),
         plainNum(lineSellPrice(l, mode)),
         plainNum(lineSellPrice(l, mode) * l.qty),
         l.note || (l.unitPrice != null ? `本次单价（标准价 ${plainNum(sellPrice(l.product, mode))}）` : ''),
@@ -995,7 +1000,7 @@ export function QuoteStudio(): ReactNode {
         ) : (
           <InputNumber min={1} max={999} value={l.qty} onChange={(v) => setQty(l.product.id, Number(v ?? 0))} size="small" style={{ width: 64 }} />
         )}
-        <Text type="secondary" style={{ fontSize: 12 }}>{isPerOrder(l.product) ? '项' : l.product.unit || '台'}</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>{unitLabel(l.product)}</Text>
       </Space>
     ) },
     {
@@ -1129,7 +1134,7 @@ export function QuoteStudio(): ReactNode {
                   <Button key={p.id} block size="small" style={{ textAlign: 'left', height: 'auto', padding: '5px 10px', whiteSpace: 'normal' }} onClick={() => addProduct(p)}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                       <span style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</span>
-                      <span style={{ fontSize: 11, opacity: 0.7, flexShrink: 0 }}>¥{sellPrice(p, mode)}/{p.unit || '台'}</span>
+                      <span style={{ fontSize: 11, opacity: 0.7, flexShrink: 0 }}>¥{sellPrice(p, mode)}/{unitLabel(p)}</span>
                     </div>
                     <div style={{ fontSize: 11, opacity: 0.6 }}>
                       {p.sku ? `SKU ${p.sku} · ` : ''}{p.perRoom || '按需布置'}
@@ -1521,7 +1526,7 @@ export function QuoteStudio(): ReactNode {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</span>
-                  <span style={{ fontSize: 12, flexShrink: 0 }}>¥{sellPrice(p, mode)}/{p.unit || '台'}</span>
+                  <span style={{ fontSize: 12, flexShrink: 0 }}>¥{sellPrice(p, mode)}/{unitLabel(p)}</span>
                 </div>
                 <div style={{ fontSize: 11, opacity: 0.65 }}>
                   {[p.spec, p.sku ? `SKU ${p.sku}` : '', current ? '当前规格' : ''].filter(Boolean).join(' · ')}

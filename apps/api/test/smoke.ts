@@ -2602,6 +2602,29 @@ async function main(): Promise<void> {
     );
   }
 
+  // ---------- 版本号单一事实源（0.1.78）----------
+  {
+    // 这三处曾漂移成 root 0.1.77 / api 0.1.47 / errorContext 0.1.45，报错上下文里的
+    // 版本号与 CHANGELOG 对不上，用户报障时无法据此定位是哪一版。根 package.json 是唯一事实源。
+    const rootPkg = JSON.parse(readFileSync(join(process.cwd(), '../../package.json'), 'utf8')) as { version: string };
+    const apiPkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as { version: string };
+    const webPkg = JSON.parse(readFileSync(join(process.cwd(), '../web/package.json'), 'utf8')) as { version: string };
+    check(
+      `版本号三处一致（root=${rootPkg.version} api=${apiPkg.version} web=${webPkg.version}）`,
+      rootPkg.version === apiPkg.version && apiPkg.version === webPkg.version,
+    );
+    const vc = readFileSync(join(process.cwd(), '../web/src/lib/errorContext.ts'), 'utf8');
+    check(
+      'errorContext 版本号取自注入变量而非手写常量',
+      /import\.meta\.env\.VITE_APP_VERSION/.test(vc) && !/APP_VERSION\s*=\s*'0\.\d/.test(vc),
+    );
+    const viteCfg = readFileSync(join(process.cwd(), '../web/vite.config.ts'), 'utf8');
+    check(
+      'vite.config.ts 从根 package.json 注入版本号',
+      viteCfg.includes("'../../package.json'") && viteCfg.includes('VITE_APP_VERSION'),
+    );
+  }
+
   // ---------- 头像上传 + 工作台改名 + 多租户边界（0.1.58）----------
   {
     const originalTenantName = (await request<{ memberships: { tenantName: string }[] }>(base, '/api/auth/me', authA)).body.memberships[0]?.tenantName ?? '';

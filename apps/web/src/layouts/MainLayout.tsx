@@ -166,7 +166,7 @@ export function MainLayout(): ReactNode {
   const [guideOpen, setGuideOpen] = useState(false);
   const [plans, setPlans] = useState<PlanSidebarItem[]>([]);
   /**
-   * 额度胶囊与「会员与额度」按钮：**默认隐藏**（0.1.54）。
+   * 额度胶囊与「开源说明」按钮：**默认隐藏**（0.1.54）。
    * 项目定位是开源免费自部署，这两个数字对使用者没有实际意义，却占着顶栏最显眼的位置，
    * 还容易被误读成「要先充值才能用」。留一个开关，需要看账的人可以在个人中心打开。
    */
@@ -700,7 +700,7 @@ export function MainLayout(): ReactNode {
             cancelButtonProps={{ style: { display: 'none' } }}
           >
             <Text style={{ display: 'block', marginBottom: 12 }}>
-              平台按额度计费，注册即送演示额度，用完可充值。计费口径：
+              开源自部署：额度由部署者分配、单价由部署者配置，不设付费墙。计费口径：
             </Text>
             {GUIDE_PRICE_ROWS.map((row) => (
               <div
@@ -719,7 +719,7 @@ export function MainLayout(): ReactNode {
               </div>
             ))}
             <Text type="secondary" style={{ fontSize: 12 }}>
-              充值与开票请联系平台助理；一个公司可开通多个员工账号，共享会员权益与额度，个人对话与资料相互隔离。
+              额度由部署者在后台发放，本部署不提供在线充值；一个公司可开通多个员工账号，共享额度账本，个人对话与资料相互隔离。
             </Text>
           </Modal>
           {showBilling && (
@@ -734,7 +734,7 @@ export function MainLayout(): ReactNode {
                 display: isDesktop ? 'inline-flex' : 'none',
               }}
             >
-              会员与额度
+              开源说明
             </Button>
           )}
 

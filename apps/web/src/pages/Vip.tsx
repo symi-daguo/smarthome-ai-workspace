@@ -54,7 +54,7 @@ export function Vip(): ReactNode {
   return (
     <div style={pageContainerStyle}>
       <PageHeader
-        title="会员与额度"
+        title="开源说明与额度"
         description="本项目开源免费自部署，注册即拥有全部能力，无需开通任何套餐"
         extra={<Button onClick={() => navigate('/tokens')}>查看我的额度</Button>}
       />
@@ -69,7 +69,7 @@ export function Vip(): ReactNode {
           <Space direction="vertical" size={4}>
             <Text>
               开源自部署默认把注册用户设为<strong>租户管理员</strong>，具备本部署的全部功能权限
-              {plan ? <>（当前套餐标识：<Tag style={{ marginInlineEnd: 0 }}>{plan}</Tag>）</> : null}。
+              {plan ? <>（部署档位：<Tag style={{ marginInlineEnd: 0 }}>{plan}</Tag>）</> : null}。
               模型配置、额度发放、成员管理均可自助操作，无需联系任何人开通。
             </Text>
             <Text type="secondary">

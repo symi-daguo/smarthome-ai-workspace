@@ -2,6 +2,64 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.78] - 2026-10-16
+
+### Verified（REA 复刻逆向全量逐屏复评 + 版本号单一事实源 + 开源定位文案归位）
+
+用浏览器 skill 登录后**逐个路由实测**全部 25 个板块（非抽样），与 `replica/full-parity-matrix.md`
+逐条对照，全部证据与操作步骤记入 [replica/iteration-2026-10-16.md](file:///Volumes/hasskit/codex/aisaas/replica/iteration-2026-10-16.md)。
+
+**逐屏复评结论**：23/25 ✅ 界面核对通过、2 个 🔸 受架构所限（AI 画布圈选重绘 / 涂鸦重绘，
+均需先有历史生成图才出现入口）、0 个 ⬜。重标矩阵 9 行：
+
+- **#2 首登使用说明弹窗** 由 🔸 升 ✅（首登确实弹出）
+- **#4 侧栏** 由「5 组 17 项」修正为 **3 组 16 项**（新增「AI 画布」「团队与接入」）
+- **#5 任务球** 由 🔸 升 ✅（右下角浮球 + aria-label 实测）
+- **#7 定制智能体** 由 🔸 升 ✅（新建弹窗 3 字段实测）
+- **#14 灯光** 由 ⬜ 升 ✅ **三入口全覆盖**（点位 / 问诊 / 演示）
+- **#15 WiFi 热力图** 由 🔸 升 ✅（界面层 + 墙体识别 + 米制尺寸实测）
+- **#17 我的知识库** 由 🔸 升 ✅（本地资料库召回 + 字数统计实测）
+- **#21 会员面板** → 开源说明页 ✅（已改名「开源说明与额度」）
+- **#22 开始接单** 由 🔸 升 ✅ —— **复核修正**：实测表单 **24 个结构化字段 + 9 个系统需求项**，
+  此前记录的「缺 5 处结构化采集」不成立
+- **#23 短视频工作台** 由 🔸 升 ✅（3 种专访模式实测）；新增 **#25 团队与接入**（我方新增页）
+
+### Fixed（版本号四处漂移 → 单一事实源 + 门禁）
+
+`root 0.1.77 / apps/api + apps/web 0.1.47 / errorContext.ts 0.1.45` 三处不一致，报错上下文里的
+版本号与 CHANGELOG 对不上，用户报障时无法据此定位是哪一版。
+
+- [vite.config.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/vite.config.ts)：构建时从**仓库根 package.json** 注入 `VITE_APP_VERSION`
+- [errorContext.ts](file:///Volumes/hasskit/codex/aisaas/apps/web/src/lib/errorContext.ts)：改为读注入变量，删除手写常量
+- 三处 package.json 统一到 0.1.78
+- [smoke.ts](file:///Volumes/hasskit/codex/aisaas/apps/api/test/smoke.ts)：新增 3 条防漂移断言
+
+### Fixed（开源定位文案归位：消除订阅味残留）
+
+逐屏复评时发现三处与「开源免费、不设付费墙」定位冲突的残留文案（0.1.76/0.1.77 遗漏）：
+
+- 首登使用说明弹窗：「用完可充值」「充值与开票请联系平台助理」「共享会员权益」
+  → 「开源自部署：额度由部署者分配、单价由部署者配置，不设付费墙」「额度由部署者在后台发放，本部署不提供在线充值」「共享额度账本」
+- 顶栏按钮「会员与额度」→「开源说明」；套餐标签「企业版」→「团队档」
+- 个人中心：「充值额度」按钮 →「额度档位参考」；描述与开关文案去掉「充值/会员」措辞
+- 开源说明页标题「会员与额度」→「开源说明与额度」；「当前套餐标识」→「部署档位」
+
+### Added（未提交改动收尾，浏览器实测确认生效）
+
+- [AgentMarket.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/AgentMarket.tsx)：卡片级「加入常用」星标（实测 13 个）+ 预置智能体启用/停用持久化（此前只改内存、刷新回默认）
+- [QuoteStudio.tsx](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/QuoteStudio.tsx)：`unitLabel()` —— `per_order` 产品单位显示「项」而非「台」，避免 CSV/Excel 导出自相矛盾
+
+### Verified（门禁）
+
+- `pnpm typecheck ✓` / `pnpm --filter @app/web build ✓` / `pnpm smoke` → **369/369 全过**
+- 浏览器复验：/vip、/tokens、首登弹窗、AI 智能体星标、任务球、WiFi 热力图、开始接单表单均一致
+
+### 遗留待决（未擅自改语义，待用户确认）
+
+- 邀请返点文案仍写「首次充值时…各得充值额 10% 奖励」（[TokenCenter.tsx:463](file:///Volumes/hasskit/codex/aisaas/apps/web/src/pages/TokenCenter.tsx)）；
+  本部署不提供在线支付，返点口径属产品语义决策
+- 开源前需清理演示库测试数据（内容提取任务/文档、验证素材）
+
 ## [0.1.77] - 2026-10-16
 
 ### Fix（登录页还写着「三档会员」）

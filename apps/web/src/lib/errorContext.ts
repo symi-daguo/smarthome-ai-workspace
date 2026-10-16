@@ -24,7 +24,9 @@ export interface ErrorContext {
 
 const MAX_REQ = 5;
 const MAX_ACT = 8;
-const APP_VERSION = '0.1.45';
+// 版本号由 vite.config.ts 从仓库根 package.json 注入（单一事实源），不在这里手写——
+// 手写会与 CHANGELOG/根版本各自漂移，报错上下文里的版本号就失去定位价值。
+const APP_VERSION: string = import.meta.env.VITE_APP_VERSION ?? '0.0.0';
 
 const failedRequests: ErrorContext['failedRequests'] = [];
 const actions: ErrorContext['actions'] = [];
