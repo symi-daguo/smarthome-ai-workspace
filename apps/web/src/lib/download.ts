@@ -11,7 +11,14 @@ export function downloadBlob(blob: Blob, filename: string): void {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  // 必须挂到文档里再点：不挂的话 Electron 内嵌浏览器会下载成功，
+  // 但套不上 a.download 的文件名，产物变成 Downloads 下无名的
+  // `.com.<bundleId>.XXXXXX` 文件（实测 PPTX 连续踩中，讲稿因体量小侥幸成功）。
+  // style 设为 none 避免点击瞬间出现未排版的无名链接。
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   // 立即 revoke 会让部分浏览器下载失败，延后释放
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

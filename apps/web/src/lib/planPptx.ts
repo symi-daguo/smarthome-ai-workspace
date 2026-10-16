@@ -41,18 +41,40 @@ const FONT = FONT_PPTX;
 const SHADOW = { type: 'outer' as const, color: '1E160E', blur: 10, offset: 3, angle: 90, opacity: 0.16 };
 const SHADOW_SOFT = { type: 'outer' as const, color: '1E160E', blur: 6, offset: 2, angle: 90, opacity: 0.1 };
 
+/**
+ * 取图片的 dataURL。
+ *
+ * 三个坑都在这里，缺一个就是「导出没反应」：
+ * 1. 不检查 res.ok —— 401/404 的响应体也会被当图片读进去，pptxgenjs 写图时才炸，
+ *    报错又发生在 await 链深处，界面上只看到「转圈然后没动静」
+ * 2. fetch 不设超时 —— 一张图请求挂住，整个 Promise.all 永远不返回
+ * 3. 失败静默吞掉 —— 排查时完全看不出是哪张图挂了
+ */
 async function imgData(path: string): Promise<string> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
   try {
-    const res = await fetch(path);
+    const res = await fetch(path, { signal: ctl.signal });
+    if (!res.ok) {
+      console.warn('[pptx] 图片取不到', res.status, path);
+      return '';
+    }
     const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) {
+      console.warn('[pptx] 响应不是图片', blob.type, path);
+      return '';
+    }
     return await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
-      reader.onerror = reject;
+      reader.onerror = () => reject(new Error('FileReader 失败'));
       reader.readAsDataURL(blob);
     });
-  } catch {
+  } catch (e) {
+    console.warn('[pptx] 图片加载失败', (e as Error).message, path);
     return '';
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -165,9 +187,12 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
     scene: [W * 0.34, H],
     delivery: [2.6, 2.45],
   };
+  console.info('[pptx] 开始导出，原始页数', plan.pages.length, '标题', plan.title);
   const imgPaths = [...new Set(plan.pages.map(pageImageType))];
+  console.info('[pptx] 待取图', imgPaths.length, '张');
   const rawMap = new Map<string, string>();
   await Promise.all(imgPaths.map(async (p) => rawMap.set(p, await imgData(p))));
+  console.info('[pptx] 原图取齐');
   const cropMap = new Map<string, string>();
   await Promise.all(
     plan.pages.map(async (p) => {
@@ -178,6 +203,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
       cropMap.set(key, await coverCrop(rawMap.get(pageImageType(p)) ?? '', bw, bh, focus));
     }),
   );
+  console.info('[pptx] 裁剪完成');
   const img = (page: PlanPage): string => cropMap.get(`${pageImageType(page)}|${page.type}`) ?? '';
 
   // 空间动线页：优先用精装修效果图 > 户型+点位合成图 > 场景实景图
@@ -215,6 +241,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
 
   // 有户型图素材时补一页「户型与设备点位」：分享页/预览/PPTX 必须页数一致
   const outPages = withFloorplanPage(plan.pages, Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl)).pages;
+  console.info('[pptx] 交付页数', outPages.length, '| 有户型图', Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl));
   outPages.forEach((p, i) => {
     const slide = pptx.addSlide();
     slide.background = { color: hex(t.bg) };
@@ -235,8 +262,14 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
   const fileName = `${plan.title}-${plan.edition === 'private' ? '私宅' : plan.edition === 'presale' ? '售前' : '标准'}方案-V${plan.versionNo}-${new Date().toISOString().slice(0, 10)}.pptx`;
   // 浏览器里不能用 writeFile：那是 Node 端 API，会静默什么都不落盘，
   // 按钮转一圈然后什么都没有。write({outputType:'blob'}) 才是浏览器路径。
+  console.info('[pptx] 写文件…');
   const buf = (await pptx.write({ outputType: 'arraybuffer' })) as ArrayBuffer;
-  downloadBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }), fileName);
+  console.info('[pptx] 字节数', buf.byteLength);
+  // 用通用二进制类型：pptx 的 Office MIME 在部分宿主（Electron 内嵌浏览器）
+  // 会被判定为不安全类型而静默丢弃，表现就是「转圈然后 Downloads 里什么都没有」。
+  // 下载行为由后缀名决定，与 MIME 无关。
+  downloadBlob(new Blob([buf], { type: 'application/octet-stream' }), fileName);
+  console.info('[pptx] 已触发下载', fileName);
 }
 
 /* ---------- primitives ---------- */
