@@ -2,6 +2,32 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.1.71] - 2026-10-16
+
+### Feature（逐条回复导出 MD / Word，G-13）
+
+开发前按纪律重新抓参考站 `app.js` 复核，原文见 `audit §7.24`。
+**有三个坑不看原文一定会漏，其中一个是安全问题**：
+
+1. **先转义 HTML 再替换标签**。反过来就是注入漏洞——模型返回的内容里带
+   `<script>` 时，先替换标签的话会被当成真 HTML 执行。
+2. **Word 文件必须带 BOM**。不加的话 Word 按本地编码读，**中文全是乱码**，
+   这是导出 Word 最常见的投诉来源。
+3. **`xmlns:o` / `xmlns:w` 命名空间不能少**。少了 Word 只当普通网页打开，排版全丢。
+
+- `apps/web/src/lib/mdExport.ts`：`contentToWordHtml` + `fileStamp` + 两个下载函数
+- 复用既有的 `lib/download.ts` 的 `downloadBlob`，不新建下载工具
+- 操作条只挂 **AI 回复**（用户自己的话没什么可导出的）；
+  用包进 `content` 的方式实现，没用 Bubble 的 `footer` 槽（类型不接受该签名）
+- 复制有**降级链**：`navigator.clipboard` → `execCommand` → 提示手动复制。
+  非 HTTPS 或老浏览器里 clipboard 不可用，直接报"复制失败"等于让人自己去选文本
+
+### 门禁
+
+`pnpm typecheck ✓ / pnpm build ✓ / pnpm smoke 352/352`（本版纯前端，smoke 无新增）
+导出逻辑另用 **8 场景实测**覆盖，含两项安全测试：
+`<script>` 必须被转义；`**<b>x</b>**` 在正确顺序下粗体内的标签应保持转义态。
+
 ## [0.1.70] - 2026-10-16
 
 ### Docs（先把两条不适用判定下来，避免后面照着做）

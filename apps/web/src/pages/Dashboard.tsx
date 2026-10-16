@@ -18,6 +18,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { BrandMark } from '../components/BrandMark';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore } from '../store/ChatStore';
+import { downloadMarkdown, downloadWord } from '../lib/mdExport';
 import { useActiveConfig } from '../lib/configStore';
 import { detectIntent } from '../lib/intent';
 import { BRAND_GRADIENT } from '../theme/tokens';
@@ -88,6 +89,58 @@ interface AttachmentItem {
   dataUrl: string;
 }
 
+/**
+ * 逐条回复的操作条：复制 / 下载 Markdown / 下载 Word。
+ *
+ * 只挂在 AI 回复上（见下方 bubbleRoles.ai.footer）——用户自己说的话没什么可导出的。
+ * 复制必须带降级：非 HTTPS 或老浏览器里 navigator.clipboard 不可用，
+ * 直接报"复制失败"等于让人自己去选文本。
+ */
+function ChatActions({ content }: { content: string }): ReactNode | null {
+  const { message } = AntApp.useApp();
+  const [copied, setCopied] = useState(false);
+
+  if (!content.trim()) return null;
+
+  const copy = async (): Promise<void> => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = content;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } else {
+        message.error('复制失败，请手动选择文本复制');
+      }
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+      <Button size="small" type="text" onClick={() => void copy()} style={{ fontSize: 12 }}>
+        {copied ? '已复制' : '复制'}
+      </Button>
+      <Button size="small" type="text" onClick={() => downloadMarkdown(content)} style={{ fontSize: 12 }}>
+        下载 Markdown
+      </Button>
+      <Button size="small" type="text" onClick={() => downloadWord(content)} style={{ fontSize: 12 }}>
+        下载 Word
+      </Button>
+    </div>
+  );
+}
+
 export function Dashboard(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = useToken();
@@ -133,7 +186,16 @@ export function Dashboard(): ReactNode {
     const list: BubbleItemType[] = messages.map((m) => ({
       key: m.id,
       role: m.role === 'user' ? 'user' : 'ai',
-      content: m.content,
+      // 操作条只挂在 AI 回复下：用户自己说的话没什么可导出的。
+      // （不用 Bubble 的 footer 槽——它的类型不接受这个签名，直接包进 content 更省）
+      content: m.role === 'user'
+        ? m.content
+        : (
+          <>
+            {m.content}
+            <ChatActions content={m.content} />
+          </>
+        ),
     }));
     if (sending) {
       list.push({ key: 'pending', role: 'ai', content: '', loading: true });
