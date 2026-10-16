@@ -371,7 +371,25 @@ export class PlansService {
   async detail(tenantId: string, id: string) {
     const plan = await this.prisma.planProject.findFirst({ where: { id, tenantId } });
     if (!plan) throw new NotFoundException('PLAN_NOT_FOUND');
-    return plan;
+    // reviewedRevision 与 versionNo 相等 = 当前这版已逐页校对过。
+    // 附一份给前端直接用的判定结果，省得每个调用点各写一遍比较逻辑。
+    return { ...plan, reviewed: plan.reviewedRevision !== null && plan.reviewedRevision === plan.versionNo };
+  }
+
+  /**
+   * 逐页校对确认：把 reviewedRevision 盖到当前版本号上。
+   *
+   * 之后任何一次保存文案（versionNo +1）都会让两者不等，确认自动失效——
+   * 不需要在前端手动取消勾选，也不会出现「勾完之后又改了内容、确认却还生效」。
+   */
+  async review(tenantId: string, id: string) {
+    const plan = await this.prisma.planProject.findFirst({ where: { id, tenantId } });
+    if (!plan) throw new NotFoundException('PLAN_NOT_FOUND');
+    const updated = await this.prisma.planProject.update({
+      where: { id },
+      data: { reviewedRevision: plan.versionNo },
+    });
+    return { ...updated, reviewed: true, versionNo: plan.versionNo };
   }
 
   /** 逐页审稿编辑：更新单页并版本 +1 */

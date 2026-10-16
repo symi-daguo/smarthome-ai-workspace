@@ -1,7 +1,9 @@
 import {
+  CheckCircleOutlined,
   CloseOutlined,
   DownloadOutlined,
   EditOutlined,
+  ExclamationCircleOutlined,
   FileTextOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
@@ -119,6 +121,8 @@ interface PlanDetail {
   /** AI 渲染的精装修效果图（基于客户户型图按方案风格+生态生成） */
   renderedFloorplanAssetId?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+  /** 服务端判定：当前这版文案已逐页校对过（reviewedRevision === versionNo） */
+  reviewed?: boolean;
 }
 
 interface PlanListItem {
@@ -155,6 +159,10 @@ const [editing, setEditing] = useState<{
     index: number; heading: string; subtitle: string; bullets: string; body: string; narration: string; quote: string;
   } | null>(null);
   const [savingPage, setSavingPage] = useState(false);
+  /** 交付前的校对门：确认通过后自动执行原本要做的动作（导出 / 复制分享链接） */
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewChecked, setReviewChecked] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<PlanListItem[]>([]);
   const [activePage, setActivePage] = useState(0);
@@ -301,6 +309,38 @@ const [editing, setEditing] = useState<{
 
   const shareUrl = plan ? `${window.location.origin}/share/plan/${plan.shareToken}` : '';
 
+  /**
+   * 交付前的一道门：没校对过就别把方案发出去。
+   *
+   * 参考站把这条门放在「生成下载文件」与「分享链接」两个动作上
+   * （逆向原文见 audit §7.21）。这里同样只拦**交付动作**，
+   * 不拦已发出链接的访问——那种做法等于让老客户手里的链接突然失效。
+   */
+  const requireReview = (action: () => void): void => {
+    if (plan?.reviewed) {
+      action();
+      return;
+    }
+    setPendingAction(() => action);
+    setReviewChecked(false);
+    setReviewOpen(true);
+  };
+
+  const confirmReview = async (): Promise<void> => {
+    if (!plan || !reviewChecked) return;
+    try {
+      const updated = await api<PlanDetail>(`/api/plans/${plan.id}/review`, { method: 'POST' });
+      setPlan(updated);
+      setReviewOpen(false);
+      message.success('已标记本版为逐页校对完成');
+      const act = pendingAction;
+      setPendingAction(null);
+      if (act) act();
+    } catch (e) {
+      message.error((e as Error).message || '确认失败');
+    }
+  };
+
   const copyLink = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(shareUrl);
@@ -310,7 +350,7 @@ const [editing, setEditing] = useState<{
     }
   };
 
-  const downloadPptx = async (): Promise<void> => {
+  const doExportPptx = async (): Promise<void> => {
     if (!plan) return;
     setExporting(true);
     try {
@@ -327,6 +367,8 @@ const [editing, setEditing] = useState<{
       setExporting(false);
     }
   };
+
+  const downloadPptx = (): void => requireReview(() => void doExportPptx());
 
   // 渲染精装修效果图：基于已挂接的客户户型图，按方案风格+生态 AI 出图
   const renderFloorplan = async (): Promise<void> => {
@@ -347,7 +389,7 @@ const [editing, setEditing] = useState<{
     }
   };
 
-  const downloadScript = (): void => {
+  const doDownloadScript = (): void => {
     if (!plan) return;
     const blob = new Blob([buildNarrationText(plan)], { type: 'text/markdown;charset=utf-8' });
     const a = document.createElement('a');
@@ -356,6 +398,9 @@ const [editing, setEditing] = useState<{
     a.click();
     URL.revokeObjectURL(a.href);
   };
+
+  // 讲稿同样是发出去的文件，和 PPTX 走同一道门
+  const downloadScript = (): void => requireReview(doDownloadScript);
 
   const reset = (): void => {
     setPlan(null);
@@ -795,6 +840,14 @@ const [editing, setEditing] = useState<{
           <div style={{ background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 20, padding: '36px 32px', textAlign: 'center' }}>
             <Title level={4} style={{ marginTop: 0 }}>最终交付客户</Title>
             <Text type="secondary">逐页确认内容后，下载或分享完整版本。</Text>
+            {/* 校对状态常驻显示：改一个字就会自动失效，不该让用户点导出才知道白点了 */}
+            <div style={{ marginTop: 12 }}>
+              {plan.reviewed ? (
+                <Tag color="success" icon={<CheckCircleOutlined />}>本版已逐页校对（V{plan.versionNo}）</Tag>
+              ) : (
+                <Tag color="warning" icon={<ExclamationCircleOutlined />}>本版尚未校对，导出与分享时会提示确认</Tag>
+              )}
+            </div>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
               <Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={downloadPptx} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
                 下载方案 PPTX
@@ -805,7 +858,7 @@ const [editing, setEditing] = useState<{
               <Button size="large" icon={<FullscreenOutlined />} onClick={() => setReaderOpen(true)}>
                 全屏播放
               </Button>
-              <Button size="large" icon={<LinkOutlined />} onClick={copyLink}>
+              <Button size="large" icon={<LinkOutlined />} onClick={() => requireReview(() => void copyLink())}>
                 复制分享链接
               </Button>
             </div>
@@ -918,6 +971,37 @@ const [editing, setEditing] = useState<{
             );
           })()
         ) : null}
+      </Modal>
+
+      {/* 交付前的校对门：未确认时拦一下，确认后自动执行原本要做的动作 */}
+      <Modal
+        open={reviewOpen}
+        title="交付前请确认"
+        onCancel={() => { setReviewOpen(false); setPendingAction(null); }}
+        onOk={() => void confirmReview()}
+        okText="我已逐页校对，继续"
+        okButtonProps={{ disabled: !reviewChecked }}
+        cancelText="取消"
+        width={520}
+      >
+        <div style={{ lineHeight: 1.9 }}>
+          <Text>
+            这份方案当前是 <Text strong>V{plan?.versionNo ?? 0}</Text> 版，
+            共 {plan?.pages.length ?? 0} 页。<Text strong>导出与分享前请先逐页过一遍</Text>，
+            确认没有「待确认 / 暂无 / TBD」这类内部语句。
+          </Text>
+          <Alert
+            type="warning"
+            showIcon
+            style={{ margin: '12px 0' }}
+            message="确认只对当前版本有效"
+            description="之后再改任何一页的文案，这个确认会自动失效，需要重新确认一次。"
+          />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={reviewChecked} onChange={(e) => setReviewChecked(e.target.checked)} />
+            <span>我已逐页校对这份方案，可以交付客户</span>
+          </label>
+        </div>
       </Modal>
 
       {/* 方案全屏阅读器（演示模式）：逐页渲染复用 PlanSlide */}

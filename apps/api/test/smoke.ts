@@ -1530,6 +1530,40 @@ async function main(): Promise<void> {
   check('越界页码被拒（400，不会误改别的页）', badIndex.status === 400);
   await prisma.planProject.delete({ where: { id: editSeed.id } });
 
+  // ---------- 交付前校对门禁（G-08） ----------
+  // 确认只对当前版本有效：改任何一页文案都必须重新确认，
+  // 否则用户勾完再改一个字，导出/分享出去的还是没校对过的版本。
+  const reviewSeed = await prisma.planProject.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      title: '校对门禁验证',
+      style: 'A',
+      edition: 'standard',
+      pageCount: 9,
+      pages: [{ type: 'scene', heading: '待校对标题', subtitle: '', body: '正文', bullets: ['要点'], narration: '' }],
+      versionNo: 1,
+    },
+  });
+  const notReviewed = await request<{ reviewed?: boolean }>(base, `/api/plans/${reviewSeed.id}`, authA);
+  check('未校对时 reviewed 为 false（导出与分享会被拦）', notReviewed.body?.reviewed === false);
+  const reviewedNow = await request<{ reviewed?: boolean; versionNo: number }>(base, `/api/plans/${reviewSeed.id}/review`, {
+    ...authA, method: 'POST',
+  });
+  check('确认后 reviewed 为 true', reviewedNow.status === 201 && reviewedNow.body?.reviewed === true);
+  const afterReview = await request<{ reviewed?: boolean }>(base, `/api/plans/${reviewSeed.id}`, authA);
+  check('重新拉取仍为已确认（真的落库了，不是接口响应里现算的）', afterReview.body?.reviewed === true);
+  // 核心：改一页 → versionNo+1 → 确认必须自动失效
+  await request(base, `/api/plans/${reviewSeed.id}/pages/0`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ heading: '改过之后的标题' }),
+  });
+  const afterEdit = await request<{ reviewed?: boolean; versionNo: number }>(base, `/api/plans/${reviewSeed.id}`, authA);
+  check(
+    '改任意一页后校对状态自动失效（防"勾完再改一个字"）',
+    afterEdit.body?.reviewed === false && afterEdit.body?.versionNo === 2,
+  );
+  await prisma.planProject.delete({ where: { id: reviewSeed.id } });
+
   // ---------- 素材库投稿：提交 + 我的投稿列表 ----------
   const subFd2 = new FormData();
   subFd2.append('file', new Blob([Buffer.from('fake-mp4-bytes')], { type: 'video/mp4' }), 'clip.mp4');

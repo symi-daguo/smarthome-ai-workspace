@@ -109,6 +109,16 @@ export class PlansController {
     });
   }
 
+  /** 逐页校对确认：把当前版本标记为已校对；之后任何一次改文案都会让它自动失效 */
+  @RequirePermissions('content:generate')
+  @Post(':id/review')
+  review(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+  ) {
+    return this.plans.review(user.activeTenantId as string, id);
+  }
+
   @RequirePermissions('content:generate')
   @Delete(':id')
   remove(
