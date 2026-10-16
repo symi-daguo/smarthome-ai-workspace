@@ -94,16 +94,23 @@ const PRICE_CHIPS = [
 interface PlanDef {
   key: string;
   name: string;
-  price: string;
   tokens: string;
   perks: string[];
   highlight?: boolean;
 }
 
+/**
+ * 额度档位参考值——**不是订阅商品，也不锁任何功能**。
+ *
+ * 计价与发额度都由部署者决定（`BILLING_*_TOKENS` 环境变量 + 管理员按账号发放），
+ * 这里的数字只是给部署者一个分配参考：给不同角色配多少额度合适。
+ * 之前写成「入门包/标准包/团队包 + 按部署者定价」，容易被理解成订阅制，
+ * 与本项目开源免费的定位冲突，故改为「档位参考」。
+ */
 const PLANS: PlanDef[] = [
-  { key: 'basic', name: '入门包', price: '按部署者定价', tokens: '80,000 token', perks: ['适合个人体验', '基础功能全覆盖', '社区支持'] },
-  { key: 'standard', name: '标准包', price: '按部署者定价', tokens: '1,600,000 token', perks: ['适合门店日常', '11 套方案风格库', '点位/报价工具'], highlight: true },
-  { key: 'enterprise', name: '团队包', price: '按部署者定价', tokens: '30,000,000 token', perks: ['适合多账号协作', '知识库与素材库', '优先支持'] },
+  { key: 'basic', name: '轻量档', tokens: '80,000 token', perks: ['适合个人体验', '基础功能全覆盖', '社区支持'] },
+  { key: 'standard', name: '门店常用档', tokens: '1,600,000 token', perks: ['适合门店日常', '11 套方案风格库', '点位/报价工具'], highlight: true },
+  { key: 'enterprise', name: '团队档', tokens: '30,000,000 token', perks: ['适合多账号协作', '知识库与素材库', '优先支持'] },
 ];
 
 /** 邀请码：用户 id 派生稳定 6 位码（返点结算 0.2.0 接入后端） */
@@ -161,7 +168,7 @@ export function TokenCenter(): ReactNode {
   const confirmRecharge = (): void => {
     modal.info({
       title: '支付通道即将开放',
-      content: '在线充值与发票能力将在 S3 版本接入，当前套餐仅作展示。确认后可联系平台管理员人工开通。',
+      content: '本项目开源免费，不设付费墙、不做在线支付。额度由部署者自行设定与发放，这里展示的是分配参考档位。',
       okText: '我知道了',
     });
   };
@@ -376,6 +383,15 @@ export function TokenCenter(): ReactNode {
         <Col xs={24} lg={12}>
           <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
             <Text strong style={{ fontSize: 15 }}>我的额度</Text>
+            {/* 额度透明不是"给你看余额"，是让你知道这钱花在哪、自己配了多少、还剩多少。
+                能力一律不锁——额度只影响部署者控成本，锁功能是付费墙的做法，与开源定位相反。 */}
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginTop: 12, fontSize: 12.5 }}
+              message="这是你自己部署的实例，额度由你设定，不设付费墙"
+              description="本项目开源免费：任何功能都不会因为额度不足被锁。额度只是让部署者能看清成本、避免误用；计费单价与初始额度都可用 BILLING_* 环境变量调整，额度用完也只是暂停 AI 调用，资料、方案、报价、团队等功能不受影响。"
+            />
             <Row gutter={[16, 16]} style={{ marginTop: 14 }}>
               <Col xs={24} md={10}>
                 <div style={{ fontSize: 34, fontWeight: 700, color: token.colorPrimary, lineHeight: 1.2 }}>
@@ -558,12 +574,12 @@ export function TokenCenter(): ReactNode {
       </Card>
 
       <Modal
-        title="充值额度"
+        title="额度档位参考"
         open={rechargeOpen}
         width={760}
         onCancel={() => setRechargeOpen(false)}
         onOk={confirmRecharge}
-        okText="立即充值"
+        okText="知道了"
         cancelText="稍后再说"
         destroyOnClose
       >
@@ -587,7 +603,6 @@ export function TokenCenter(): ReactNode {
                       <Text strong>{plan.name}</Text>
                       {plan.highlight ? <Tag color="purple">推荐</Tag> : null}
                     </Space>
-                    <Text style={{ fontSize: 22, fontWeight: 600, color: token.colorPrimary }}>{plan.price}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>{plan.tokens}</Text>
                     {plan.perks.map((perk) => (
                       <Text key={perk} type="secondary" style={{ fontSize: 12 }}>· {perk}</Text>
@@ -602,7 +617,7 @@ export function TokenCenter(): ReactNode {
           type="info"
           showIcon
           style={{ marginTop: 16 }}
-          message="额度按统一单位计量，不同 AI 能力按单价扣减；充值后即时到账，支持开票（S3）。"
+          message="额度按统一 token 计量，不同 AI 能力按单价扣减。开源版无付费墙：能力不因额度锁定，额度只用于让部署者能看清成本、避免误用。实际发放由管理员在后台按账号进行。"
         />
       </Modal>
     </div>
