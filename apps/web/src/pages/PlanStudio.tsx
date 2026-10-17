@@ -20,6 +20,10 @@ import { api, fileUrl } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { newRequestId } from '../lib/request-id';
 import { withFloorplanPage } from '../lib/planPages';
+import {
+  CORE_MODULES, PAGE_COUNT_MAX,
+  materialPageMinimum, resolvePageCount, pageCountHint,
+} from '../lib/pageBudget';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText } from '../lib/planPptx';
@@ -150,6 +154,9 @@ export function PlanStudio(): ReactNode {
   const [style, setStyle] = useState('A');
   const [version, setVersion] = useState<'standard' | 'presale' | 'private'>('standard');
   const [pageCount, setPageCount] = useState(9);
+  /** 页数是否走「自定义」输入；档位按钮与自定义互斥，选档位会收起自定义 */
+  const [customPages, setCustomPages] = useState(false);
+  const [customValue, setCustomValue] = useState(9);
   const [form] = Form.useForm();
   const [plan, setPlan] = useState<PlanDetail | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -422,6 +429,27 @@ const [editing, setEditing] = useState<{
     renderedFloorplanUrl: plan?.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
     layoutPoints: plan?.layoutPoints ?? null,
   };
+  // 页数档位：默认基数 / 12 页（参考站同档位），自定义另开输入
+  const pageChoices = useMemo(() => [CORE_MODULES, CORE_MODULES + 3], []);
+  // 素材计数：户型图有则 1 张；效果图尚未接入（批次 3），接通后这里补 renderCount
+  const materials = useMemo(() => ({
+    floorplanCount: plan?.floorplanAssetId ? 1 : 0,
+    renderCount: 0,
+  }), [plan?.floorplanAssetId]);
+  const editionKey: 'standard' | 'presale' | 'private' =
+    version === 'presale' ? 'presale' : version === 'private' ? 'private' : 'standard';
+  const budget = useMemo(
+    () => pageCountHint(
+      resolvePageCount(pageCount, materials, editionKey),
+      pageCount, materials, editionKey,
+    ),
+    [pageCount, materials, editionKey],
+  );
+  const materialMin = useMemo(
+    () => materialPageMinimum(materials, editionKey),
+    [materials, editionKey],
+  );
+
   // 有户型图素材时补一页「户型与设备点位」。syntheticAt 是插入点：
   // 存文案前用它把索引映射回真实页，虚拟页没有文案，也不参与扣费与版本号。
   const view = useMemo(
@@ -689,16 +717,16 @@ const [editing, setEditing] = useState<{
             </div>
 
             <Text strong style={{ display: 'block', fontSize: 15, margin: '18px 0 8px' }}>方案页数</Text>
-            <div style={{ display: 'flex', gap: 10 }}>
-              {[9, 10, 12].map((n) => {
-                const activeSel = pageCount === n;
+            <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
+              {pageChoices.map((n) => {
+                const activeSel = pageCount === n && !customPages;
                 return (
                   <div
                     key={n}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setPageCount(n)}
-                    onKeyDown={(e) => e.key === 'Enter' && setPageCount(n)}
+                    onClick={() => { setPageCount(n); setCustomPages(false); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { setPageCount(n); setCustomPages(false); } }}
                     style={{
                       flex: 1,
                       textAlign: 'center',
@@ -714,9 +742,54 @@ const [editing, setEditing] = useState<{
                   </div>
                 );
               })}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => { setCustomPages(true); setPageCount(customValue); }}
+                onKeyDown={(e) => e.key === 'Enter' && setCustomPages(true)}
+                style={{
+                  flex: 1,
+                  textAlign: 'center',
+                  padding: '10px 0',
+                  borderRadius: 12,
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  border: `2px solid ${customPages ? token.colorPrimary : token.colorBorderSecondary}`,
+                  background: customPages ? token.colorPrimaryBg : token.colorBgContainer,
+                }}
+              >
+                自定义
+              </div>
             </div>
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
-              {pageCount} 个沟通模块，按额度扣费（单价由部署者配置）。
+            {customPages ? (
+              <div style={{ marginTop: 10 }}>
+                {/* 刻意不用 InputNumber 的 min/max：它会静默拦掉越界输入 ——
+                    实测输 25 会被悄悄退回 9，用户看不到发生了什么。
+                    这里让任意数字都能进来，再由 onChange 可见地夹取（输 25 → 立刻变 20）。 */}
+                <InputNumber
+                  value={customValue}
+                  parser={(v) => (v === '' ? '' : Number(String(v).replace(/[^\d]/g, '')))}
+                  formatter={(v) => `${v}`.replace(/[^\d]/g, '')}
+                  onChange={(v) => {
+                    const n = Math.max(CORE_MODULES, Math.min(PAGE_COUNT_MAX, Number(v ?? CORE_MODULES) || CORE_MODULES));
+                    setCustomValue(n);
+                    setPageCount(n);
+                  }}
+                  addonAfter={`页（可填 ${CORE_MODULES} ~ ${PAGE_COUNT_MAX}）`}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            ) : null}
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8, lineHeight: 1.7 }}>
+              {budget.formula}
+              <br />
+              {budget.expansion}；{budget.cost}（单价由部署者按画质配置）。
+              {materials.floorplanCount > 1 || materials.renderCount > 0 ? (
+                <>
+                  <br />
+                  素材页来自你上传的户型图与效果图本身，不再单独计生成费。
+                </>
+              ) : null}
             </Text>
           </div>
         </div>
