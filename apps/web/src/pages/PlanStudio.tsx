@@ -232,6 +232,8 @@ const [editing, setEditing] = useState<{
   const [exporting, setExporting] = useState(false);
   /** 打包三件套：要先跑一遍 canvas 预裁剪 + 点位合成，比单纯写 PPTX 慢，别共用一个 loading */
   const [packaging, setPackaging] = useState(false);
+  /** 审稿页「完整文案」折叠区（参考站 A3：整篇视图与逐页视图并存） */
+  const [deckTextOpen, setDeckTextOpen] = useState(false);
   const [renderingFloorplan, setRenderingFloorplan] = useState(false);
   /** 预算分配：只有用户改过的分类存覆盖值，其余跟随建议占比 */
   const [splitOverride, setSplitOverride] = useState<Record<string, number | null>>({});
@@ -1209,6 +1211,64 @@ const [editing, setEditing] = useState<{
       ) : null}
 
       {/* 步骤 2：逐页审稿（幻灯片缩略图 + 文字卡片） */}
+      {step === 1 && plan ? (
+        <>
+          {/* 页数摘要状态条（参考站 A2 / app:3380-3384）：
+              审稿页最该看清的就是「这份方案够不够页、会不会交付时缩水」。
+              第 1 步的核算提示管的是生成前，这里管的是交付前，两处都必要。 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              flexWrap: 'wrap',
+              marginBottom: 16,
+              padding: '10px 14px',
+              background: token.colorFillQuaternary,
+              border: `1px solid ${token.colorBorderSecondary}`,
+              borderRadius: 12,
+            }}
+          >
+            <FileTextOutlined style={{ color: token.colorTextTertiary }} />
+            <Text style={{ fontSize: 13 }}>
+              共 <Text strong>{view.pages.length}</Text> 页
+              {materialMin > view.pages.length ? (
+                <Text type="warning">（素材下限 ${materialMin} 页，当前不足）</Text>
+              ) : (
+                <Text type="secondary">（素材下限 ${materialMin} 页，已达标）</Text>
+              )}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              上限 {PAGE_COUNT_MAX} 页
+            </Text>
+            <div style={{ flex: 1 }} />
+            {/* 完整文案与逐页视图并存（参考站 A3）：门店审稿时需要通读一遍看前后是否连贯，
+                逐页卡片看不出这一点。只读而非可编辑 —— 我方按单页 PATCH 且每次 bump 版本号，
+                整篇保存会绕过这道版本控制，两份内容很容易互相覆盖。 */}
+            <Button size="small" icon={<FileTextOutlined />} onClick={() => setDeckTextOpen((v) => !v)}>
+              {deckTextOpen ? '收起完整文案' : '查看完整文案'}
+            </Button>
+          </div>
+          {deckTextOpen ? (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: '16px 20px',
+                background: token.colorBgContainer,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                borderRadius: 14,
+                maxHeight: 420,
+                overflowY: 'auto',
+                lineHeight: 1.9,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              <Text style={{ fontSize: 13.5 }}>{buildNarrationText(plan)}</Text>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
       {step === 1 && plan ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
           {view.pages.map((p, i) => (
