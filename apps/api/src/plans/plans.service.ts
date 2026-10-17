@@ -14,6 +14,7 @@ import { TokenService } from '../billing/token.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { ModelConfigService } from '../llm/model-config.service.js';
 import { generateViaComfyui, generateViaMinimax, generateViaOpenai } from '../media/image-provider.js';
+import type { CreatePlanDto } from './plans.schemas.js';
 
 /**
  * 方案页结构（9 页标准方案模板）：
@@ -44,11 +45,22 @@ interface PlanInput {
   highlights: string;
   keySpaces: string;
   needs: string;
+  // 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）
+  priorityNeeds: string;
+  excludedItems: string;
+  renovationStage: string;
+  existingDevices: string;
+  serviceEvidence: string;
+  serviceScope: string;
+  serviceContact: string;
+  budgetItems: string;
+  budgetSource: string;
   style: string;
   edition: 'standard' | 'presale' | 'private';
   pageCount: number;
   floorplanAssetId?: string | null;
-  layoutPoints?: unknown[] | null;
+  /** 设备点位：x/y 为 0~1 归一化坐标（缩略图与原图通用） */
+  layoutPoints?: { productId: string; name: string; category: string; x: number; y: number }[] | null;
   /** 提交幂等键：命中已有方案直接返回，避免重复调 LLM + 重复扣费 */
   clientRequestId?: string;
 }
@@ -77,6 +89,38 @@ const TOKENS_PER_PAGE: Record<string, number> = {
   presale: Number(process.env.BILLING_PLAN_TOKENS ?? 100),
   private: Number(process.env.BILLING_PLAN_PRIVATE_TOKENS ?? 160),
 };
+
+/** 「补充需求与服务资料」9 项 → 提示词行。只输出填写过的，空项不占篇幅 */
+function salesBriefLines(input: CreatePlanDto): string[] {
+  const rows: [string, string][] = [
+    ['最重要的需求（按优先级）', input.priorityNeeds],
+    ['明确不做的项目', input.excludedItems],
+    ['装修阶段', input.renovationStage],
+    ['现有设备与生态', input.existingDevices],
+    ['真实案例或交付依据', input.serviceEvidence],
+    ['已确认服务范围', input.serviceScope],
+    ['负责人与联系入口', input.serviceContact],
+    ['已确认参考费用', input.budgetItems],
+    ['费用来源与日期', input.budgetSource],
+  ];
+  const filled = rows.filter(([, v]) => v && v.trim());
+  if (!filled.length) return [];
+  const lines = filled.map(([label, v]) => `- ${label}：${v.trim()}`);
+  const excluded = input.excludedItems.trim();
+  return [
+    '',
+    '门店补充的事实（写方案时必须遵守，不要改写成推测，也不要臆造未提供的细节）：',
+    ...lines,
+    // 「明确不做的项目」是**约束**不是事实，混在事实堆里模型会当成背景信息带过。
+    // 实测：不单独强调时，模型照样会在正文里提到客户明确排除的设备。
+    ...(excluded
+      ? ['', `硬性排除：方案正文、要点清单与讲解稿中都不得出现或推荐以下项目（客户已明确不做）：${excluded}`]
+      : []),
+    ...(input.budgetItems.trim() && !input.budgetSource.trim()
+      ? ['注意：门店填了参考费用但没填来源与日期，请在方案里标明费用为参考、未最终确认。']
+      : []),
+  ];
+}
 
 @Injectable()
 export class PlansService {
@@ -134,6 +178,15 @@ export class PlansService {
         highlights: input.highlights,
         keySpaces: input.keySpaces,
         needs: input.needs,
+        priorityNeeds: input.priorityNeeds,
+        excludedItems: input.excludedItems,
+        renovationStage: input.renovationStage,
+        existingDevices: input.existingDevices,
+        serviceEvidence: input.serviceEvidence,
+        serviceScope: input.serviceScope,
+        serviceContact: input.serviceContact,
+        budgetItems: input.budgetItems,
+        budgetSource: input.budgetSource,
         style: input.style,
         edition: input.edition,
         pageCount: pages.length,
@@ -293,6 +346,9 @@ export class PlansService {
       `服务亮点：${input.highlights || ''}`,
       `重点空间：${input.keySpaces || '客餐厅、主卧、玄关、全屋网络'}`,
       `客户需求：${input.needs || '（未提供，按常见三口之家假设）'}`,
+      // 补充资料：只在门店真填了才进提示词。九项全空时输出的是噪音，
+      // 还会挤占预算区���真正有客户诉求的输入。
+      ...salesBriefLines(input),
       `方案视觉风格：${styleName}（文案语气与页面主题匹配该风格）`,
       '',
       `方案共 ${skeleton.length} 页，页序与类型固定如下：`,

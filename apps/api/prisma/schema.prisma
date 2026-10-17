@@ -411,6 +411,18 @@ model PlanProject {
   keySpaces                String   @default("")
   // 客户需求自由文本（家庭成员/装修阶段/最想实现的场景）
   needs                    String   @default("")
+  // 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）。
+  // 独立成列而不是塞一个 JSON：这一组字段要参与 LLM 提示词、也要能按
+  // 「明确不做的项目」做交付前自检，散在 JSON 里查不动。
+  priorityNeeds            String   @default("") // 最重要的需求（按优先级）
+  excludedItems            String   @default("") // 明确不做的项目
+  renovationStage          String   @default("") // 装修阶段
+  existingDevices         String   @default("") // 现有设备与生态
+  serviceEvidence          String   @default("") // 真实案例或交付依据
+  serviceScope             String   @default("") // 已确认服务范围
+  serviceContact           String   @default("") // 负责人与联系入口（不自动带入登录账号）
+  budgetItems              String   @default("") // 已确认参考费用（每行：项目|类别|金额区间）
+  budgetSource             String   @default("") // 费用来源与日期
   // A-K 风格键
   style                    String   @default("A")
   // standard | presale | private

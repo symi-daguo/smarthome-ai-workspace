@@ -31,6 +31,19 @@ import { PlanSlide, PAGE_BULLET_LIMIT } from '../components/PlanSlide';
 
 const { Text, Title } = Typography;
 
+/** 「补充需求与服务资料」9 项，顺序与参考站 P2_SALES_FIELDS 一致 */
+const SALES_FIELDS: { name: string; label: string; placeholder: string; extra?: string }[] = [
+  { name: 'priorityNeeds', label: '最重要的需求（按优先级）', placeholder: '例如：先解决起夜照明，再考虑客厅会客；仅填写客户已表达的需求' },
+  { name: 'excludedItems', label: '明确不做的项目', placeholder: '例如：不做窗帘联动、不增加摄像头' },
+  { name: 'renovationStage', label: '装修阶段', placeholder: '例如：准备水电、已精装入住；不确定可留空' },
+  { name: 'existingDevices', label: '现有设备与生态', placeholder: '填写已有设备、希望保留的开关与控制习惯' },
+  { name: 'serviceEvidence', label: '真实案例或交付依据', placeholder: '填写同类项目、实际解决的问题及可核对的记录；没有就留空' },
+  { name: 'serviceScope', label: '已确认服务范围', placeholder: '填写包含/不包含的服务、现场对接、使用指导和售后范围' },
+  { name: 'serviceContact', label: '负责人与联系入口', placeholder: '填写可向业主展示的负责人、电话或微信', extra: '不会自动使用登录账号信息，避免把不该给客户的联系方式带出去' },
+  { name: 'budgetItems', label: '已确认参考费用（选填）', placeholder: '每行一条：本次|灯光与开关|2500-3000', extra: '这些项目不计入本次合计，也不代替正式报价' },
+  { name: 'budgetSource', label: '费用来源与日期', placeholder: '例如：门店确认的参考清单及日期；未确认价格可不填费用明细' },
+];
+
 const STEPS = ['客户资料', '逐页审稿', '生成与校对', '交付客户'];
 
 /**
@@ -241,6 +254,8 @@ const [editing, setEditing] = useState<{
           highlights: values.highlights ?? '',
           keySpaces: values.keySpaces ?? '',
           needs: values.needs ?? '',
+          // 补充资料 9 项：空串也照样传，后端 DTO 有默认值，不传会当成缺字段
+          ...Object.fromEntries(SALES_FIELDS.map((f) => [f.name, (values as Record<string, string>)[f.name] ?? ''])),
           style,
           edition: version,
           pageCount,
@@ -644,6 +659,22 @@ const [editing, setEditing] = useState<{
             <Form.Item label="客户需求" name="needs">
               <Input.TextArea rows={3} placeholder="请写清家庭成员、装修阶段、预算、重点空间和最想实现的生活场景。" />
             </Form.Item>
+
+            {/* 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）。
+                默认折叠：九项全不填是常态，铺开占掉半屏反而挤掉真正要填的资料。 */}
+            <details style={{ marginTop: 4 }}>
+              <summary style={{ cursor: 'pointer', fontSize: 13, color: token.colorTextSecondary, userSelect: 'none' }}>
+                补充需求与服务资料（选填）
+              </summary>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '6px 0 10px', lineHeight: 1.7 }}>
+                填写已有事实，帮助方案解释取舍与服务依据。未知内容留空；参考费用不代替正式报价。
+              </Text>
+              {SALES_FIELDS.map((f) => (
+                <Form.Item key={f.name} label={f.label} name={f.name} extra={f.extra}>
+                  <Input.TextArea rows={3} maxLength={2000} placeholder={f.placeholder} />
+                </Form.Item>
+              ))}
+            </details>
           </Form>
 
           <div style={{ flex: 1, minWidth: 320 }}>
