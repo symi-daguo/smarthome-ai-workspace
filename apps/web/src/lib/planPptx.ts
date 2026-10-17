@@ -3,7 +3,6 @@ import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } fro
 import { catMeta, compositePoints } from './pointOverlay';
 import { customerText } from './planSanitize';
 import { withFloorplanPage } from './planPages';
-import { downloadBlob } from './download';
 
 /**
  * 方案 PPT 生成器（16:9 原生可编辑幻灯片）。
@@ -169,7 +168,7 @@ function pageImageType(page: PlanPage): string {
 
 type Theme = ReturnType<typeof planTheme>;
 
-export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
+export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob; fileName: string }> {
   const t = planTheme(plan.style);
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: 'WIDE', width: W, height: H });
@@ -268,8 +267,10 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<void> {
   // 用通用二进制类型：pptx 的 Office MIME 在部分宿主（Electron 内嵌浏览器）
   // 会被判定为不安全类型而静默丢弃，表现就是「转圈然后 Downloads 里什么都没有」。
   // 下载行为由后缀名决定，与 MIME 无关。
-  downloadBlob(new Blob([buf], { type: 'application/octet-stream' }), fileName);
-  console.info('[pptx] 已触发下载', fileName);
+  // 产出而非直接下载：交付三件套要把它交给服务端打包（文件名得由服务端
+  // Content-Disposition 决定 —— 浏览器 blob 下载的文件名实测一律变随机名）。
+  // 单独下载的能力由调用方拿 blob 自己触发。
+  return { blob: new Blob([buf], { type: 'application/octet-stream' }), fileName };
 }
 
 /* ---------- primitives ---------- */

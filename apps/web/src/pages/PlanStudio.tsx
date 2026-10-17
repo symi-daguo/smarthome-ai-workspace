@@ -230,6 +230,8 @@ const [editing, setEditing] = useState<{
   const [showNarration, setShowNarration] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /** 打包三件套：要先跑一遍 canvas 预裁剪 + 点位合成，比单纯写 PPTX 慢，别共用一个 loading */
+  const [packaging, setPackaging] = useState(false);
   const [renderingFloorplan, setRenderingFloorplan] = useState(false);
   /** 预算分配：只有用户改过的分类存覆盖值，其余跟随建议占比 */
   const [splitOverride, setSplitOverride] = useState<Record<string, number | null>>({});
@@ -578,12 +580,13 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     setExporting(true);
     try {
-      await exportPlanPptx({
+      const { blob, fileName } = await exportPlanPptx({
         ...plan,
         floorplanUrl: plan.floorplanAssetId ? fileUrl(`/api/media/assets/${plan.floorplanAssetId}/file`) : null,
         renderedFloorplanUrl: plan.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
         layoutPoints: plan.layoutPoints ?? null,
       });
+      downloadBlob(blob, fileName);
       message.success('PPTX 已下载（16:9 原生幻灯片，可直接编辑）');
     } catch (e) {
       message.error((e as Error).message || '导出失败');
@@ -593,6 +596,49 @@ const [editing, setEditing] = useState<{
   };
 
   const downloadPptx = (): void => requireReview(() => void doExportPptx());
+
+  /**
+   * 交付三件套：PPTX + 完整讲稿 + 图片包，打成一个 zip 给客户。
+   *
+   * 为什么不直接下载：浏览器 blob 下载的文件名由宿主决定，实测一律落成随机名，
+   * 而交付物的名字恰恰最不该丢。走服务端打包后，文件名由 Content-Disposition 给定，
+   * 图片包也由服务端从 media 直接取，不必把原图再传一遍。
+   */
+  const doPackage = async (): Promise<void> => {
+    if (!plan) return;
+    setPackaging(true);
+    try {
+      const { blob } = await exportPlanPptx({
+        ...plan,
+        floorplanUrl: plan.floorplanAssetId ? fileUrl(`/api/media/assets/${plan.floorplanAssetId}/file`) : null,
+        renderedFloorplanUrl: plan.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
+        layoutPoints: plan.layoutPoints ?? null,
+      });
+      const fd = new FormData();
+      fd.append('pptx', new File([blob], `${plan.title}.pptx`, { type: 'application/octet-stream' }));
+      fd.append('narration', buildNarrationText(plan));
+      const res = await api<{ token: string; fileName: string; size: number; contents: string[] }>(
+        `/api/plans/${plan.id}/package`,
+        { method: 'POST', body: fd },
+      );
+      // 刻意**不**走 fileUrl：它会追加登录 token，URL 变成 ?token=签名&token=登录，
+      // Express 那边 token 解析成数组，签名校验必然失败（实测 404 PACKAGE_LINK_INVALID）。
+      // 下载端点本来就是 presigned 语义，不带任何登录态。
+      const a = document.createElement('a');
+      a.href = `/api/plans/package/download?token=${encodeURIComponent(res.token)}`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      message.success(`交付包已生成（${res.contents.length} 个文件 · ${(res.size / 1024 / 1024).toFixed(1)} MB）：${res.fileName}`);
+    } catch (e) {
+      message.error((e as Error).message || '打包失败');
+    } finally {
+      setPackaging(false);
+    }
+  };
+
+  const packageDelivery = (): void => requireReview(() => void doPackage());
 
   // 渲染精装修效果图：基于已挂接的客户户型图，按方案风格+生态 AI 出图
   const renderFloorplan = async (): Promise<void> => {
@@ -1301,11 +1347,14 @@ const [editing, setEditing] = useState<{
               )}
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
-              <Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={downloadPptx} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
-                下载方案 PPTX
+              <Button type="primary" size="large" icon={<DownloadOutlined />} loading={packaging} onClick={packageDelivery} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 190 }}>
+                打包交付三件套
+              </Button>
+              <Button size="large" icon={<DownloadOutlined />} loading={exporting} onClick={downloadPptx}>
+                只下载 PPTX
               </Button>
               <Button size="large" icon={<FileTextOutlined />} onClick={downloadScript}>
-                下载完整讲稿
+                只下载讲稿
               </Button>
               <Button size="large" icon={<FullscreenOutlined />} onClick={() => setReaderOpen(true)}>
                 全屏播放
@@ -1314,6 +1363,10 @@ const [editing, setEditing] = useState<{
                 复制分享链接
               </Button>
             </div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+              交付三件套 = 方案 PPTX + 完整讲稿 + 图片包（户型图与效果图原图），打成一个 zip 发给客户。
+              图片包由服务端按方案素材自动收集，不用自己整理；链接 2 小时内有效，方案改版后自动失效。
+            </Text>
             <div
               style={{
                 margin: '22px auto 0',
@@ -1361,7 +1414,7 @@ const [editing, setEditing] = useState<{
               生成方案文案
             </Button>
           ) : step < STEPS.length - 1 ? (
-            <Button size="large" type="primary" onClick={() => setStep(step + 1)} disabled={!plan} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
+            <Button data-testid="goto-delivery-btn" size="large" type="primary" onClick={() => setStep(step + 1)} disabled={!plan} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
               {step === 1 ? '生成与校对' : '进入交付'}
             </Button>
           ) : (

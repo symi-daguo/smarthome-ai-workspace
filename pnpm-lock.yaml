@@ -55,6 +55,9 @@ importers:
       jsdom:
         specifier: ^30.1.2
         version: 30.1.2
+      jszip:
+        specifier: ^3.10.2
+        version: 3.10.2
       mammoth:
         specifier: ^1.13.0
         version: 1.13.0

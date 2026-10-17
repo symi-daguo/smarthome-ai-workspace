@@ -1672,6 +1672,79 @@ async function main(): Promise<void> {
     '改任意一页后校对状态自动失效（防"勾完再改一个字"）',
     afterEdit.body?.reviewed === false && afterEdit.body?.versionNo === 2,
   );
+
+  // ---------- 交付三件套打包 + 签名直链（批次 0+9） ----------
+  // 搬到服务端的唯一理由是文件名：浏览器 blob 下载实测一律落成随机名。
+  // 所以「Content-Disposition 里有中文方案名」本身就是一条必须锁住的断言。
+  const pkgFd = () => {
+    const fd = new FormData();
+    fd.append('pptx', new Blob([Buffer.from('fake-pptx-bytes')], { type: 'application/octet-stream' }), '方案.pptx');
+    fd.append('narration', '# 完整讲稿\n\n这是讲稿正文。');
+    return fd;
+  };
+  const pkgBeforeReview = await fetch(`${base}/api/plans/${reviewSeed.id}/package`, {
+    method: 'POST', headers: authA.headers, body: pkgFd(),
+  });
+  check(
+    '未校对就打包被拒（409：免校对直接发客户是最贵的错）',
+    pkgBeforeReview.status === 409,
+  );
+  // 改页后校对已失效，重新确认再打包
+  await request(base, `/api/plans/${reviewSeed.id}/review`, { ...authA, method: 'POST' });
+  const pkgRes = await fetch(`${base}/api/plans/${reviewSeed.id}/package`, {
+    method: 'POST', headers: authA.headers, body: pkgFd(),
+  });
+  const pkgJson = (await pkgRes.json().catch(() => null)) as
+    | { token?: string; fileName?: string; contents?: string[]; size?: number }
+    | null;
+  check(
+    '校对后打包成功并给出签名直链',
+    pkgRes.status === 201 && typeof pkgJson?.token === 'string' && typeof pkgJson?.fileName === 'string',
+  );
+  check(
+    '交付包含 PPTX 与完整讲稿两项（参考站的三件套）',
+    (pkgJson?.contents ?? []).some((c) => c.endsWith('.pptx')) && (pkgJson?.contents ?? []).some((c) => c.endsWith('.md')),
+  );
+  if (pkgJson?.token) {
+    const dl = await fetch(`${base}/api/plans/package/download?token=${encodeURIComponent(pkgJson.token)}`);
+    const disp = dl.headers.get('content-disposition') ?? '';
+    check(
+      '签名直链下载成功且返回 zip',
+      dl.status === 200 && (dl.headers.get('content-type') ?? '').includes('zip'),
+    );
+    check(
+      '文件名带中文方案名与版本号（不被宿主改成随机名）',
+      disp.includes('filename*=UTF-8') && /%E6%A0%A1%E5%AF%B9/.test(disp) && /V2/.test(disp),
+    );
+    // 判 zip 要看 PK 魔数，不能只判长度 > 0 —— 任何错误响应体都有长度，
+    // 那条弱断言正是上一轮把 4 个失败误报成通过的原因
+    const dlBuf = new Uint8Array(await dl.arrayBuffer());
+    check(
+      '下载到的是真 zip（PK 魔数，不是错误页）',
+      dlBuf.length > 4 && dlBuf[0] === 0x50 && dlBuf[1] === 0x4b,
+    );
+    // 篡改 token 必须拿不到东西
+    const bad = await fetch(`${base}/api/plans/package/download?token=${pkgJson.token}x`);
+    check('被改过的签名链接拿不到交付包（404）', bad.status === 404);
+    // 回归锁：前端若用 fileUrl() 拼 URL 会再追加一个登录 token，变成 ?token=a&token=b，
+    // Express 把 query 解析成数组后签名必然失败。那种情况也必须干净地 404，不能 500。
+    const doubled = await fetch(
+      `${base}/api/plans/package/download?token=${encodeURIComponent(pkgJson.token)}&token=whatever`,
+    );
+    check('URL 里出现两个 token 时干净地 404（不 500、不给包）', doubled.status === 404);
+    // 核心失效规则：方案一改版，客户手里的旧链接不能悄悄指向新版本
+    await request(base, `/api/plans/${reviewSeed.id}/pages/0`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ heading: '再改一次标题' }),
+    });
+    const stale = await fetch(`${base}/api/plans/package/download?token=${encodeURIComponent(pkgJson.token)}`);
+    check('方案改版后旧交付链接失效（410，不静默给新版本）', stale.status === 410);
+  }
+  const pkgNoFile = await fetch(`${base}/api/plans/${reviewSeed.id}/package`, {
+    method: 'POST',
+    headers: { ...authA.headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ narration: 'x' }),
+  });
+  check('没带 PPTX 文件被打回（400）', pkgNoFile.status === 400);
   await prisma.planProject.delete({ where: { id: reviewSeed.id } });
 
   // ---------- 素材库投稿：提交 + 我的投稿列表 ----------
