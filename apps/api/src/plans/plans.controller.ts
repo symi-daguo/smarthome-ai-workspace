@@ -61,6 +61,8 @@ export class PlansController {
       floorplanAssetId: dto.floorplanAssetId,
       extraFloorplanAssetIds: dto.extraFloorplanAssetIds,
       floorplanFloors: dto.floorplanFloors,
+      renderAssetIds: dto.renderAssetIds,
+      renderAssetMeta: dto.renderAssetMeta,
       layoutPoints: dto.layoutPoints,
       clientRequestId: dto.clientRequestId,
     });

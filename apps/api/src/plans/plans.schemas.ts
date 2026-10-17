@@ -31,6 +31,23 @@ export const createPlanSchema = z.object({
   extraFloorplanAssetIds: z.array(z.string().uuid()).max(8).optional().default([]),
   // 每张图的楼层名，长度与「主图 + 额外图」一致
   floorplanFloors: z.array(z.string().max(20)).max(8).optional().default([]),
+  // 装修效果图（≤5 张）与它们的分组元数据，两数组同序
+  renderAssetIds: z.array(z.string().uuid()).max(5).optional().default([]),
+  renderAssetMeta: z
+    .array(
+      z.object({
+        clientId: z.string().max(60),
+        room: z.string().max(30),
+        roomConfirmed: z.boolean(),
+        useMode: z.enum(['generate', 'provided']).default('generate'),
+        sceneName: z.string().max(60).default(''),
+        representative: z.boolean().default(false),
+        fileName: z.string().max(120).default(''),
+      }),
+    )
+    .max(5)
+    .optional()
+    .default([]),
   layoutPoints: z
     .array(
       z.object({

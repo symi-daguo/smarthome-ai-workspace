@@ -62,6 +62,8 @@ interface PlanInput {
   /** createPlanSchema 给了默认值 []，这里声明为必填数组，服务层不必再判空 */
   extraFloorplanAssetIds: string[];
   floorplanFloors: string[];
+  renderAssetIds: string[];
+  renderAssetMeta: { clientId: string; room: string; roomConfirmed: boolean; useMode: 'generate' | 'provided'; sceneName: string; representative: boolean; fileName: string }[];
   /** 设备点位：x/y 为 0~1 归一化坐标（缩略图与原图通用） */
   layoutPoints?: { productId: string; name: string; category: string; x: number; y: number }[] | null;
   /** 提交幂等键：命中已有方案直接返回，避免重复调 LLM + 重复扣费 */
@@ -92,6 +94,39 @@ const TOKENS_PER_PAGE: Record<string, number> = {
   presale: Number(process.env.BILLING_PLAN_TOKENS ?? 100),
   private: Number(process.env.BILLING_PLAN_PRIVATE_TOKENS ?? 160),
 };
+
+/** 效果图上限（对齐参考站 PLAN_RENDER_MAX_FILES） */
+const RENDER_MAX = 5;
+
+/**
+ * 效果图提交前校验（对齐参考站 app.js:3661-3662）。
+ *
+ * 为什么放在服务端而不是只在前端拦：前端校验能被绕过（改个 body 就行），
+ * 而分组信息直接决定「哪张是方案主视觉」——漏了空间名，出图阶段才知道，
+ * 那时 LLM 已经跑完、额度已经扣了。
+ */
+function assertRenderAssetsReady(
+  ids: string[],
+  meta: { room: string; roomConfirmed: boolean; useMode: string; sceneName: string; representative: boolean }[],
+): void {
+  if (!ids.length) return;
+  if (ids.length > RENDER_MAX) throw new BadRequestException(`本方案已选择 ${RENDER_MAX} 张效果图，请先移除一张`);
+  const bad = meta.findIndex((m) => !m.room?.trim() || !m.roomConfirmed);
+  if (bad >= 0) {
+    throw new BadRequestException('请填写每张效果图的实际空间并确认，同一空间可使用同名；不同楼层请写明楼层。');
+  }
+  const noScene = meta.findIndex((m) => m.useMode === 'provided' && !m.sceneName?.trim());
+  if (noScene >= 0) throw new BadRequestException('选择「直接展示已有状态图」时，请填写该图对应的场景名称。');
+  // 代表图互斥兜底：同一空间**被勾为代表图的**只能一张。
+  // 只看房间是否重复是错的：同空间本来就允许放多张图，只是不允许都当主视觉。
+  const repSeen = new Set<string>();
+  meta.forEach((m) => {
+    if (!m.representative) return;
+    const room = m.room.trim();
+    if (repSeen.has(room)) throw new BadRequestException(`空间「${room}」只能有一张代表图`);
+    repSeen.add(room);
+  });
+}
 
 /** 户型图上限（对齐参考站 PLAN_FLOORPLAN_MAX_FILES） */
 const FLOORPLAN_MAX_FILES = 3;
@@ -186,6 +221,8 @@ export class PlansService {
       });
       if (existing) return { ...existing, deduped: true };
     }
+    // 效果图校验放在**调 LLM 之前**：分组没填就重跑一次生成，代价是白扣一次额度。
+    assertRenderAssetsReady(input.renderAssetIds, input.renderAssetMeta);
     const styleName = STYLE_NAMES[input.style] ?? input.style;
     const pages = await this.generatePages(input, styleName);
     const cost = pages.length * (TOKENS_PER_PAGE[input.edition] ?? 100);
@@ -212,6 +249,8 @@ export class PlansService {
         needs: input.needs,
         extraFloorplanAssetIds: dedupeFloorplanExtras(input.floorplanAssetId, input.extraFloorplanAssetIds),
         floorplanFloors: alignFloorplanFloors(input.floorplanAssetId, input.extraFloorplanAssetIds, input.floorplanFloors),
+        renderAssetIds: input.renderAssetIds,
+        renderAssetMeta: input.renderAssetMeta as never,
         priorityNeeds: input.priorityNeeds,
         excludedItems: input.excludedItems,
         renovationStage: input.renovationStage,
@@ -422,17 +461,29 @@ export class PlansService {
       '硬性合规要求：不得出现未经确认的时效、质保、包入住承诺；价格一律用区间；预算页 body 末尾注明"以上为建议区间，实际报价以门店方案师现场确认为准"；文案专业克制、面向终端客户可直接阅读。',
     ].join('\n');
 
-    let pages: PlanPage[];
-    try {
-      const raw = await this.llm.chatJson<unknown>({
-        systemPrompt: '你是资深全屋智能方案设计师，为智能家居服务商撰写交付客户的方案文案。',
-        prompt,
-        maxTokens: 12000,
-        rag: { tenantId: input.tenantId, userId: input.userId, scene: 'plan', query: `${input.title} ${input.customer} ${input.needs} ${input.keySpaces}` },
-      });
-      pages = this.sanitizePages(raw, skeleton);
-    } catch (e) {
-      this.logger.warn(`方案生成失败: ${(e as Error).message}`);
+    // 模型偶尔会把 JSON 说到一半就停（输出长度撞上限或中途断流），
+    // 直接抛错等于让门店反复手动重试。实测同一份提示重试一次即可通过，
+    // 所以这里做一次重试再判定失败。
+    // 显式给 null：strict 模式不允许「声明后未赋值就读取」
+    let pages: PlanPage[] | null = null;
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const raw = await this.llm.chatJson<unknown>({
+          systemPrompt: '你是资深全屋智能方案设计师，为智能家居服务商撰写交付客户的方案文案。',
+          prompt,
+          maxTokens: 12000,
+          rag: { tenantId: input.tenantId, userId: input.userId, scene: 'plan', query: `${input.title} ${input.customer} ${input.needs} ${input.keySpaces}` },
+        });
+        pages = this.sanitizePages(raw, skeleton);
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e as Error;
+        this.logger.warn(`方案生成失败（第 ${attempt} 次尝试）: ${lastError.message}`);
+      }
+    }
+    if (!pages) {
       throw new ServiceUnavailableException({
         code: 'PLAN_GEN_FAILED',
         message: '方案生成失败（模型返回格式异常），请重试或调整描述',
