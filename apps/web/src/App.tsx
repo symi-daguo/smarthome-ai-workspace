@@ -22,7 +22,7 @@ import { LightingStudio } from './pages/LightingStudio';
 import { LightingDiagnosis } from './pages/LightingDiagnosis';
 import { ImageCanvas } from './pages/ImageCanvas';
 import { Feedback } from './pages/Feedback';
-import { Vip } from './pages/Vip';
+import { Quota } from './pages/Quota';
 import { QuoteStudio } from './pages/QuoteStudio';
 import { ProductCenter } from './pages/ProductCenter';
 import { KnowledgeBase } from './pages/KnowledgeBase';
@@ -55,7 +55,9 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="lighting" element={<LightingStudio />} />
             <Route path="lighting-diagnosis" element={<LightingDiagnosis />} />
             <Route path="feedback" element={<Feedback />} />
-            <Route path="vip" element={<Vip />} />
+            {/* 额度说明页。原 /vip 旧链接仍能进：老书签与历史对话不该因为改名就 404 */}
+            <Route path="quota" element={<Quota />} />
+            <Route path="vip" element={<Navigate to="/quota" replace />} />
             <Route path="quote" element={<QuoteStudio />} />
             <Route path="products" element={<ProductCenter />} />
             <Route path="knowledge" element={<KnowledgeBase />} />

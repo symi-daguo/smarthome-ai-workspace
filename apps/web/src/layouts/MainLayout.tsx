@@ -275,7 +275,7 @@ export function MainLayout(): ReactNode {
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
-    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/team', '/tokens', '/model-config', '/lighting', '/lighting-diagnosis', '/feedback', '/vip']) {
+    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/team', '/tokens', '/model-config', '/lighting', '/lighting-diagnosis', '/feedback', '/quota']) {
       if (p.startsWith(k)) return k;
     }
     return '/';
@@ -725,7 +725,7 @@ export function MainLayout(): ReactNode {
           {showBilling && (
             <Button
               size="small"
-              onClick={() => navigate('/vip')}
+              onClick={() => navigate('/quota')}
               style={{
                 borderRadius: 16,
                 background: BRAND_GRADIENT,
