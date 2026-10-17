@@ -14,14 +14,20 @@ import {
   PlusOutlined,
   RightOutlined,
 } from '@ant-design/icons';
-import { Alert, App as AntApp, Button, Drawer, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
+import { Alert, App as AntApp, Button, Checkbox, Drawer, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Spin, Steps, Tag, Tooltip, Typography, theme } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { newRequestId } from '../lib/request-id';
+import { compressImage } from '../lib/compress';
 import { withFloorplanPage } from '../lib/planPages';
 import { FLOORPLAN_MAX, appendFloorplanFiles, type FloorplanSlot } from '../lib/floorplan';
+import {
+  RENDER_MAX, ROOM_OPTIONS, checkRenderUpload, checkRenderReady,
+  toggleRepresentative, onRoomChanged, renderPageCount, ensureRepresentatives as ensureRepresentativeList,
+  type RenderAsset,
+} from '../lib/renderAsset';
 import {
   CORE_MODULES, PAGE_COUNT_MAX,
   materialPageMinimum, resolvePageCount, pageCountHint,
@@ -141,6 +147,17 @@ interface PlanDetail {
   floorplanAssetId?: string | null;
   extraFloorplanAssetIds?: string[];
   floorplanFloors?: string[];
+  /** 装修效果图：与 renderAssetIds 同序，room/representative/useMode 等分组信息存这里 */
+  renderAssetIds?: string[];
+  renderAssetMeta?: {
+    clientId?: string;
+    room?: string;
+    roomConfirmed?: boolean;
+    useMode?: 'generate' | 'provided';
+    sceneName?: string;
+    representative?: boolean;
+    fileName?: string;
+  }[];
   /** AI 渲染的精装修效果图（基于客户户型图按方案风格+生态生成） */
   renderedFloorplanAssetId?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
@@ -177,6 +194,20 @@ export function PlanStudio(): ReactNode {
   // 提交时用它；文件名/大小/楼层先记本地，校验不过就不必白传一遍。
   const [fpSlots, setFpSlots] = useState<FloorplanSlot[]>([]);
   const [fpUploading, setFpUploading] = useState(false);
+  /** 装修效果图：带空间分组与代表图。clientId 稳定标识，重渲染不丢 meta */
+  const [raList, setRaList] = useState<RenderAsset[]>([]);
+  const [raUploading, setRaUploading] = useState(false);
+  /**
+   * 两条选图路径：本地文件 / 从「我的资料」选。
+   * 用 ref 拿隐藏 input，不用 document.querySelector —— 两个 input 都带 multiple，
+   * 按选择器匹配等于靠 DOM 顺序赌，区块一调序就会静默弹出另一种文件选择器。
+   */
+  const fpInputRef = useRef<HTMLInputElement>(null);
+  const raInputRef = useRef<HTMLInputElement>(null);
+  const [raPickerOpen, setRaPickerOpen] = useState(false);
+  const [libAssets, setLibAssets] = useState<{ id: string; title: string }[]>([]);
+  const [libPicked, setLibPicked] = useState<string[]>([]);
+  const [libLoading, setLibLoading] = useState(false);
   const [customValue, setCustomValue] = useState(9);
   const [form] = Form.useForm();
   const [plan, setPlan] = useState<PlanDetail | null>(null);
@@ -269,6 +300,95 @@ const [editing, setEditing] = useState<{
     }
   };
 
+  /** 选装修效果图：>8MB 或最长边>2048 才压缩（压缩逻辑复用 lib/compress） */
+  const pickRenderAssets = async (files: FileList | null): Promise<void> => {
+    if (!files || !files.length) return;
+    const err = checkRenderUpload(raList.length + files.length);
+    if (err) { message.error(err); return; }
+    setRaUploading(true);
+    try {
+      const next = [...raList];
+      for (const f of Array.from(files)) {
+        if (next.length >= RENDER_MAX) break;
+        const compressed = await compressImage(f);
+        const fd = new FormData();
+        fd.append('file', compressed);
+        fd.append('title', f.name.replace(/\.[^.]+$/, '').slice(0, 60));
+        const res = await api<{ id: string; url: string }>('/api/media/uploads', { method: 'POST', body: fd });
+        next.push({
+          assetId: res.id,
+          clientId: (crypto.randomUUID?.() ?? `r_${Date.now()}_${next.length}`),
+          name: f.name,
+          room: '',
+          representative: false,
+          useMode: 'generate',
+          sceneName: '',
+          roomConfirmed: false,
+        });
+      }
+      setRaList(next);
+      message.success(`已添加 ${next.length - raList.length} 张效果图`);
+    } catch (e) {
+      message.error((e as Error).message || '效果图上传失败');
+    } finally {
+      setRaUploading(false);
+    }
+  };
+
+  /** 打开「从我的资料选效果图」：复用已有素材库列表端点（与生图页选参考图同源） */
+  const openRaPicker = async (): Promise<void> => {
+    setRaPickerOpen(true);
+    setLibLoading(true);
+    try {
+      const list = await api<{ id: string; kind: string; title: string }[]>('/api/media/assets');
+      setLibAssets(list.filter((a) => a.kind === 'image').map((a) => ({ id: a.id, title: a.title })));
+    } catch (e) {
+      message.error((e as Error).message || '资料库加载失败');
+    } finally {
+      setLibLoading(false);
+    }
+  };
+
+  /**
+   * 从资料库追加效果图：资料库里已经是 MediaAsset，直接挂 id，不重复上传。
+   * 已在本方案里的跳过 —— 同一张图挂两次会让代表图与页数折算算重。
+   */
+  const addFromLibrary = (): void => {
+    const chosen = libAssets.filter((a) => libPicked.includes(a.id));
+    if (!chosen.length) { setRaPickerOpen(false); return; }
+    const have = new Set(raList.map((x) => x.assetId));
+    const fresh = chosen.filter((a) => !have.has(a.id));
+    const room = RENDER_MAX - raList.length;
+    if (fresh.length > room) {
+      message.warning(`本方案最多 ${RENDER_MAX} 张效果图，本次只加了前 ${room} 张`);
+    }
+    const take = fresh.slice(0, Math.max(0, room));
+    setRaList((prev) => [
+      ...prev,
+      ...take.map((a) => ({
+        assetId: a.id,
+        clientId: (crypto.randomUUID?.() ?? `r_lib_${a.id}_${prev.length}`),
+        name: a.title || '我的资料',
+        room: '',
+        representative: false,
+        useMode: 'generate' as const,
+        sceneName: '',
+        roomConfirmed: false,
+      })),
+    ]);
+    setLibPicked([]);
+    setRaPickerOpen(false);
+    message.success(`已添加 ${take.length} 张效果图，请填写实际空间并确认`);
+  };
+
+  const confirmRoom = (i: number): void => {
+    if (!raList[i]?.room.trim()) {
+      message.warning('请先填写这张效果图对应的空间');
+      return;
+    }
+    setRaList((prev) => ensureRepresentativeList(prev.map((a, x) => (x === i ? { ...a, roomConfirmed: true } : a))));
+  };
+
   const generate = async (): Promise<void> => {
     let values: Record<string, string>;
     try {
@@ -276,6 +396,9 @@ const [editing, setEditing] = useState<{
     } catch {
       return;
     }
+    // 提交前必须空间已填 + 已确认（前端先拦一道，服务端还会再拦一次）
+    const raErr = checkRenderReady(raList);
+    if (raErr) { message.error(raErr); return; }
     setGenerating(true);
     const rid = reqIdRef.current ?? newRequestId();
     reqIdRef.current = rid;
@@ -296,11 +419,24 @@ const [editing, setEditing] = useState<{
           floorplanAssetId: fpSlots[0]?.assetId || null,
           extraFloorplanAssetIds: fpSlots.slice(1).map((x) => x.assetId).filter(Boolean),
           floorplanFloors: fpSlots.map((x) => x.floor),
+          renderAssetIds: raList.map((x) => x.assetId).filter(Boolean),
+          renderAssetMeta: raList.map((x) => ({
+            clientId: x.clientId,
+            room: x.room,
+            roomConfirmed: x.roomConfirmed,
+            useMode: x.useMode,
+            sceneName: x.sceneName,
+            representative: x.representative,
+            fileName: x.name,
+          })),
           // 补充资料 9 项：空串也照样传，后端 DTO 有默认值，不传会当成缺字段
           ...Object.fromEntries(SALES_FIELDS.map((f) => [f.name, (values as Record<string, string>)[f.name] ?? ''])),
           style,
           edition: version,
-          pageCount,
+          // 提交时必须夹取到素材下限，不能直接传用户选的档位：
+          // 选了 9 页但素材撑到 11 页时，按 9 提交就会真的少给客户 2 页，
+          // 而且扣费也跟着按 9 算 —— 提示里写了「自动扩至 11 页」却不扩，是最坏的组合。
+          pageCount: resolvePageCount(pageCount, materials, editionKey),
           clientRequestId: rid,
         }),
       });
@@ -371,6 +507,23 @@ const [editing, setEditing] = useState<{
       setStyle(detail.style);
       setVersion(detail.edition as 'standard' | 'presale' | 'private');
       setPageCount(detail.pageCount);
+      // 效果图按存下来的 meta 回填：不回填的话，打开历史方案看到的是空白素材区，
+      // 用户以为图没了，实际库里还在，重新生成还会把它们当新图再扣一遍额度。
+      const ids = detail.renderAssetIds ?? [];
+      const meta = detail.renderAssetMeta ?? [];
+      setRaList(ids.map((assetId, i) => {
+        const m = meta[i] ?? {};
+        return {
+          assetId,
+          clientId: m.clientId ?? `r_saved_${assetId}`,
+          name: m.fileName ?? '效果图',
+          room: m.room ?? '',
+          representative: m.representative ?? false,
+          useMode: m.useMode ?? 'generate',
+          sceneName: m.sceneName ?? '',
+          roomConfirmed: m.roomConfirmed ?? false,
+        };
+      }));
       setStep(1);
       setHistoryOpen(false);
     } catch (e) {
@@ -475,6 +628,9 @@ const [editing, setEditing] = useState<{
     setStep(0);
     setActivePage(0);
     setSplitOverride({});
+    // 素材区也要清：历史方案的图带回新方案，等于把上一单的东西复制给下一单
+    setRaList([]);
+    setFpSlots([]);
     form.resetFields();
   };
 
@@ -488,11 +644,14 @@ const [editing, setEditing] = useState<{
   };
   // 页数档位：默认基数 / 12 页（参考站同档位），自定义另开输入
   const pageChoices = useMemo(() => [CORE_MODULES, CORE_MODULES + 3], []);
-  // 素材计数：户型图有则 1 张；效果图尚未接入（批次 3），接通后这里补 renderCount
+  /**
+   * 素材计数：户型图张数 + 效果图折算页数（按空间分组，不是图片张数）。
+   * renderCount 写死 0 会让下限页数算少 —— 交付时素材页没地方摆，等于少给客户几页。
+   */
   const materials = useMemo(() => ({
     floorplanCount: (plan?.floorplanAssetId ? 1 + (plan?.extraFloorplanAssetIds?.length ?? 0) : 0) || fpSlots.length,
-    renderCount: 0,
-  }), [plan?.floorplanAssetId, plan?.extraFloorplanAssetIds, fpSlots.length]);
+    renderCount: renderPageCount(raList),
+  }), [plan?.floorplanAssetId, plan?.extraFloorplanAssetIds, fpSlots.length, raList]);
   const editionKey: 'standard' | 'presale' | 'private' =
     version === 'presale' ? 'presale' : version === 'private' ? 'private' : 'standard';
   const budget = useMemo(
@@ -711,13 +870,14 @@ const [editing, setEditing] = useState<{
                 可一次选多张，也可分次追加；同一张重复选择会自动忽略。多层住宅请按张标明楼层，第 1 张用于后续布点与精装修生成。
               </Text>
               <input
+                ref={fpInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
                 multiple
                 style={{ display: 'none' }}
                 onChange={(e) => { void pickFloorplans(e.target.files); e.target.value = ''; }}
               />
-              <Button loading={fpUploading} onClick={() => document.querySelector<HTMLInputElement>('input[type=file][multiple]')?.click()}>
+              <Button loading={fpUploading} onClick={() => fpInputRef.current?.click()}>
                 选择户型图
               </Button>
               {fpSlots.length ? (
@@ -743,6 +903,94 @@ const [editing, setEditing] = useState<{
                   ))}
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     已选 {fpSlots.length} 张 · 合计 {(fpSlots.reduce((a, b) => a + b.size, 0) / 1024 / 1024).toFixed(1)} MB
+                  </Text>
+                </div>
+              ) : null}
+            </div>
+
+            {/* 装修效果图（对齐参考站 p2RenderImages 区）：
+                上限 5 张；每张要填实际空间并确认；同一空间只能有一张代表图
+                （主视觉唯一来源）；用途区分「生成场景对比」与「直接展示已有状态图」。 */}
+            <div style={{ marginTop: 18 }}>
+              <Text strong style={{ display: 'block', fontSize: 15, marginBottom: 6 }}>装修效果图（最多 {RENDER_MAX} 张）</Text>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8, lineHeight: 1.7 }}>
+                可一次选多张，也可分次追加。同名空间归为同一实际空间，不同楼层请写进名字里。
+                同一空间只能勾选一张代表图，它会作为该空间的方案主视觉。
+              </Text>
+              <input
+                ref={raInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => { void pickRenderAssets(e.target.files); e.target.value = ''; }}
+              />
+              <Space wrap>
+                <Button loading={raUploading} onClick={() => raInputRef.current?.click()}>
+                  选择效果图
+                </Button>
+                <Button data-testid="ra-picker-btn" onClick={() => void openRaPicker()}>
+                  从我的资料选
+                </Button>
+              </Space>
+              {raList.length ? (
+                <div style={{ marginTop: 10 }}>
+                  <datalist id="renderRoomOptions">
+                    {ROOM_OPTIONS.map((r) => <option key={r} value={r} />)}
+                  </datalist>
+                  {raList.map((a, i) => (
+                    <div key={a.clientId} style={{ border: '1px solid', borderColor: token.colorBorderSecondary, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <Text type="secondary" style={{ fontSize: 12, flex: 1, minWidth: 0 }} ellipsis>{a.name}</Text>
+                        <Tag color={a.roomConfirmed ? 'success' : 'warning'} style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                          {a.roomConfirmed ? '已确认' : '待确认'}
+                        </Tag>
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => setRaList((prev) => prev.filter((_, x) => x !== i))} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <Input
+                          size="small"
+                          list="renderRoomOptions"
+                          placeholder="实际空间，如 一层客厅"
+                          style={{ width: 170 }}
+                          value={a.room}
+                          onChange={(e) => setRaList((prev) => onRoomChanged(prev, i, e.target.value))}
+                        />
+                        <Tooltip title={a.room.trim() ? '作为该空间的方案主视觉' : '先填空间才能选代表图'}>
+                          <Checkbox
+                            checked={a.representative}
+                            disabled={!a.room.trim()}
+                            onChange={() => setRaList((prev) => toggleRepresentative(prev, i))}
+                          >
+                            空间代表图
+                          </Checkbox>
+                        </Tooltip>
+                        <Select
+                          size="small"
+                          style={{ width: 165 }}
+                          value={a.useMode}
+                          onChange={(v) => setRaList((prev) => prev.map((x, xi) => xi === i ? { ...x, useMode: v, roomConfirmed: false } : x))}
+                          options={[
+                            { value: 'generate', label: '生成场景对比' },
+                            { value: 'provided', label: '直接展示已有状态图' },
+                          ]}
+                        />
+                        {a.useMode === 'provided' ? (
+                          <Input
+                            size="small"
+                            placeholder="场景名称，如 观影模式"
+                            style={{ width: 150 }}
+                            value={a.sceneName}
+                            onChange={(e) => setRaList((prev) => prev.map((x, xi) => xi === i ? { ...x, sceneName: e.target.value } : x))}
+                          />
+                        ) : null}
+                        <Button size="small" onClick={() => confirmRoom(i)} disabled={a.roomConfirmed}>确认空间</Button>
+                      </div>
+                    </div>
+                  ))}
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    已选 {raList.length}/{RENDER_MAX} 张 · 已确认 {raList.filter((x) => x.roomConfirmed).length}/{raList.length} 张
+                    {raList.length ? ` · 折算 ${renderPageCount(raList)} 页素材展示` : ''}
                   </Text>
                 </div>
               ) : null}
@@ -1109,7 +1357,7 @@ const [editing, setEditing] = useState<{
             <Button size="large" onClick={() => setStep(step - 1)} disabled={!plan}>上一步</Button>
           ) : null}
           {step === 0 ? (
-            <Button size="large" type="primary" loading={generating} onClick={generate} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 180 }}>
+            <Button data-testid="plan-generate-btn" size="large" type="primary" loading={generating} onClick={generate} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 180 }}>
               生成方案文案
             </Button>
           ) : step < STEPS.length - 1 ? (
@@ -1206,6 +1454,75 @@ const [editing, setEditing] = useState<{
             <span>我已逐页校对这份方案，可以交付客户</span>
           </label>
         </div>
+      </Modal>
+
+      {/* 从「我的资料」选效果图：与生图页选参考图同源，资料库里的图直接挂 id 不重复上传 */}
+      <Modal
+        open={raPickerOpen}
+        title="从「我的资料」选择装修效果图"
+        onCancel={() => { setRaPickerOpen(false); setLibPicked([]); }}
+        onOk={() => addFromLibrary()}
+        okText={`添加 ${libPicked.length} 张`}
+        okButtonProps={{ disabled: !libPicked.length }}
+        cancelText="取消"
+        width={760}
+        destroyOnHidden
+      >
+        {libLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}><Spin /></div>
+        ) : libAssets.length === 0 ? (
+          <Empty description="资料库里还没有图片，先去「AI 生图」生成，或直接上传效果图文件" />
+        ) : (
+          <>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+              点选后可添加多张，还能再追加。同一空间的多张图会合成一页展示。
+            </Text>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, maxHeight: 420, overflowY: 'auto' }}>
+              {libAssets.map((a) => {
+                const added = raList.some((x) => x.assetId === a.id);
+                const picked = libPicked.includes(a.id);
+                return (
+                  <div
+                    key={a.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={picked}
+                    onClick={() => {
+                      if (added) return;
+                      setLibPicked((prev) => (picked ? prev.filter((x) => x !== a.id) : [...prev, a.id]));
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' || added) return;
+                      setLibPicked((prev) => (picked ? prev.filter((x) => x !== a.id) : [...prev, a.id]));
+                    }}
+                    style={{
+                      cursor: added ? 'not-allowed' : 'pointer',
+                      position: 'relative',
+                      border: `1px solid ${picked ? token.colorPrimary : token.colorBorderSecondary}`,
+                      borderRadius: 10,
+                      overflow: 'hidden',
+                      opacity: added ? 0.45 : 1,
+                    }}
+                  >
+                    <img
+                      src={fileUrl(`/api/media/assets/${a.id}/file`)}
+                      alt={a.title}
+                      loading="lazy"
+                      style={{ width: '100%', height: 96, objectFit: 'cover', display: 'block' }}
+                    />
+                    <div style={{ padding: '6px 8px', fontSize: 12 }}>{a.title}</div>
+                    {picked ? (
+                      <div style={{ position: 'absolute', top: 6, right: 6, background: token.colorPrimary, color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✓</div>
+                    ) : null}
+                    {added ? (
+                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.45)', color: '#fff', fontSize: 12 }}>已在本方案</div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </Modal>
 
       {/* 方案全屏阅读器（演示模式）：逐页渲染复用 PlanSlide */}
