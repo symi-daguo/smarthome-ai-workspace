@@ -59,6 +59,9 @@ interface PlanInput {
   edition: 'standard' | 'presale' | 'private';
   pageCount: number;
   floorplanAssetId?: string | null;
+  /** createPlanSchema 给了默认值 []，这里声明为必填数组，服务层不必再判空 */
+  extraFloorplanAssetIds: string[];
+  floorplanFloors: string[];
   /** 设备点位：x/y 为 0~1 归一化坐标（缩略图与原图通用） */
   layoutPoints?: { productId: string; name: string; category: string; x: number; y: number }[] | null;
   /** 提交幂等键：命中已有方案直接返回，避免重复调 LLM + 重复扣费 */
@@ -89,6 +92,35 @@ const TOKENS_PER_PAGE: Record<string, number> = {
   presale: Number(process.env.BILLING_PLAN_TOKENS ?? 100),
   private: Number(process.env.BILLING_PLAN_PRIVATE_TOKENS ?? 160),
 };
+
+/** 户型图上限（对齐参考站 PLAN_FLOORPLAN_MAX_FILES） */
+const FLOORPLAN_MAX_FILES = 3;
+/** 单文件与总体积上限（同参考站口径）：户型图不压缩，超限直接拒而不是偷偷降质 */
+const FLOORPLAN_FILE_MAX = 20 * 1024 * 1024;
+const FLOORPLAN_TOTAL_MAX = 35 * 1024 * 1024;
+
+/** 体积校验：返回可读报错，通过则返回 null */
+export function checkFloorplanSizes(sizes: number[]): string | null {
+  const over = sizes.findIndex((b) => b > FLOORPLAN_FILE_MAX);
+  if (over >= 0) return `户型图第 ${over + 1} 张超过 20MB，请先压缩后再上传`;
+  const total = sizes.reduce((a, b) => a + b, 0);
+  if (total > FLOORPLAN_TOTAL_MAX) return '户型图总大小不能超过 35MB，请减少文件或压缩后重试';
+  return null;
+}
+
+/** 额外户型图：去重 + 剔除主图 + 卡上限 */
+function dedupeFloorplanExtras(mainId: string | null | undefined, extra?: string[] | null): string[] {
+  const ids = [...new Set(extra ?? [])].filter((x) => x && x !== mainId);
+  return ids.slice(0, Math.max(0, FLOORPLAN_MAX_FILES - 1));
+}
+
+/** 楼层名与图片数对齐：缺失补空串，避免「二层」贴到「一层」的图上 */
+function alignFloorplanFloors(mainId: string | null | undefined, extra: string[] | null | undefined, floors?: string[] | null): string[] {
+  const total = (mainId ? 1 : 0) + dedupeFloorplanExtras(mainId, extra).length;
+  const list = [...(floors ?? [])].slice(0, total);
+  while (list.length < total) list.push('');
+  return list;
+}
 
 /** 「补充需求与服务资料」9 项 → 提示词行。只输出填写过的，空项不占篇幅 */
 function salesBriefLines(input: CreatePlanDto): string[] {
@@ -178,6 +210,8 @@ export class PlansService {
         highlights: input.highlights,
         keySpaces: input.keySpaces,
         needs: input.needs,
+        extraFloorplanAssetIds: dedupeFloorplanExtras(input.floorplanAssetId, input.extraFloorplanAssetIds),
+        floorplanFloors: alignFloorplanFloors(input.floorplanAssetId, input.extraFloorplanAssetIds, input.floorplanFloors),
         priorityNeeds: input.priorityNeeds,
         excludedItems: input.excludedItems,
         renovationStage: input.renovationStage,
@@ -200,13 +234,35 @@ export class PlansService {
   }
 
   /** 挂接户型图与设备点位（点位编辑器产物 → 空间动线页配图） */
-  async attachFloorplan(tenantId: string, id: string, dto: { floorplanAssetId: string; layoutPoints?: unknown[] | null }) {
+  async attachFloorplan(
+    tenantId: string,
+    id: string,
+    dto: { floorplanAssetId: string; extraFloorplanAssetIds?: string[] | null; floorplanFloors?: string[] | null; layoutPoints?: unknown[] | null },
+  ) {
     await this.detail(tenantId, id);
     const asset = await this.prisma.mediaAsset.findFirst({ where: { id: dto.floorplanAssetId, tenantId } });
     if (!asset) throw new NotFoundException('ASSET_NOT_FOUND');
+    // 额外户型图逐个校验归属；混入他人租户的资源要在这里挡住，不能只看主图
+    const extraIds = [...new Set(dto.extraFloorplanAssetIds ?? [])].filter((x) => x && x !== dto.floorplanAssetId);
+    if (extraIds.length) {
+      const owned = await this.prisma.mediaAsset.count({ where: { id: { in: extraIds }, tenantId } });
+      if (owned !== extraIds.length) throw new NotFoundException('ASSET_NOT_FOUND');
+    }
+    // 楼层名与图片一一对应；缺失补空串，避免数组错位导致「二层」贴到「一层」的图上
+    const total = 1 + extraIds.length;
+    if (total > FLOORPLAN_MAX_FILES) {
+      throw new BadRequestException(`户型图最多 ${FLOORPLAN_MAX_FILES} 张，超出的图片未添加`);
+    }
+    const floors = [...(dto.floorplanFloors ?? [])];
+    while (floors.length < total) floors.push('');
     return this.prisma.planProject.update({
       where: { id },
-      data: { floorplanAssetId: dto.floorplanAssetId, layoutPoints: (dto.layoutPoints ?? null) as never },
+      data: {
+        floorplanAssetId: dto.floorplanAssetId,
+        extraFloorplanAssetIds: extraIds,
+        floorplanFloors: floors.slice(0, total),
+        layoutPoints: (dto.layoutPoints ?? null) as never,
+      },
     });
   }
 

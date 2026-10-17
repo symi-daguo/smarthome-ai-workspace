@@ -1,5 +1,6 @@
 import {
   CheckCircleOutlined,
+  DeleteOutlined,
   CloseOutlined,
   DownloadOutlined,
   EditOutlined,
@@ -20,6 +21,7 @@ import { api, fileUrl } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { newRequestId } from '../lib/request-id';
 import { withFloorplanPage } from '../lib/planPages';
+import { FLOORPLAN_MAX, appendFloorplanFiles, type FloorplanSlot } from '../lib/floorplan';
 import {
   CORE_MODULES, PAGE_COUNT_MAX,
   materialPageMinimum, resolvePageCount, pageCountHint,
@@ -137,6 +139,8 @@ interface PlanDetail {
   shareToken: string;
   updatedAt: string;
   floorplanAssetId?: string | null;
+  extraFloorplanAssetIds?: string[];
+  floorplanFloors?: string[];
   /** AI 渲染的精装修效果图（基于客户户型图按方案风格+生态生成） */
   renderedFloorplanAssetId?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
@@ -169,6 +173,10 @@ export function PlanStudio(): ReactNode {
   const [pageCount, setPageCount] = useState(9);
   /** 页数是否走「自定义」输入；档位按钮与自定义互斥，选档位会收起自定义 */
   const [customPages, setCustomPages] = useState(false);
+  // 户型图素材（第 1 步上传，主图 = 第 1 张）。assetId 上传成功后才回填，
+  // 提交时用它；文件名/大小/楼层先记本地，校验不过就不必白传一遍。
+  const [fpSlots, setFpSlots] = useState<FloorplanSlot[]>([]);
+  const [fpUploading, setFpUploading] = useState(false);
   const [customValue, setCustomValue] = useState(9);
   const [form] = Form.useForm();
   const [plan, setPlan] = useState<PlanDetail | null>(null);
@@ -231,6 +239,36 @@ const [editing, setEditing] = useState<{
       });
   }, [planId]);
 
+  /** 选户型图：先本地校验（上限/去重/体积），通过再逐张上传拿 assetId */
+  const pickFloorplans = async (files: FileList | null): Promise<void> => {
+    if (!files || !files.length) return;
+    const list = Array.from(files);
+    const checked = appendFloorplanFiles(fpSlots, list);
+    if (checked.error) { message.error(checked.error); return; }
+    if (checked.skipped) message.info(`已忽略 ${checked.skipped} 张重复的户型图`);
+    if (!checked.added) return;
+    setFpUploading(true);
+    try {
+      const uploaded: FloorplanSlot[] = [];
+      for (const slot of checked.slots) {
+        if (slot.assetId) { uploaded.push(slot); continue; }
+        const src = list.find((f) => f.name === slot.name && f.size === slot.size);
+        if (!src) continue;
+        const fd = new FormData();
+        fd.append('file', src);
+        fd.append('title', slot.name.replace(/\.[^.]+$/, '').slice(0, 60));
+        const res = await api<{ id: string; url: string }>('/api/media/uploads', { method: 'POST', body: fd });
+        uploaded.push({ ...slot, assetId: res.id });
+      }
+      setFpSlots(uploaded);
+      message.success(`已添加 ${checked.added} 张户型图，共 ${uploaded.length} 张`);
+    } catch (e) {
+      message.error((e as Error).message || '户型图上传失败');
+    } finally {
+      setFpUploading(false);
+    }
+  };
+
   const generate = async (): Promise<void> => {
     let values: Record<string, string>;
     try {
@@ -254,6 +292,10 @@ const [editing, setEditing] = useState<{
           highlights: values.highlights ?? '',
           keySpaces: values.keySpaces ?? '',
           needs: values.needs ?? '',
+          // 户型图：主图 + 额外图 + 楼层（对齐参考站第 1 步素材区）
+          floorplanAssetId: fpSlots[0]?.assetId || null,
+          extraFloorplanAssetIds: fpSlots.slice(1).map((x) => x.assetId).filter(Boolean),
+          floorplanFloors: fpSlots.map((x) => x.floor),
           // 补充资料 9 项：空串也照样传，后端 DTO 有默认值，不传会当成缺字段
           ...Object.fromEntries(SALES_FIELDS.map((f) => [f.name, (values as Record<string, string>)[f.name] ?? ''])),
           style,
@@ -448,9 +490,9 @@ const [editing, setEditing] = useState<{
   const pageChoices = useMemo(() => [CORE_MODULES, CORE_MODULES + 3], []);
   // 素材计数：户型图有则 1 张；效果图尚未接入（批次 3），接通后这里补 renderCount
   const materials = useMemo(() => ({
-    floorplanCount: plan?.floorplanAssetId ? 1 : 0,
+    floorplanCount: (plan?.floorplanAssetId ? 1 + (plan?.extraFloorplanAssetIds?.length ?? 0) : 0) || fpSlots.length,
     renderCount: 0,
-  }), [plan?.floorplanAssetId]);
+  }), [plan?.floorplanAssetId, plan?.extraFloorplanAssetIds, fpSlots.length]);
   const editionKey: 'standard' | 'presale' | 'private' =
     version === 'presale' ? 'presale' : version === 'private' ? 'private' : 'standard';
   const budget = useMemo(
@@ -659,6 +701,52 @@ const [editing, setEditing] = useState<{
             <Form.Item label="客户需求" name="needs">
               <Input.TextArea rows={3} placeholder="请写清家庭成员、装修阶段、预算、重点空间和最想实现的生活场景。" />
             </Form.Item>
+
+            {/* 户型图素材（对齐参考站第 1 步 p2Floorplan 区）：
+                最多 3 张、可分次追加、重复自动忽略、单文件 20MB / 总量 35MB、每张标楼层。
+                第 1 张为主图，第 3 步的布点与精装修生成都用主图。 */}
+            <div style={{ marginTop: 18 }}>
+              <Text strong style={{ display: 'block', fontSize: 15, marginBottom: 6 }}>户型图（最多 {FLOORPLAN_MAX} 张）</Text>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8, lineHeight: 1.7 }}>
+                可一次选多张，也可分次追加；同一张重复选择会自动忽略。多层住宅请按张标明楼层，第 1 张用于后续布点与精装修生成。
+              </Text>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => { void pickFloorplans(e.target.files); e.target.value = ''; }}
+              />
+              <Button loading={fpUploading} onClick={() => document.querySelector<HTMLInputElement>('input[type=file][multiple]')?.click()}>
+                选择户型图
+              </Button>
+              {fpSlots.length ? (
+                <div style={{ marginTop: 10 }}>
+                  {fpSlots.map((slot, i) => (
+                    <div key={`${slot.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <Text type="secondary" style={{ fontSize: 12, flex: 'none', width: 130 }} ellipsis>{slot.name}</Text>
+                      <Input
+                        size="small"
+                        style={{ width: 120 }}
+                        value={slot.floor}
+                        onChange={(e) => setFpSlots((prev) => prev.map((x, xi) => xi === i ? { ...x, floor: e.target.value.slice(0, 20) } : x))}
+                        placeholder="楼层，如 一层"
+                      />
+                      <Button
+                        size="small"
+                        type="text"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => setFpSlots((prev) => prev.filter((_, xi) => xi !== i))}
+                      />
+                    </div>
+                  ))}
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    已选 {fpSlots.length} 张 · 合计 {(fpSlots.reduce((a, b) => a + b.size, 0) / 1024 / 1024).toFixed(1)} MB
+                  </Text>
+                </div>
+              ) : null}
+            </div>
 
             {/* 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）。
                 默认折叠：九项全不填是常态，铺开占掉半屏反而挤掉真正要填的资料。 */}

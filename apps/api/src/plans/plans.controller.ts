@@ -59,6 +59,8 @@ export class PlansController {
       edition: dto.edition,
       pageCount: dto.pageCount,
       floorplanAssetId: dto.floorplanAssetId,
+      extraFloorplanAssetIds: dto.extraFloorplanAssetIds,
+      floorplanFloors: dto.floorplanFloors,
       layoutPoints: dto.layoutPoints,
       clientRequestId: dto.clientRequestId,
     });
@@ -87,7 +89,12 @@ export class PlansController {
     @Param('id') id: string,
     @Body(new ZodValidationPipe(attachFloorplanSchema)) dto: AttachFloorplanDto,
   ) {
-    return this.plans.attachFloorplan(user.activeTenantId as string, id, { floorplanAssetId: dto.floorplanAssetId, layoutPoints: dto.layoutPoints });
+    return this.plans.attachFloorplan(user.activeTenantId as string, id, {
+      floorplanAssetId: dto.floorplanAssetId,
+      extraFloorplanAssetIds: dto.extraFloorplanAssetIds,
+      floorplanFloors: dto.floorplanFloors,
+      layoutPoints: dto.layoutPoints,
+    });
   }
 
   /** AI 渲染精装修效果图（基于已挂接的客户户型平面图） */

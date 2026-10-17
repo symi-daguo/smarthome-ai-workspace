@@ -445,6 +445,14 @@ model PlanProject {
   shareToken               String   @unique @default(uuid())
   // 关联的户型平面图 MediaAsset id（空间动线页配图）
   floorplanAssetId         String?
+  /**
+   * 第 2、3 张户型图（多层户型 / 多页 PDF 拆页）。
+   * 主图仍存在 floorplanAssetId：渲染精装修、配点合成、分享页取图都只认主图，
+   * 不动它才能保证已有方案的合成逻辑一行不改。额外的图只参与页数核算与逐页展示。
+   */
+  extraFloorplanAssetIds   String[] @default([])
+  /** 每张图对应的楼层名，长度与「主图 + 额外图」一致；空串表示未填 */
+  floorplanFloors          String[] @default([])
   // 客户户型图精装修效果图（AI 渲染的最终展示版，用于空间动线页与分享页）
   renderedFloorplanAssetId String?
   // 点位数组 [{productId,x,y}]（x/y 归一化 0-1，叠加渲染在户型图上）

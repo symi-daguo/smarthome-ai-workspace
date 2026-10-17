@@ -27,6 +27,10 @@ export const createPlanSchema = z.object({
   clientRequestId: z.string().max(64).optional(),
   // 户型平面图（MediaAsset id）与设备点位（来自点位布局编辑器，空间动线页配图用）
   floorplanAssetId: z.string().uuid().optional().nullable(),
+  // 第 2、3 张户型图：创建方案时一并提交（对齐参考站第 1 步素材区）
+  extraFloorplanAssetIds: z.array(z.string().uuid()).max(8).optional().default([]),
+  // 每张图的楼层名，长度与「主图 + 额外图」一致
+  floorplanFloors: z.array(z.string().max(20)).max(8).optional().default([]),
   layoutPoints: z
     .array(
       z.object({
@@ -41,7 +45,28 @@ export const createPlanSchema = z.object({
     .optional()
     .nullable(),
 });
+/** 挂接户型图：主图 + 额外图（≤3 张）+ 每张的楼层名 */
+export const attachFloorplanSchema = z.object({
+  floorplanAssetId: z.string().uuid(),
+  extraFloorplanAssetIds: z.array(z.string().uuid()).max(8).optional().default([]),
+  floorplanFloors: z.array(z.string().max(20)).max(8).optional().default([]),
+  layoutPoints: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        name: z.string().max(60),
+        category: z.string().max(30),
+        x: z.number().min(0).max(1),
+        y: z.number().min(0).max(1),
+      }),
+    )
+    .max(200)
+    .optional()
+    .nullable(),
+});
+
 export type CreatePlanDto = z.infer<typeof createPlanSchema>;
+export type AttachFloorplanDto = z.infer<typeof attachFloorplanSchema>;
 
 export const updatePlanPageSchema = z.object({
   heading: z.string().max(200).optional(),
@@ -61,8 +86,3 @@ export const updatePlanPageSchema = z.object({
 export type UpdatePlanPageDto = z.infer<typeof updatePlanPageSchema>;
 
 /** 给方案挂接户型图与设备点位（点位布局编辑器 → 方案空间动线页） */
-export const attachFloorplanSchema = z.object({
-  floorplanAssetId: z.string().uuid(),
-  layoutPoints: createPlanSchema.shape.layoutPoints,
-});
-export type AttachFloorplanDto = z.infer<typeof attachFloorplanSchema>;
