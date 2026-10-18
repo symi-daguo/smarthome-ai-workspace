@@ -152,7 +152,15 @@ export const addNoteSchema = z.object({
 
 export const intakeSchema = z.object({
   rawInput: z.string().min(10).max(4000),
+  /** 幂等键：弱网重试不该重复扣额度（可选，不传则保持原行为） */
+  clientRequestId: z.string().max(80).optional(),
 });
+
+/** 跟进建议入参：只带幂等键，无其他字段 */
+export const followupSchema = z.object({
+  clientRequestId: z.string().max(80).optional(),
+});
+export type FollowupDto = z.infer<typeof followupSchema>;
 
 export type CreateOrderDto = z.infer<typeof createOrderSchema>;
 export type UpdateOrderDto = z.infer<typeof updateOrderSchema>;

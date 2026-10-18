@@ -10,11 +10,13 @@ import { OrdersService } from './orders.service.js';
 import {
   addNoteSchema,
   createOrderSchema,
+  followupSchema,
   intakeSchema,
   orderStatusSchema,
   updateOrderSchema,
   type AddNoteDto,
   type CreateOrderDto,
+  type FollowupDto,
   type IntakeDto,
   type OrderStatusDto,
   type UpdateOrderDto,
@@ -38,7 +40,7 @@ export class OrdersController {
   @RequirePermissions('order:read')
   @Post('intake')
   intake(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Body(new ZodValidationPipe(intakeSchema)) dto: IntakeDto) {
-    return this.orders.intake(user.activeTenantId as string, user.id, dto.rawInput);
+    return this.orders.intake(user.activeTenantId as string, user.id, dto.rawInput, dto.clientRequestId);
   }
 
   @RequirePermissions('order:write')
@@ -73,8 +75,12 @@ export class OrdersController {
 
   @RequirePermissions('order:write')
   @Post(':id/followup')
-  followup(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
-    return this.orders.followupAdvice(user.activeTenantId as string, user.id, id);
+  followup(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(followupSchema)) dto: FollowupDto,
+  ) {
+    return this.orders.followupAdvice(user.activeTenantId as string, user.id, id, dto.clientRequestId);
   }
 
   @RequirePermissions('order:write')

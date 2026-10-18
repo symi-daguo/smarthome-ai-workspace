@@ -50,6 +50,8 @@ export type CreateCategoryDto = z.infer<typeof createCategorySchema>;
 /** AI 批量处理产品资料：ids=勾选的产品行 id（我的库行生成文案+产品图；公共库行仅生成产品图） */
 export const aiProcessProductsSchema = z.object({
   ids: z.array(z.string().uuid()).min(1, '请先勾选要处理的产品').max(20, '单次上限 20 个'),
+  /** 幂等键：弱网重试不该重复生成整批产品图（可选） */
+  clientRequestId: z.string().max(80).optional(),
 });
 export type AiProcessProductsDto = z.infer<typeof aiProcessProductsSchema>;
 

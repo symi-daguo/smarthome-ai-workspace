@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode, useRef } from 'react';
+import { newRequestId } from '../lib/request-id';
 import { App as AntApp, Button, Card, Empty, Grid, Radio, Space, Spin, Table, Tag, Typography, theme } from 'antd';
 import { ThunderboltFilled } from '@ant-design/icons';
 import { api } from '../lib/api';
@@ -71,14 +72,20 @@ export function LightingDiagnosis(): ReactNode {
     setResult(null);
   }, []);
 
+  /** 幂等键：同一次点���重试（弱网/手抖）不该让用户付两次钱 */
+  const reqIdRef = useRef<string | null>(null);
+
   const run = async (): Promise<void> => {
     if (!modeId) return;
     setRunning(true);
+    const rid = reqIdRef.current ?? newRequestId();
+    reqIdRef.current = rid;
     try {
       setResult(await api<Diagnosis>('/api/lighting/diagnose', {
         method: 'POST',
-        body: JSON.stringify({ modeId, answers }),
+        body: JSON.stringify({ modeId, answers, clientRequestId: rid }),
       }));
+      reqIdRef.current = null;
       setStep(2);
     } catch (e) {
       message.error((e as Error).message || '问诊失败，请重试');

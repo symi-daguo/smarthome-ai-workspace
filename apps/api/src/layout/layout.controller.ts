@@ -100,7 +100,7 @@ export class LayoutController {
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
     @Body(new ZodValidationPipe(aiProcessProductsSchema)) dto: AiProcessProductsDto,
   ) {
-    return this.layout.aiProcessProducts(user.activeTenantId as string, user.id, dto.ids);
+    return this.layout.aiProcessProducts(user.activeTenantId as string, user.id, dto.ids, dto.clientRequestId);
   }
 
   @RequirePermissions('content:generate')

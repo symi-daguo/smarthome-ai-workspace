@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { IdempotencyService } from '../common/idempotency.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { LlmService } from '../llm/llm.service.js';
 import { TokenService } from '../billing/token.service.js';
@@ -146,6 +147,7 @@ export class LightingDiagnosisService {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly tokens: TokenService,
+    private readonly idem: IdempotencyService,
   ) {}
 
   private buildPrompt(modeId: string, answers: Record<string, string>): string {
@@ -184,12 +186,32 @@ export class LightingDiagnosisService {
    * 所以解析要**逐层兜底**：先剥代码块 → 再截取最外层 JSON → 仍失败就退化成纯文本建议。
    * 宁可给一段没有分级的文字，也不要给用户一个报错页。
    */
-  async run(tenantId: string, userId: string, dto: { modeId: string; answers: Record<string, string> }): Promise<DiagnosisResult> {
-    await this.tokens.consume(tenantId, DIAGNOSE_TOKENS, 'CONSUME', { kind: 'lighting-diagnose', title: dto.modeId }, userId);
-
-    const prompt = this.buildPrompt(dto.modeId, dto.answers);
-    const res = await this.llm.chat({ model: '', prompt, maxTokens: 1200, systemPrompt: DIAGNOSIS_BOUNDARY });
-    return this.parse(res.reply);
+  async run(
+    tenantId: string,
+    userId: string,
+    dto: { modeId: string; answers: Record<string, string>; clientRequestId?: string },
+  ): Promise<DiagnosisResult> {
+    // 幂等：弱网重试不该让用户为同一次问诊付两次钱
+    const claim = await this.idem.claim(tenantId, dto.clientRequestId, 'lighting-diagnose');
+    if (!claim.fresh) {
+      return (claim.previous as DiagnosisResult | null) ?? {
+        issues: [], circuits: [], scenes: [], placement: [],
+        summary: '这次问诊已经提交过了，结果正在生成或已被处理过；如需重新诊断请刷新页面',
+        boundary: DIAGNOSIS_BOUNDARY,
+      };
+    }
+    try {
+      await this.tokens.consume(tenantId, DIAGNOSE_TOKENS, 'CONSUME', { kind: 'lighting-diagnose', title: dto.modeId }, userId);
+      const prompt = this.buildPrompt(dto.modeId, dto.answers);
+      const res = await this.llm.chat({ model: '', prompt, maxTokens: 1200, systemPrompt: DIAGNOSIS_BOUNDARY });
+      const out = this.parse(res.reply);
+      await this.idem.complete(tenantId, dto.clientRequestId, 'lighting-diagnose', out);
+      return out;
+    } catch (e) {
+      // 失败要能重试：否则用户第一次失败后就再也提交不了
+      await this.idem.release(tenantId, dto.clientRequestId);
+      throw e;
+    }
   }
 
   private parse(raw: string): DiagnosisResult {

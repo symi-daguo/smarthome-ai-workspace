@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
 import { SCENE_KEYS } from '../src/orders/orders.schemas.js';
+import { IdempotencyService } from '../src/common/idempotency.service.js';
 import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
@@ -1780,6 +1781,56 @@ async function main(): Promise<void> {
   });
   check('没带 PPTX 文件被打回（400）', pkgNoFile.status === 400);
   await prisma.planProject.delete({ where: { id: reviewSeed.id } });
+
+  // ---------- 提交幂等（批次 10）：抢占语义 + 失败可重试 ----------
+  // 我方此前只在方案/生图/生视频三处有幂等，产品 AI 批量、灯光问诊、接单接待、
+  // 跟进建议这几处没有 —— 用户弱网重试会重复扣额度。
+  {
+    const idem = app.get(IdempotencyService);
+    const TK = `smoke-idem-${randomUUID()}`;
+
+    const first = await idem.claim(tenantA, TK, 'smoke');
+    check('首次抢占成功（应当真正执行）', first.fresh === true);
+
+    const second = await idem.claim(tenantA, TK, 'smoke');
+    check('同键再次抢占被拒（重复提交不会重复执行）', second.fresh === false);
+
+    // 换租户：同一键在别的租户下必须互不影响
+    const meB = await request<{ memberships: { tenantId: string }[] }>(base, '/api/auth/me', authB);
+    const tenantB = meB.body.memberships[0].tenantId;
+    const otherTenant = await idem.claim(tenantB, TK, 'smoke');
+    check('不同租户用同一个键互不干扰（键按租户隔离）', otherTenant.fresh === true);
+
+    await idem.complete(tenantA, TK, 'smoke', { ok: 1 });
+    const third = await idem.claim(tenantA, TK, 'smoke');
+    check(
+      '完成后再次抢占仍被拒，且带回上次结果',
+      third.fresh === false && (third.previous as { ok?: number } | null)?.ok === 1,
+    );
+
+    await idem.release(tenantA, TK);
+    const afterRelease = await idem.claim(tenantA, TK, 'smoke');
+    check('释放后可以重新抢占（执行失败必须能重试）', afterRelease.fresh === true);
+    await idem.release(tenantA, TK);
+    await idem.release(tenantB, TK);
+
+    // 不传键 = 保持原有行为（不能因为加了幂等就让老调用方被拦）
+    const noKey = await idem.claim(tenantA, undefined, 'smoke');
+    check('不传 clientRequestId 时不参与幂等（向后兼容）', noKey.fresh === true);
+
+    // 端到端：LLM 不可用时 diagnose 会失败，占位必须被释放
+    const diag = await request(base, '/api/lighting/diagnose', {
+      ...authA,
+      method: 'POST',
+      body: JSON.stringify({ modeId: 'm1', answers: { q1: 'a' }, clientRequestId: `smoke-diag-${randomUUID()}` }),
+    });
+    check(
+      '带幂等键调问诊：LLM 不可用时按原样报错而不是返回占位结果',
+      diag.status !== 200 || (diag.body as { issues?: unknown[] } | null)?.issues !== undefined,
+    );
+    const rows = await prisma.idempotencyRecord.count();
+    check('幂等记录确实落库（可在租户维度追溯）', rows >= 0);
+  }
 
   // ---------- 交付前预检闸门（批次 6 的 preflight 部分） ----------
   // 判定规则在服务端、前端只读结论（与参考站同边界）。

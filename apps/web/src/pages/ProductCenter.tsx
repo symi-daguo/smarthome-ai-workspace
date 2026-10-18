@@ -1,6 +1,7 @@
 import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, RobotOutlined, ShopOutlined } from '@ant-design/icons';
+import { newRequestId } from '../lib/request-id';
 import { App as AntApp, AutoComplete, Button, Card, Col, ColorPicker, Divider, Empty, Form, Image, Input, InputNumber, Modal, Popconfirm, Row, Segmented, Select, Space, Table, Tag, Tooltip, Typography, Upload, theme } from 'antd';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
@@ -71,6 +72,8 @@ const COLOR_CHOICES = ['#4FA8E0', '#5BA86B', '#D9A036', '#8E7CC3', '#D06A5A', '#
  * 产品图即点位图标（编辑器优先用产品照片，无图回退品类 lucide 图标）。
  */
 export function ProductCenter(): ReactNode {
+  /** 幂等键：批量处理进行中保持不变，成功后清空（下次是新操作） */
+  const aiReqId = useRef<string | null>(null);
   const { message, modal } = AntApp.useApp();
   const { token } = theme.useToken();
   const navigate = useNavigate();
@@ -244,10 +247,14 @@ export function ProductCenter(): ReactNode {
       onOk: async () => {
         setAiBusy(true);
         try {
-          const r = await api<{ total: number; copyOk: number; imageOk: number; errors: { name: string; error: string }[] }>('/api/products/ai-process', {
+          // 幂等键：这一步逐张生图（每张都扣额度），重试不该把整批图再生一遍
+          const rid = aiReqId.current ?? newRequestId();
+          aiReqId.current = rid;
+          const r = await api<{ total: number; copyOk: number; imageOk: number; deduped?: boolean; errors: { name: string; error: string }[] }>('/api/products/ai-process', {
             method: 'POST',
-            body: JSON.stringify({ ids: selectedIds }),
+            body: JSON.stringify({ ids: selectedIds, clientRequestId: rid }),
           });
+          aiReqId.current = null;
           const failNote = r.errors.length ? `，${r.errors.length} 个生图失败（${r.errors[0]?.error?.slice(0, 40) ?? ''}）` : '';
           message.success(`处理完成：文案/分类修正 ${r.copyOk} 项、产品图生成 ${r.imageOk} 项${failNote}`);
           setSelectedIds([]);

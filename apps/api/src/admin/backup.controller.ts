@@ -31,6 +31,8 @@ const BACKUP_TABLES = [
   'apiKey', 'changeSnapshot',
   // 0.1.75 本地资料库：漏了它，备份恢复后门店资料会凭空消失
   'knowledgeDoc',
+  // 0.2.4 提交幂等记录：漏了它，恢复后重试窗口内的提交会被当成首次执行（可能重复扣费）
+  'idempotencyRecord',
 ] as const;
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)

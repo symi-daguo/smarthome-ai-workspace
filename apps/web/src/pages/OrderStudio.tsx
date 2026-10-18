@@ -32,9 +32,10 @@ import {
   Typography,
   theme,
 } from 'antd';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import { newRequestId } from '../lib/request-id';
 import { PageHeader } from '../components/PageHeader';
 import {
   NEED_OPTIONS, RENO_STAGES, SCENES, SYSTEMS,
@@ -154,6 +155,14 @@ interface PlanBrief {
   pageCount: number;
 }
 
+/**
+ * 幂等键：同一次操作重试（弱网超时、手抖连点）不该重复扣额度。
+ * intakeIdRef 为空表示当前没有「进行中」的一次解析；成功后置空，下次是新操作。
+ * followupKeys 按线索 id 分开存，避免两条线索互相顶掉对方的键。
+ */
+let intakeIdRef: string | null = null;
+const followupKeys = new Map<string, string>();
+
 const CATEGORY_NAMES: Record<string, string> = {
   gateway: '网关', switch: '开关', sensor: '传感器', light: '照明', curtain: '窗帘',
   security: '安防', appliance: '家电', audio: '影音', hvac: '暖通',
@@ -218,7 +227,12 @@ export function OrderStudio(): ReactNode {
     }
     setIntakeLoading(true);
     try {
-      const r = await api<IntakeResult>('/api/orders/intake', { method: 'POST', body: JSON.stringify({ rawInput: intakeText }) });
+      // 幂等键：重复点「AI 解析」不该重复扣额度
+      const r = await api<IntakeResult>('/api/orders/intake', {
+        method: 'POST',
+        body: JSON.stringify({ rawInput: intakeText, clientRequestId: (intakeIdRef ??= newRequestId()) }),
+      });
+      intakeIdRef = null;
       setIntake(r);
       // 结构化字段一并回填：AI 解析出的场景/系统三态/预算上下限直接落到表单，
       // 销售在此基础上核对修改，而不是解析完还得手敲一遍。
@@ -354,7 +368,12 @@ export function OrderStudio(): ReactNode {
     if (!current) return;
     setAdviceLoading(true);
     try {
-      const r = await api<{ advice: string }>(`/api/orders/${current.id}/followup`, { method: 'POST' });
+      // 同一条线索的跟进建议：连点两次只算一次
+      const r = await api<{ advice: string; deduped?: boolean }>(`/api/orders/${current.id}/followup`, {
+        method: 'POST',
+        body: JSON.stringify({ clientRequestId: followupKeys.get(current.id) ?? newRequestId() }),
+      });
+      followupKeys.set(current.id, '');
       setAdvice(r.advice);
     } catch (e) {
       message.error((e as Error).message);

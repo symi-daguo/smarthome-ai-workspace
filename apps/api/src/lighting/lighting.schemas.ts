@@ -28,6 +28,8 @@ export const diagnoseSchema = z.object({
   modeId: z.string().min(1).max(40),
   /** { [questionId]: 选中的选项文案 } */
   answers: z.record(z.string(), z.string().max(80)),
+  /** 幂等键：弱网重试不该重复扣额度（可选，不传则保持原行为） */
+  clientRequestId: z.string().max(80).optional(),
   /** 上传的户型图/现场图（MediaAsset id），仅「上传图纸找问题」需要 */
   floorplanAssetId: z.string().uuid('图纸 id 不合法').optional(),
 });

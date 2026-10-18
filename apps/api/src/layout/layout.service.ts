@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { IdempotencyService } from '../common/idempotency.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { LlmService } from '../llm/llm.service.js';
 import { MediaService } from '../media/media.service.js';
@@ -16,6 +17,7 @@ export class LayoutService {
     private readonly llm: LlmService,
     private readonly media: MediaService,
     private readonly tokens: TokenService,
+    private readonly idem: IdempotencyService,
   ) {}
 
   /** 布点/报价选品数据源：公共库 + 本租户我的库（对齐参考站"我的产品库联动报价与点位"） */
@@ -162,7 +164,30 @@ export class LayoutService {
    * ② 生图 provider 批量生成产品主图（产品图即点位图标），逐个扣生图额度
    * 单个失败不阻塞其余；生图 key 未配置时诚实降级为仅文案。全程写审计留痕。
    */
-  async aiProcessProducts(tenantId: string, userId: string, ids: string[]) {
+  async aiProcessProducts(tenantId: string, userId: string, ids: string[], clientRequestId?: string) {
+    // 幂等：这一步会逐个调生图（每张都扣额度），用户重试不该把一整批图再生一遍。
+    // 抢占必须在查产品之前，否则重复提交还会白跑一次 findMany。
+    const claim = await this.idem.claim(tenantId, clientRequestId, 'product-enrich');
+    if (!claim.fresh) {
+      const prev = (claim.previous ?? {}) as { total: number; copyOk: number; imageOk: number; errors: unknown[] };
+      return {
+        total: prev.total ?? 0,
+        copyOk: prev.copyOk ?? 0,
+        imageOk: prev.imageOk ?? 0,
+        errors: prev.errors ?? [],
+        deduped: true,
+      };
+    }
+    try {
+      return await this.runAiProcess(tenantId, userId, ids, clientRequestId);
+    } catch (e) {
+      await this.idem.release(tenantId, clientRequestId);
+      throw e;
+    }
+  }
+
+  /** AI 批量处理的实际执行体（幂等抢占在 aiProcessProducts 里） */
+  private async runAiProcess(tenantId: string, userId: string, ids: string[], clientRequestId?: string) {
     const rows = await this.prisma.product.findMany({
       where: { id: { in: ids }, active: true, OR: [{ tenantId: null }, { tenantId }] },
     });
@@ -222,7 +247,10 @@ export class LayoutService {
     }
 
     await this.auditProduct(tenantId, userId, `ids=${ids.length} copy=${copyOk} image=${imageOk} failed=${errors.length}`);
-    return { total: rows.length, copyOk, imageOk, errors };
+    const out = { total: rows.length, copyOk, imageOk, errors };
+    // 结果摘要入幂等记录：批量结果含 errors 数组，原样存即可（不含产品实体，不大）
+    await this.idem.complete(tenantId, clientRequestId, 'product-enrich', out);
+    return out;
   }
 
   private async auditProduct(tenantId: string, actorId: string, target: string): Promise<void> {

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { IdempotencyService } from '../common/idempotency.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { LlmService } from '../llm/llm.service.js';
 import { TokenService } from '../billing/token.service.js';
@@ -45,6 +46,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly tokens: TokenService,
+    private readonly idem: IdempotencyService,
   ) {}
 
   private async mustGet(tenantId: string, id: string) {
@@ -164,7 +166,22 @@ export class OrdersService {
    * 场景与系统 key 必须落在 SCENE_KEYS / SYSTEM_KEYS 白名单内，未提及就不填——
    * 猜出来的「系统需要」比没有更危险。
    */
-  async intake(tenantId: string, userId: string, rawInput: string) {
+  async intake(tenantId: string, userId: string, rawInput: string, clientRequestId?: string) {
+    // 幂等：接单接待要调 LLM 并扣额度，重试不该重复付费
+    const claim = await this.idem.claim(tenantId, clientRequestId, 'order-intake');
+    if (!claim.fresh) {
+      return { ...((claim.previous as Record<string, unknown> | null) ?? {}), deduped: true };
+    }
+    try {
+      return await this.doIntake(tenantId, userId, rawInput, clientRequestId);
+    } catch (e) {
+      await this.idem.release(tenantId, clientRequestId);
+      throw e;
+    }
+  }
+
+  /** 接单 AI 接待的实际执行体（幂等抢占在 intake 里） */
+  private async doIntake(tenantId: string, userId: string, rawInput: string, clientRequestId?: string) {
     const parsed = await this.llm.chatObject<Record<string, unknown>>({
       systemPrompt: `你是智能家居门店的销售接待助手。从客户咨询原始描述中抽取字段，只返回 JSON 对象。
 
@@ -228,6 +245,8 @@ need 取 yes/no/maybe，只列客户明确提到的系统 key（${SYSTEM_KEYS.jo
 
     // 与方案生成一致：解析成功才扣额（LLM 失败异常上抛，不白扣）
     await this.tokens.consume(tenantId, INTAKE_TOKENS, 'CONSUME', { kind: 'order-intake' }, userId);
+    const dedupeTail = clientRequestId ? await this.idem.complete(tenantId, clientRequestId, 'order-intake', {}) : undefined;
+    void dedupeTail;
 
     return {
       customer: text(parsed.customer, 64),
@@ -263,7 +282,21 @@ need 取 yes/no/maybe，只列客户明确提到的系统 key（${SYSTEM_KEYS.jo
   }
 
   /** AI 跟进建议：基于当前状态 + 需求 + 最近跟进，给出下一步动作与话术要点 */
-  async followupAdvice(tenantId: string, userId: string, id: string) {
+  async followupAdvice(tenantId: string, userId: string, id: string, clientRequestId?: string) {
+    const claim = await this.idem.claim(tenantId, clientRequestId, 'order-followup');
+    if (!claim.fresh) {
+      return { advice: (claim.previous as { advice?: string } | null)?.advice ?? '这次跟进建议已在生成中，请稍候再试', deduped: true };
+    }
+    try {
+      const out = await this.doFollowupAdvice(tenantId, userId, id, clientRequestId);
+      return out;
+    } catch (e) {
+      await this.idem.release(tenantId, clientRequestId);
+      throw e;
+    }
+  }
+
+  private async doFollowupAdvice(tenantId: string, userId: string, id: string, clientRequestId?: string) {
     const order = await this.mustGet(tenantId, id);
     const recentNotes = order.notes.slice(-5).map((n) => n.content).join('；') || '（暂无跟进记录）';
     const { reply } = await this.llm.chat({
@@ -273,6 +306,8 @@ need 取 yes/no/maybe，只列客户明确提到的系统 key（${SYSTEM_KEYS.jo
       prompt: `客户：${order.customer}（${order.community || '小区未知'} ${order.area || '面积未知'} ${order.layout || ''}）\n预算：${order.budget || '未知'}\n生态：${order.ecosystem || '未知'}\n需求：${order.needs || order.rawInput.slice(0, 200)}\n当前阶段：${STATUS_LABELS[order.status]}\n最近跟进：${recentNotes}`,
     });
     await this.tokens.consume(tenantId, FOLLOWUP_TOKENS, 'CONSUME', { kind: 'order-followup', orderId: id }, userId);
-    return { advice: reply };
+    const out = { advice: reply };
+    await this.idem.complete(tenantId, clientRequestId, 'order-followup', out);
+    return out;
   }
 }

@@ -369,6 +369,35 @@ model ReviewConfirmation {
 
 // ---------- S3 生成产物库（图片/视频本地落盘） ----------
 
+/**
+ * 提交幂等记录：同一个 clientRequestId 只允许真正执行一次。
+ *
+ * 为什么单独一张表而不是给每张业务表都加 clientRequestId 列：
+ * 扣费点有 8 处（方案 / 生图 / 生视频 / 局部重绘 / 产品 AI 批量 / 灯光问诊 /
+ * 接单接待 / 跟进建议 / 素材购买），逐表加列意味着 4~5 张表各改一遍、各写一遍抢占逻辑，
+ * 而「抢占 + 释放 + 查结果」这套流程是完全一样的。抽成一张表后，新加扣费点只需接一个服务。
+ *
+ * 已有 clientRequestId 列的表（MediaAsset / PlanProject）继续走原来的「查业务表」路径，
+ * 那里能直接返回既有产物，比查这张表更省事；本表专门覆盖那些没有合适业务行可挂的端点。
+ *
+ * 唯一约束 (tenantId, key) 是并发防线的真身：先 insert 抢占，
+ * 第二个并发请求撞唯一约束即判定为重复 —— 单纯「先查后插」在并发下会双双通过。
+ */
+model IdempotencyRecord {
+  id        String   @id @default(uuid())
+  tenantId  String
+  /** 客户端生成的提交键 */
+  key       String
+  /** 业务种类：lighting-diagnose / order-intake / product-enrich …（便于排查与分页清理） */
+  kind      String
+  /** 执行完成后回填的结果摘要；被抢占但尚未完成时为 null */
+  result    Json?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, key], name: "idempotency_tenant_key")
+  @@index([tenantId, kind])
+}
+
 model MediaAsset {
   id        String   @id @default(uuid())
   tenantId  String
