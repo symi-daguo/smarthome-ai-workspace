@@ -3,6 +3,7 @@ import {
   LockOutlined,
   LogoutOutlined,
   SyncOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import {
   Alert,
@@ -21,6 +22,7 @@ import {
   Space, Switch,
   Table,
   Tag,
+  Upload,
   Typography,
   theme,
 } from 'antd';
@@ -105,6 +107,8 @@ export function TokenCenter(): ReactNode {
   const [profileForm] = Form.useForm<{ displayName: string; avatarColor: string | { toHexString?: () => string } }>();
   const [profileSaving, setProfileSaving] = useState(false);
   const [backing, setBacking] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMode, setRestoreMode] = useState<'merge' | 'replace'>('merge');
   const [storage, setStorage] = useState<StorageStat | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const isAdmin = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
@@ -222,6 +226,60 @@ export function TokenCenter(): ReactNode {
     } finally {
       setBacking(false);
     }
+  };
+
+  /**
+   * 从备份 JSON 恢复。破坏性操作，所以：
+   * - 先让用户选模式（merge 不删现有数据 / replace 真回档）
+   * - 再弹一次带确认串的框，手滑点不进来
+   */
+  const restoreBackup = (file: File): void => {
+    void (async () => {
+      let payload: { tables?: Record<string, unknown>; mode?: 'merge' | 'replace' };
+      try {
+        payload = JSON.parse(await file.text());
+      } catch {
+        message.error('文件不是合法 JSON，请选择本平台导出的备份文件');
+        return;
+      }
+      if (!payload?.tables || Object.keys(payload.tables).length === 0) {
+        message.error('备份文件里没有任何表数据');
+        return;
+      }
+      modal.confirm({
+        title: '确认恢复数据？',
+        content: (
+          <div style={{ lineHeight: 1.9 }}>
+            <div>将按「{restoreMode === 'replace' ? '覆盖' : '合并'}」模式写入
+              <Text strong>{Object.keys(payload.tables).length}</Text> 张表。</div>
+            {restoreMode === 'replace'
+              ? <Text type="danger">覆盖模式会先清空目标表再写入，可能覆盖当前数据。</Text>
+              : <Text type="secondary">合并模式按主键更新，不会删除本库里多出来的数据。</Text>}
+          </div>
+        ),
+        okText: '确认恢复',
+        okButtonProps: { danger: true },
+        cancelText: '取消',
+        onOk: async () => {
+          setRestoring(true);
+          try {
+            const res = await fetch('/api/admin/backup/restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenStore.get() ?? ''}` },
+              body: JSON.stringify({ ...payload, mode: restoreMode, confirmToken: 'RESTORE' }),
+            });
+            if (!res.ok) throw new Error(`恢复失败 ${res.status}`);
+            const out = (await res.json()) as { restored: Record<string, number> };
+            const rows = Object.values(out.restored).reduce((a, b) => a + b, 0);
+            message.success(`恢复完成：写入 ${rows} 行（${Object.keys(out.restored).length} 张表）`);
+          } catch (e) {
+            message.error(e instanceof Error ? e.message : '恢复失败');
+          } finally {
+            setRestoring(false);
+          }
+        },
+      });
+    })();
   };
 
   const renew = async (): Promise<void> => {
@@ -383,8 +441,31 @@ export function TokenCenter(): ReactNode {
                 <Button icon={<DownloadOutlined />} loading={backing} onClick={() => void downloadBackup()} block>
                   导出全库数据备份（JSON）
                 </Button>
+                <Radio.Group
+                  value={restoreMode}
+                  onChange={(e) => setRestoreMode(e.target.value as 'merge' | 'replace')}
+                  size="small"
+                  style={{ marginTop: 4 }}
+                >
+                  <Radio.Button value="merge">合并恢复（推荐）</Radio.Button>
+                  <Radio.Button value="replace">覆盖恢复</Radio.Button>
+                </Radio.Group>
+                <Upload
+                  accept="application/json,.json"
+                  showUploadList={false}
+                  beforeUpload={(f) => {
+                    restoreBackup(f as unknown as File);
+                    return Upload.LIST_IGNORE;
+                  }}
+                >
+                  <Button icon={<UploadOutlined />} loading={restoring} block>
+                    选择备份文件恢复
+                  </Button>
+                </Upload>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  升级迁移前留底；产物文件位于 uploads 卷（docker volume），迁移时连同数据库卷一起备份即可完整恢复。
+                  合并恢复按主键更新、不删本库现有数据，适合「误删了点什么，补回来」；
+                  覆盖恢复会先清空目标表再写入，等于回到备份那一刻。
+                  两种模式都会写入审计。产物文件在 uploads 卷，恢复数据库不会自动恢复它。
                 </Text>
                 <Space.Compact block>
                   <Button style={{ flex: 1 }} onClick={() => void loadStorage()}>

@@ -198,6 +198,7 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'GET /api/tenants/mine': [],
 
   'GET /api/admin/backup': ['platform:billing:manage'],
+  'POST /api/admin/backup/restore': ['platform:billing:manage'],
   'GET /api/admin/storage': ['platform:billing:manage'],
   'POST /api/admin/storage/cleanup': ['platform:billing:manage'],
   'GET /api/admin/model-config': ['platform:billing:manage'],
@@ -515,6 +516,7 @@ export const MANIFEST: ManifestGroup[] = [
     about: '全库备份、产物占用统计与清理。',
     ops: [
       { m: 'GET', p: '/api/admin/backup', d: '全库 JSON 快照下载（同时在 uploads/backups 留一份）', risk: R, q: { '⚠️': '含用户手机号等敏感数据，别外传' } },
+      { m: 'POST', p: '/api/admin/backup/restore', d: '从备份 JSON 恢复数据（破坏性，需确认串；merge 不删现有数据 / replace 覆盖）', risk: D, q: { '⚠️': '覆盖模式会清空目标表后写入，无法撤销' } },
       { m: 'GET', p: '/api/admin/storage', d: '产物占用统计', risk: R },
       { m: 'POST', p: '/api/admin/storage/cleanup', d: '清理 N 天前且未被引用的产物（行+文件）', risk: D, q: { beforeDays: '天阈值，传 0 只为实测连通性' } },
     ],

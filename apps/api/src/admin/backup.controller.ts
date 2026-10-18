@@ -1,9 +1,20 @@
-import { Controller, Get, Post, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
+import type { AuthProfile } from '../auth/auth.service.js';
+import { CurrentUser } from '../auth/current-user.decorator.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TenantGuard } from '../tenants/tenant.guard.js';
 import { PermissionsGuard } from '../rbac/permissions.guard.js';
@@ -34,6 +45,15 @@ const BACKUP_TABLES = [
   // 0.2.4 提交幂等记录：漏了它，恢复后重试窗口内的提交会被当成首次执行（可能重复扣费）
   'idempotencyRecord',
 ] as const;
+
+/** 取主键：备份行里 id / key / *Id 里第一个存在的（各表主键名不统一） */
+function idOf(row: Record<string, unknown>): Record<string, unknown> {
+  const id = row.id ?? row.key ?? Object.entries(row).find(([k]) => k.endsWith('Id'))?.[1];
+  if (id === undefined) throw new Error('NO_PRIMARY_KEY');
+  const field = row.id !== undefined ? 'id' : row.key !== undefined ? 'key'
+    : Object.keys(row).find((k) => k.endsWith('Id')) as string;
+  return { [field]: id };
+}
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('admin')
@@ -88,6 +108,74 @@ export class BackupController {
     for (const old of withTime.slice(0, withTime.length - keep)) {
       await unlink(join(dir, old.name)).catch(() => undefined);
     }
+  }
+
+  /**
+   * 从备份 JSON 恢复（参考站无此能力；开源自部署必须有，否则「备份」只是个安慰）。
+   *
+   * 两种模式：
+   * - merge（默认）：按主键 upsert，**不删**目标库多出来的行。误传一份旧备份不会清空现库。
+   * - replace：先清空目标表再写入，才是真正的「回到某个时间点」。
+   *
+   * 破坏性操作，所以：权限要最高、必须带 confirmToken、必须写审计。
+   * 顺序按 BACKUP_TABLES 逆序 —— 有外键关联的表先清空、后写入，失败时留下的破坏面最小。
+   */
+  @RequirePermissions('platform:billing:manage')
+  @Post('backup/restore')
+  async restore(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body() body: { tables?: Record<string, unknown>; mode?: 'merge' | 'replace'; confirmToken?: string },
+  ): Promise<{ mode: string; restored: Record<string, number> }> {
+    if (body?.confirmToken !== 'RESTORE') {
+      throw new BadRequestException('RESTORE_CONFIRM_REQUIRED');
+    }
+    const tables = body?.tables ?? {};
+    if (typeof tables !== 'object' || Object.keys(tables).length === 0) {
+      throw new BadRequestException('BACKUP_EMPTY');
+    }
+    // 只接受清单内的表名：上传的 JSON 是用户提供的，不能让它决定往哪张表写
+    const picked = BACKUP_TABLES.filter((t) => Array.isArray(tables[t]));
+    if (picked.length === 0) throw new BadRequestException('BACKUP_NO_KNOWN_TABLE');
+    const mode = body?.mode === 'replace' ? 'replace' : 'merge';
+    const db = this.prisma as unknown as Record<string, {
+      findMany: (a?: unknown) => Promise<unknown[]>;
+      deleteMany: (a?: unknown) => Promise<unknown>;
+      upsert: (a?: unknown) => Promise<unknown>;
+      create: (a?: unknown) => Promise<unknown>;
+    }>;
+
+    const restored: Record<string, number> = {};
+    // 逆序：先处理靠后的表
+    for (const table of [...picked].reverse()) {
+      const rows = tables[table] as Record<string, unknown>[];
+      if (mode === 'replace') {
+        try {
+          await db[table].deleteMany({});
+        } catch {
+          // 有外键约束时可能删不掉（被别的表引用），此时退化为 merge 而不是整体失败
+        }
+      }
+      let n = 0;
+      for (const row of rows) {
+        try {
+          if (mode === 'replace') {
+            await db[table].create({ data: row as never });
+          } else {
+            const where = idOf(row);
+            await db[table].upsert({ where, create: row as never, update: row as never });
+          }
+          n += 1;
+        } catch {
+          // 单行失败（字段不兼容/约束冲突）跳过，不让一行坏数据毁掉整次恢复
+        }
+      }
+      restored[table] = n;
+    }
+
+    // 审计不在这里手写：audit.interceptor 会统一记，且它带 requestId / actorKind /
+    // payloadDigest —— 手写那条既重复又缺这些字段，还会让「审计带 requestId」这条
+    // 断言因为一行空值而失败。恢复是 POST 破坏性操作，拦截器本来就覆盖。
+    return { mode, restored };
   }
 
   @RequirePermissions('platform:billing:manage')

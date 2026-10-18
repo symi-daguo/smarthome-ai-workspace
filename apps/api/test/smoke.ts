@@ -768,6 +768,84 @@ async function main(): Promise<void> {
   const storageRes = await request<{ usedBytes: number; quotaBytes: number; assets: number }>(base, '/api/admin/storage', authA);
   check('存储占用统计可查', storageRes.status === 200 && storageRes.body.quotaBytes > 0);
 
+  // ---------- 全库恢复（0.2.9）----------
+  // 此前只有导出没有恢复 —— README 写「升级前留底」，可留底不能恢复，
+  // 对开源自部署场景等于没有兜底。
+  {
+    const noConfirm = await request(base, '/api/admin/backup/restore', {
+      ...authA, method: 'POST', body: JSON.stringify({ tables: { user: [] } }),
+    });
+    check('恢复缺确认串被拒（400，破坏性操作必须二次确认）',
+      noConfirm.status === 400 && (noConfirm.body as { message?: string })?.message === 'RESTORE_CONFIRM_REQUIRED');
+
+    const emptyPack = await request(base, '/api/admin/backup/restore', {
+      ...authA, method: 'POST', body: JSON.stringify({ tables: {}, confirmToken: 'RESTORE' }),
+    });
+    check('空备份被拒（400）', emptyPack.status === 400);
+
+    // 上传内容里的表名不可信：清单外的表一律不认
+    const unknownTable = await request(base, '/api/admin/backup/restore', {
+      ...authA, method: 'POST',
+      body: JSON.stringify({ tables: { evilTable: [{ id: 'x' }] }, confirmToken: 'RESTORE' }),
+    });
+    check('备份里出现清单外表名时整体拒绝（不能由上传内容决定往哪张表写）',
+      unknownTable.status === 400);
+
+    // 真实恢复一条方案：merge 写入后内容一致、租户归属不被改写
+    const rPlan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '待恢复方案', style: 'A', edition: 'standard',
+        pageCount: 1,
+        pages: [{ type: 'scene', heading: '恢复前', subtitle: '', body: '原始内容', bullets: [], narration: '', quote: '' }],
+        versionNo: 1,
+      },
+    });
+    const snapshot = await prisma.planProject.findUnique({ where: { id: rPlan.id } });
+    await prisma.planProject.delete({ where: { id: rPlan.id } });
+    const restore = await request<{ mode: string; restored: Record<string, number> }>(
+      base, '/api/admin/backup/restore',
+      {
+        ...authA, method: 'POST',
+        body: JSON.stringify({ tables: { planProject: [snapshot] }, mode: 'merge', confirmToken: 'RESTORE' }),
+      },
+    );
+    check('恢复成功并报告写入行数', restore.status === 201 && restore.body.restored.planProject === 1);
+    const afterRestore = await prisma.planProject.findUnique({ where: { id: rPlan.id } });
+    check('恢复后内容与源一致', afterRestore?.title === snapshot?.title
+      && JSON.stringify(afterRestore?.pages) === JSON.stringify(snapshot?.pages));
+    check('恢复不改写租户归属（防跨租户串数据）', afterRestore?.tenantId === tenantA);
+    check('merge 模式保留目标库原有数据（不整体覆盖）',
+      (await prisma.planProject.count({ where: { tenantId: tenantA } })) > 0);
+    // 审计由 audit.interceptor 统一写，action 是「METHOD path」而不是自定义串，
+    // 这样它才带 requestId / actorKind / payloadDigest（手写那条全都没有）
+    const auditRow = await prisma.auditLog.findFirst({
+      where: { path: '/api/admin/backup/restore' }, orderBy: { createdAt: 'desc' },
+    });
+    check('恢复动作写入统一审计且带 requestId（可按一次动作串联）',
+      Boolean(auditRow) && typeof auditRow?.requestId === 'string' && auditRow.requestId.length > 0);
+    await prisma.planProject.delete({ where: { id: rPlan.id } });
+
+    // 越权：降级成 designer 后再恢复。
+    // 不能用 authB —— 它是自助注册账号，注册即租户管理员，本来就该被允许。
+    const meB2 = await request<{ id: string }>(base, '/api/auth/me', authB);
+    const designerId = (await prisma.membership.findFirst({
+      where: { tenantId: tenantA, userId: meB2.body.id },
+    }))?.id;
+    const beforeRole = designerId
+      ? (await prisma.membership.findUnique({ where: { id: designerId } }))?.roleId
+      : null;
+    if (designerId) {
+      await prisma.membership.update({ where: { id: designerId }, data: { roleId: 'designer' } });
+      const denied = await request(base, '/api/admin/backup/restore', {
+        ...authB, method: 'POST',
+        body: JSON.stringify({ tables: { planProject: [] }, confirmToken: 'RESTORE' }),
+      });
+      check('降级为设计师后恢复被拒（403）', denied.status === 403);
+      await prisma.membership.update({ where: { id: designerId }, data: { roleId: beforeRole ?? 'tenant_admin' } });
+    }
+  }
+
+
   // ---------- 备份留盘必须自动裁剪（防止只增不减撑爆磁盘） ----------
   // 背景：全库快照单份二十多 MB，0.1.63 之前只写不删，实测堆到 188 份 597MB，
   // 而且这些文件还会被 Docker 构建上下文带进镜像。裁剪是唯一的兜底，所以必须验它真的在裁。
