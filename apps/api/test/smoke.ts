@@ -1781,6 +1781,81 @@ async function main(): Promise<void> {
   check('没带 PPTX 文件被打回（400）', pkgNoFile.status === 400);
   await prisma.planProject.delete({ where: { id: reviewSeed.id } });
 
+  // ---------- 交付前预检闸门（批次 6 的 preflight 部分） ----------
+  // 判定规则在服务端、前端只读结论（与参考站同边界）。
+  // 核心风险是**误报**：把「无需确认」「不再需要核实」这类结论判成待办，
+  // 会让门店反复改明明没问题的页面。参考站在这里就漏了「不再」。
+  {
+    const preflightSeed = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA,
+        userId: me.body.id,
+        title: '预检验证',
+        style: 'A',
+        edition: 'standard',
+        pageCount: 3,
+        pages: [
+          {
+            type: 'scene',
+            heading: '干净的一页',
+            subtitle: '',
+            body: '本方案已包含照明与安防配置，无需确认即可执行。后续不再需要核实，现场条件具备时即可施工。',
+            bullets: ['全部已确认', '无需再补充资料'],
+            narration: '',
+            quote: '',
+          },
+          {
+            type: 'scene',
+            heading: '有问题的一页',
+            subtitle: '',
+            body: '预算部分待客户确认\n门头型号待现场核实\n暂无报价依据',
+            bullets: ['TBD', '待办事项如下'],
+            narration: '',
+            quote: '',
+          },
+          {
+            type: 'scene',
+            heading: '块级跳过',
+            subtitle: '',
+            body: '待确认事项：\n一、门牌号待补\n二、业主未提供车位图\n已确认：门牌号以物业最终公示为准',
+            bullets: [],
+            narration: '',
+            quote: '',
+          },
+        ],
+        versionNo: 1,
+      },
+    });
+    const pf = await request<{ canDeliver: boolean; pageCount: number; warnings: { index: number; field: string; snippet: string }[] }>(
+      base, `/api/plans/${preflightSeed.id}/preflight`, authA,
+    );
+    check('预检端点可读且只读不改数据（200 且返回结构完整）', pf.status === 200 && typeof pf.body?.canDeliver === 'boolean');
+    check('干净页不被误报（「无需确认」「不再需要核实」「无需再补充」都是结论）',
+      (pf.body?.warnings ?? []).every((w) => w.index !== 0));
+    check('内部语句被逐页报出（第 2 页命中 body 与 bullets）',
+      (pf.body?.warnings ?? []).some((w) => w.index === 1 && w.field === 'body')
+      && (pf.body?.warnings ?? []).some((w) => w.index === 1 && w.field === 'bullets'));
+    check('整块跳过被识别（标题行本身报出，不因后面有「已确认」而漏）',
+      (pf.body?.warnings ?? []).some((w) => w.index === 2));
+    check('存在内部语句时 canDeliver 为 false', pf.body?.canDeliver === false);
+    const clean = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '干净方案', style: 'A', edition: 'standard', pageCount: 1,
+        // 刻意用门店会写的措辞：「无待办事项」本身含该词，早期版本会把它误报成有问题。
+        // 预检一旦误报，门店就不会再信它 —— 断言必须覆盖这类反向场景。
+        pages: [{ type: 'scene', heading: '落地方案', subtitle: '', body: '本页无待办事项，全部内容已确认。', bullets: [], narration: '', quote: '' }],
+        versionNo: 1,
+      },
+    });
+    const pfClean = await request<{ canDeliver: boolean; pageCount: number }>(base, `/api/plans/${clean.id}/preflight`, authA);
+    check('干净方案 canDeliver 为 true 且零告警', pfClean.body?.canDeliver === true);
+    // 跨租户必须不可见
+    const pfCross = await request(base, `/api/plans/${clean.id}/preflight`, authB);
+    check('预检跨租户被拒（404，不泄露他人方案内容）', pfCross.status === 404);
+    await prisma.planProject.delete({ where: { id: preflightSeed.id } });
+    await prisma.planProject.delete({ where: { id: clean.id } });
+  }
+
   // ---------- 生产路径（nginx）配置与后端限制一致 ----------
   // 这两条只有容器部署才会暴露：vite dev 不经过 nginx。
   // 0.2.2 修过两个真实缺陷 —— /api/ 只给 12m 而打包端点要 60MB（413），

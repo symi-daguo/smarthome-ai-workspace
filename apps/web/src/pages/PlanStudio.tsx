@@ -54,6 +54,16 @@ const SALES_FIELDS: { name: string; label: string; placeholder: string; extra?: 
 
 const STEPS = ['客户资料', '逐页审稿', '生成与校对', '交付客户'];
 
+/** 预检报出的字段名 → 人话（服务端只给字段 key，中文化放前端） */
+const FIELD_LABEL: Record<string, string> = {
+  heading: '主标题',
+  subtitle: '副标题',
+  bullets: '画面要点',
+  body: '正文',
+  narration: '本页讲解稿',
+  quote: '底部引言',
+};
+
 /**
  * 预算档位预设：建面 × 单方造价（元/㎡）推导建议金额（万元）。
  * 档位只做"一键填入"与"按面积推荐"，用户始终可以自由改写预算原文。
@@ -234,6 +244,11 @@ const [editing, setEditing] = useState<{
   const [packaging, setPackaging] = useState(false);
   /** 审稿页「完整文案」折叠区（参考站 A3：整篇视图与逐页视图并存） */
   const [deckTextOpen, setDeckTextOpen] = useState(false);
+  /** 交付前预检结果（服务端判定，只读不扣额度）。null=还没查 */
+  const [preflight, setPreflight] = useState<{
+    canDeliver: boolean; pageCount: number;
+    warnings: { index: number; heading: string; field: string; snippet: string }[];
+  } | null>(null);
   const [renderingFloorplan, setRenderingFloorplan] = useState(false);
   /** 预算分配：只有用户改过的分类存覆盖值，其余跟随建议占比 */
   const [splitOverride, setSplitOverride] = useState<Record<string, number | null>>({});
@@ -496,6 +511,8 @@ const [editing, setEditing] = useState<{
       });
       setPlan(updated);
       setEditing(null);
+      // 改过内容，之前那份预检结论可能已过时，立刻重查
+      if (step === 3) void runPreflight(updated.id);
       message.success(`已保存，文案版本 ${updated.versionNo}`);
     } catch (e) {
       message.error((e as Error).message || '保存失败');
@@ -530,10 +547,21 @@ const [editing, setEditing] = useState<{
       }));
       setStep(1);
       setHistoryOpen(false);
+      setPreflight(null);
     } catch (e) {
       message.error((e as Error).message || '打开失败');
     }
   };
+
+  /** 交付前预检：只读、不扣额度。进入交付步时自动查一次 */
+  const runPreflight = useCallback(async (planId: string): Promise<void> => {
+    try {
+      setPreflight(await api<typeof preflight>(`/api/plans/${planId}/preflight`));
+    } catch (e) {
+      message.error((e as Error).message || '预检失败');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const shareUrl = plan ? `${window.location.origin}/share/plan/${plan.shareToken}` : '';
 
@@ -1406,6 +1434,33 @@ const [editing, setEditing] = useState<{
                 <Tag color="warning" icon={<ExclamationCircleOutlined />}>本版尚未校对，导出与分享时会提示确认</Tag>
               )}
             </div>
+            {/* 交付前预检（参考站 preflight-content）：逐页点名「还有内部语句」。
+                不静默净化 —— 静默处理会让人以为系统吃了内容；也不硬拦 ——
+                门店有权决定改还是删，位置必须先报出来。 */}
+            <div style={{ marginTop: 16, textAlign: 'left' }}>
+              {preflight === null ? (
+                <Text type="secondary" style={{ fontSize: 12 }}>正在检查是否还有「待确认」这类内部语句…</Text>
+              ) : preflight.warnings.length === 0 ? (
+                <Tag color="success" icon={<CheckCircleOutlined />}>
+                  交付前检查通过：{preflight.pageCount} 页均无内部待办语句
+                </Tag>
+              ) : (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={`第 ${preflight.warnings.length} 处内部待办语句，打包交付前建议先处理`}
+                  description={
+                    <div style={{ maxHeight: 200, overflowY: 'auto', lineHeight: 1.9 }}>
+                      {preflight.warnings.map((w, i) => (
+                        <div key={`${w.index}-${w.field}-${i}`}>
+                          第 {w.index + 1} 页 · {FIELD_LABEL[w.field] ?? w.field}：{w.snippet}
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
+              )}
+            </div>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
               <Button type="primary" size="large" icon={<DownloadOutlined />} loading={packaging} onClick={packageDelivery} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 190 }}>
                 打包交付三件套
@@ -1474,7 +1529,7 @@ const [editing, setEditing] = useState<{
               生成方案文案
             </Button>
           ) : step < STEPS.length - 1 ? (
-            <Button data-testid="goto-delivery-btn" size="large" type="primary" onClick={() => setStep(step + 1)} disabled={!plan} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
+            <Button data-testid="goto-delivery-btn" size="large" type="primary" onClick={() => { if (plan) void runPreflight(plan.id); setStep(step + 1); }} disabled={!plan} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
               {step === 1 ? '生成与校对' : '进入交付'}
             </Button>
           ) : (

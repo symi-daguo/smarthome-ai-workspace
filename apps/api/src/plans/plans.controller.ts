@@ -25,6 +25,7 @@ import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
 import { TenantGuard } from '../tenants/tenant.guard.js';
 import { PlanPackageService } from './plan-package.service.js';
+import { PlanPreflightService } from './plan-preflight.service.js';
 import { PlansService } from './plans.service.js';
 import {
   attachFloorplanSchema,
@@ -42,7 +43,23 @@ export class PlansController {
     private readonly plans: PlansService,
     private readonly media: MediaService,
     private readonly packages: PlanPackageService,
+    private readonly preflight: PlanPreflightService,
   ) {}
+
+  /**
+   * 交付前预检（参考站 preflight-content）：逐页报出内部待办语句。
+   * 只读、不改数据、不扣额度 —— 它是给人和 Agent 的「交付前体检」，
+   * 真正的拦截门在 review（未校对不许打包）与 plan-package 服务里。
+   */
+  @RequirePermissions('content:read')
+  @Get(':id/preflight')
+  preflightCheck(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+  ) {
+    const plan = this.plans.detail(user.activeTenantId as string, id);
+    return plan.then((p) => this.preflight.inspect((p as { pages?: unknown }).pages));
+  }
 
   @RequirePermissions('content:generate')
   @Post()
