@@ -1782,6 +1782,58 @@ async function main(): Promise<void> {
   check('没带 PPTX 文件被打回（400）', pkgNoFile.status === 400);
   await prisma.planProject.delete({ where: { id: reviewSeed.id } });
 
+  // ---------- 方案编辑乐观锁（批次 10 剩余：冲突检测） ----------
+  // pages 是整份 JSON 覆盖，不比对版本的话，后保存的人会把先保存的人的修改整份抹掉，
+  // 而 versionNo 照常递增、界面一切正常 —— 静默丢数据，最难查的一种。
+  {
+    const lockPlan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '冲突检测验证', style: 'A', edition: 'standard',
+        pageCount: 2,
+        pages: [
+          { type: 'scene', heading: '甲改的页', subtitle: '', body: 'A 的内容', bullets: [], narration: '', quote: '' },
+          { type: 'scene', heading: '乙改的页', subtitle: '', body: 'B 的内容', bullets: [], narration: '', quote: '' },
+        ],
+        versionNo: 1,
+      },
+    });
+    // A 基于 V1 改第 0 页
+    const aSave = await request<{ versionNo: number }>(base, `/api/plans/${lockPlan.id}/pages/0`, {
+      ...authA, method: 'PATCH',
+      body: JSON.stringify({ versionNo: 1, body: 'A 改完之后的内容' }),
+    });
+    check('基于当前版本保存成功，版本号 +1', aSave.status === 200 && aSave.body.versionNo === 2);
+
+    // B 还拿着 V1，改第 1 页 —— 必须被拦，否则 A 的修改被抹
+    const bSave = await request<{ code?: string; message?: string; currentVersionNo?: number }>(
+      base, `/api/plans/${lockPlan.id}/pages/1`,
+      { ...authA, method: 'PATCH', body: JSON.stringify({ versionNo: 1, body: 'B 改完之后的内容' }) },
+    );
+    check('拿着旧版本号保存被拒（409，不静默覆盖他人修改）', bSave.status === 409);
+    check('冲突响应带明确错误码与当前版本号（前端可精确判断并提示）',
+      bSave.body?.code === 'PLAN_VERSION_CONFLICT' && bSave.body?.currentVersionNo === 2);
+
+    const after = await prisma.planProject.findUnique({ where: { id: lockPlan.id } });
+    const pagesAfter = after?.pages as unknown as { body: string }[];
+    check('A 的修改仍在（冲突那次没有写入）', pagesAfter[0].body === 'A 改完之后的内容');
+    check('B 的修改没有落库（那一页仍是原内容）', pagesAfter[1].body === 'B 的内容');
+    check('版本号没有因为失败的保存而增长', after?.versionNo === 2);
+
+    // B 刷新后重新保存 —— 基于新版本就应该成功
+    const bRetry = await request<{ versionNo: number }>(base, `/api/plans/${lockPlan.id}/pages/1`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ versionNo: 2, body: 'B 刷新后改的内容' }),
+    });
+    check('B 基于最新版本重试后成功（冲突不是死锁）', bRetry.status === 200 && bRetry.body.versionNo === 3);
+
+    // 不传 versionNo 保持老行为（Agent / curl 不会被拦）
+    const legacy = await request(base, `/api/plans/${lockPlan.id}/pages/0`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ body: '不带版本号的写入' }),
+    });
+    check('不传 versionNo 时不做冲突检测（向后兼容，Agent/curl 不受影响）', legacy.status === 200);
+
+    await prisma.planProject.delete({ where: { id: lockPlan.id } });
+  }
+
   // ---------- 方案绑定场景视频（批次 8） ----------
   // 分享页是免鉴权端点，所以绑定时必须逐条校验归属与类型 ——
   // 写错 id 会把别人的视频挂到公开页上。

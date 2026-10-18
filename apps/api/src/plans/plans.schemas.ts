@@ -86,6 +86,11 @@ export type CreatePlanDto = z.infer<typeof createPlanSchema>;
 export type AttachFloorplanDto = z.infer<typeof attachFloorplanSchema>;
 
 export const updatePlanPageSchema = z.object({
+  /**
+   * 乐观锁版本号：客户端打开时看到的 versionNo。
+   * 不传则不做冲突检测（保持老调用方行为）；传了而服务端已更新则 409。
+   */
+  versionNo: z.number().int().min(1).optional(),
   heading: z.string().max(200).optional(),
   subtitle: z.string().max(200).optional(),
   body: z.string().max(8000).optional(),

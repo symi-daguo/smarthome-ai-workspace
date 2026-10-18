@@ -31,8 +31,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const base = import.meta.env.VITE_API_BASE_URL ?? '';
   const response = await fetch(`${base}${path}`, { ...init, headers });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? response.statusText);
+    const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
+    // 把后端的 code 一并带出来：否则前端只能靠文案匹配判断是哪类错误，
+    // 改个字面量就静默失效。Nest 的异常体本身就是 { code, message }。
+    const err = new Error(body?.message ?? response.statusText) as Error & { code?: string; status?: number };
+    if (body?.code) err.code = body.code;
+    err.status = response.status;
+    throw err;
   }
   // DELETE/204 等空响应体：response.json() 会抛 SyntaxError，先取 text 再解析
   const text = await response.text();

@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   BadRequestException,
   Injectable,
   Logger,
@@ -584,6 +585,8 @@ export class PlansService {
     id: string,
     dto: {
       index: number;
+      /** 乐观锁：客户端打开方案时看到的版本号。不一致说明期间有人改过 */
+      versionNo?: number;
       heading?: string;
       subtitle?: string;
       body?: string;
@@ -596,6 +599,23 @@ export class PlansService {
     const pages = plan.pages as unknown as PlanPage[];
     if (!Array.isArray(pages) || dto.index < 0 || dto.index >= pages.length) {
       throw new BadRequestException('PAGE_INDEX_OUT_OF_RANGE');
+    }
+    /**
+     * 乐观锁：pages 是**整份 JSON 覆盖**，不比对版本的话，
+     * A 改第 3 页保存后，B 基于旧版改第 5 页再保存，会把 A 的修改整份抹掉，
+     * 而 versionNo 照常递增、界面一切正常 —— 静默丢数据，最难查的一种。
+     *
+     * 参考站的做法是存双份草稿快照让用户手动合并（app:3692 双快照到 localStorage，
+     * 409 冲突时落 `p2_draft_{acct}:{proj}:conflict:{ts}`）。
+     * 我方不加草稿快照：409 里带回**服务端当前版本**，前端提示用户重新载入再改，
+     * 至少保证「丢得明明白白」而不是「不知不觉没了」。
+     */
+    if (dto.versionNo !== undefined && dto.versionNo !== plan.versionNo) {
+      throw new ConflictException({
+        code: 'PLAN_VERSION_CONFLICT',
+        message: `方案已被他人更新到 V${plan.versionNo}（你基于 V${dto.versionNo} 编辑），本次修改未保存`,
+        currentVersionNo: plan.versionNo,
+      });
     }
     pages[dto.index] = {
       ...pages[dto.index],

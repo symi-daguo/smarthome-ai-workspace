@@ -155,6 +155,8 @@ export class PlansController {
   ) {
     return this.plans.updatePage(user.activeTenantId as string, id, {
       index: Number(index),
+      // 乐观锁版本号：漏了它就等于没做冲突检测（这个坑踩过一次）
+      versionNo: dto.versionNo,
       heading: dto.heading,
       subtitle: dto.subtitle,
       body: dto.body,

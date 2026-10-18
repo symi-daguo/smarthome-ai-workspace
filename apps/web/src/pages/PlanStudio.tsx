@@ -236,7 +236,10 @@ export function PlanStudio(): ReactNode {
   // 编辑中的那一页。bullets 用纯文本存（一行一条），保存时再拆成数组——
 // 用户手上通常就是一段多行文案，让他对着 JSON 数组改是不合理的
 const [editing, setEditing] = useState<{
-    index: number; heading: string; subtitle: string; bullets: string; body: string; narration: string; quote: string;
+    index: number;
+    /** 打开弹窗那一刻的方案版本号，保存时做乐观锁比对 */
+    versionNo: number;
+    heading: string; subtitle: string; bullets: string; body: string; narration: string; quote: string;
   } | null>(null);
   const [savingPage, setSavingPage] = useState(false);
   /** 交付前的校对门：确认通过后自动执行原本要做的动作（导出 / 复制分享链接） */
@@ -521,6 +524,8 @@ const [editing, setEditing] = useState<{
     }
     setEditing({
       index,
+      // 记下打开这一刻的版本号，保存时做乐观锁比对
+      versionNo: plan?.versionNo ?? 1,
       heading: p.heading,
       subtitle: p.subtitle ?? '',
       // bullets 是数组，编辑时按行拆成纯文本——用户手上是一段多行文案，不是 JSON
@@ -538,6 +543,9 @@ const [editing, setEditing] = useState<{
       const updated = await api<PlanDetail>(`/api/plans/${plan.id}/pages/${editing.index}`, {
         method: 'PATCH',
         body: JSON.stringify({
+          // 乐观锁：带上打开弹窗那一刻的版本号。期间若有人保存过，服务端会 409
+          // 而不是把对方的修改连同我的改动一起整份覆盖掉。
+          versionNo: editing.versionNo,
           heading: editing.heading,
           subtitle: editing.subtitle,
           // 一行一条；空行在提示里就能看出来，服务端也会再过滤一次
@@ -553,7 +561,25 @@ const [editing, setEditing] = useState<{
       if (step === 3) void runPreflight(updated.id);
       message.success(`已保存，文案版本 ${updated.versionNo}`);
     } catch (e) {
-      message.error((e as Error).message || '保存失败');
+      const err = e as Error & { code?: string; status?: number; currentVersionNo?: number };
+      if (err.code === 'PLAN_VERSION_CONFLICT' || err.status === 409) {
+        // 不提供「强制覆盖」：那份 pages 是整份 JSON，强写就是替对方做决定。
+        // 只能重新载入最新版本，用户把自己的文字照着再改一遍。
+        modal.confirm({
+          title: '方案已被他人更新',
+          content: `${err.message}。你本次的修改没有保存。是否重新载入最新版本？`,
+          okText: '重新载入最新版本',
+          cancelText: '先不载入',
+          onOk: async () => {
+            setEditing(null);
+            const fresh = await api<PlanDetail>(`/api/plans/${plan.id}`);
+            setPlan(fresh);
+            message.info(`已载入 V${fresh.versionNo}`);
+          },
+        });
+        return;
+      }
+      message.error(err.message || '保存失败');
     } finally {
       setSavingPage(false);
     }
