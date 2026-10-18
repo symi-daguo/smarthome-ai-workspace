@@ -488,6 +488,14 @@ model PlanProject {
    * 两者同序；放进一个 JSON 会让「取图」每次都得解 JSON 再筛。
    */
   renderAssetIds          String[] @default([])
+  /**
+   * 方案绑定的场景视频（最多 2 条，参考站同口径）。
+   * 刻意**不做**「在方案页现场生视频」：那要现场调模型、消耗额度，
+   * 而模型是客户自备的。门店用「AI 生视频」出好片后挂进来即可。
+   */
+  videoAssetIds           String[] @default([])
+  /** 与 videoAssetIds 同序的视频标题，分享页显示在播放器下方 */
+  videoTitles             String[] @default([])
   renderAssetMeta         Json     @default("[]")
   // 客户户型图精装修效果图（AI 渲染的最终展示版，用于空间动线页与分享页）
   renderedFloorplanAssetId String?

@@ -272,6 +272,29 @@ export class PlansService {
     });
   }
 
+  /**
+   * 绑定场景视频（分享页内联播放）。最多 2 条，逐条校验归属与类型 ——
+   * 分享页是免鉴权端点，写错 id 会把别人的视频挂到公开页上。
+   */
+  async bindVideos(tenantId: string, userId: string, id: string, videoAssetIds: string[]): Promise<{ videoAssetIds: string[] }> {
+    await this.detail(tenantId, id);
+    const ids = [...new Set(videoAssetIds)].slice(0, 2);
+    for (const vid of ids) {
+      const asset = await this.prisma.mediaAsset.findFirst({ where: { id: vid, tenantId } });
+      if (!asset) throw new BadRequestException('VIDEO_ASSET_NOT_FOUND');
+      if (asset.kind !== 'video') throw new BadRequestException('VIDEO_ASSET_KIND_INVALID');
+      if (asset.status !== 'ready') throw new BadRequestException('VIDEO_ASSET_NOT_READY');
+    }
+    const titles = await Promise.all(
+      ids.map((vid) => this.prisma.mediaAsset.findUnique({ where: { id: vid }, select: { title: true } })),
+    );
+    await this.prisma.planProject.update({
+      where: { id },
+      data: { videoAssetIds: ids, videoTitles: titles.map((t) => t?.title ?? '') },
+    });
+    return { videoAssetIds: ids };
+  }
+
   /** 挂接户型图与设备点位（点位编辑器产物 → 空间动线页配图） */
   async attachFloorplan(
     tenantId: string,
@@ -612,6 +635,10 @@ export class PlansService {
       floorplanAssetId: plan.floorplanAssetId,
       renderedFloorplanAssetId: plan.renderedFloorplanAssetId,
       layoutPoints: plan.layoutPoints,
+      // 分享页据此内联播放；显式挑字段而非整行返回，避免把 clientRequestId、
+      // reviewedRevision 之类内部字段暴露到免鉴权端点上。
+      videoAssetIds: plan.videoAssetIds,
+      videoTitles: plan.videoTitles,
     };
   }
 }

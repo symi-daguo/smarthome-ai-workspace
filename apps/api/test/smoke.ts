@@ -1782,6 +1782,62 @@ async function main(): Promise<void> {
   check('没带 PPTX 文件被打回（400）', pkgNoFile.status === 400);
   await prisma.planProject.delete({ where: { id: reviewSeed.id } });
 
+  // ---------- 方案绑定场景视频（批次 8） ----------
+  // 分享页是免鉴权端点，所以绑定时必须逐条校验归属与类型 ——
+  // 写错 id 会把别人的视频挂到公开页上。
+  {
+    const vplan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '视频绑定验证', style: 'A', edition: 'standard',
+        pageCount: 1, pages: [{ type: 'scene', heading: '测试', subtitle: '', body: 'x', bullets: [], narration: '', quote: '' }],
+        versionNo: 1, shareToken: `smoke-vid-${randomUUID()}`,
+      },
+    });
+    const notVideo = await prisma.mediaAsset.create({
+      data: { tenantId: tenantA, userId: me.body.id, kind: 'image', title: '冒充视频', prompt: '', filePath: 'images/x.jpg', mimeType: 'image/jpeg', sizeBytes: 1, status: 'ready' },
+    });
+    const badKind = await request(base, `/api/plans/${vplan.id}/videos`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ videoAssetIds: [notVideo.id] }),
+    });
+    check('把图片当视频绑定被拒（400，分享页不能挂错类型）', badKind.status === 400);
+
+    const foreign = await prisma.mediaAsset.create({
+      data: { tenantId: 'other-tenant-xyz', userId: null, kind: 'video', title: '他租户的视频', prompt: '', filePath: 'videos/x.mp4', mimeType: 'video/mp4', sizeBytes: 1, status: 'ready' },
+    });
+    const crossBind = await request(base, `/api/plans/${vplan.id}/videos`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ videoAssetIds: [foreign.id] }),
+    });
+    check('绑定他租户的视频被拒（400，不把别人的东西挂到公开页）', crossBind.status === 400);
+
+    const tooMany = await request(base, `/api/plans/${vplan.id}/videos`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ videoAssetIds: [notVideo.id, notVideo.id, notVideo.id] }),
+    });
+    check('超过 2 条被拒（400，与参考站同上限）', tooMany.status === 400);
+
+    // 合法绑定 + 公开流可取
+    const vid = await prisma.mediaAsset.create({
+      data: { tenantId: tenantA, userId: me.body.id, kind: 'video', title: '观影模式演示', prompt: '', filePath: 'videos/smoke.mp4', mimeType: 'video/mp4', sizeBytes: 0, status: 'ready' },
+    });
+    const okBind = await request<{ videoAssetIds: string[] }>(base, `/api/plans/${vplan.id}/videos`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ videoAssetIds: [vid.id] }),
+    });
+    check('合法视频绑定成功并返回 id 列表', okBind.status === 200 && okBind.body.videoAssetIds.length === 1);
+
+    const share = await request<{ videoAssetIds?: string[] }>(base, `/api/public/plans/${vplan.shareToken}`);
+    check('分享页能读到绑定结果（分享视图据此内联播放）', (share.body?.videoAssetIds ?? []).length === 1);
+
+    const outOfRange = await fetch(`${base}/api/public/plans/${vplan.shareToken}/video/5`);
+    check('越界的视频序号取不到（404，不会串到别的资产）', outOfRange.status === 404);
+
+    const wrongShare = await fetch(`${base}/api/public/plans/00000000-0000-0000-0000-000000000000/video/0`);
+    check('不存在的分享 token 取视频 404', wrongShare.status === 404);
+
+    await prisma.mediaAsset.delete({ where: { id: vid.id } });
+    await prisma.mediaAsset.delete({ where: { id: foreign.id } });
+    await prisma.mediaAsset.delete({ where: { id: notVideo.id } });
+    await prisma.planProject.delete({ where: { id: vplan.id } });
+  }
+
   // ---------- 提交幂等（批次 10）：抢占语义 + 失败可重试 ----------
   // 我方此前只在方案/生图/生视频三处有幂等，产品 AI 批量、灯光问诊、接单接待、
   // 跟进建议这几处没有 —— 用户弱网重试会重复扣额度。

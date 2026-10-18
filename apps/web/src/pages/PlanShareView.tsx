@@ -21,6 +21,10 @@ interface SharePlan {
   floorplanAssetId?: string | null;
   renderedFloorplanAssetId?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+  /** 门店挂进来的场景视频（最多 2 条），走公开流内联播放 */
+  videoAssetIds?: string[];
+  /** 视频标题（与 videoAssetIds 同序），用于视频下方说明 */
+  videoTitles?: string[];
 }
 
 /** 客户分享页：/share/plan/:token，无需登录微信直开；16:9 幻灯片画布逐页呈现（讲解稿不显示） */
@@ -61,6 +65,9 @@ export function PlanShareView(): ReactNode {
     layoutPoints: plan.layoutPoints ?? null,
   };
 
+  const videoCount = Math.min(plan.videoAssetIds?.length ?? 0, 2);
+  const videoTitles = plan.videoTitles ?? [];
+
   // 有户型图素材时补一页「户型与设备点位」：参考站同样把户型图算成独立页
   const shown = withFloorplanPage(plan.pages, Boolean(slidePlan.floorplanUrl || slidePlan.renderedFloorplanUrl));
 
@@ -76,6 +83,27 @@ export function PlanShareView(): ReactNode {
         </button>
       </div>
       <div style={{ maxWidth: 960, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {/* 场景视频放在幻灯片之前：客户在微信里打开先看到「装出来是什么样」，
+            再看逐页细节 —— 顺序反了的话，视频会被当成附加彩蛋而错过。 */}
+        {videoCount > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {Array.from({ length: videoCount }, (_, vi) => (
+              <div key={vi} style={{ boxShadow: '0 2px 16px rgba(0,0,0,.08)', background: t.surface, overflow: 'hidden' }}>
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video
+                  src={`/api/public/plans/${token}/video/${vi}`}
+                  controls
+                  preload="metadata"
+                  playsInline
+                  style={{ display: 'block', width: '100%', maxHeight: '56vh', background: '#000' }}
+                />
+                {videoTitles[vi] ? (
+                  <div style={{ padding: '10px 16px', fontSize: 13, color: t.sub }}>{videoTitles[vi]}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {shown.pages.map((p, i) => (          <div key={i} style={{ boxShadow: '0 2px 16px rgba(0,0,0,.08)' }}>
             <PlanSlide page={p} index={i} plan={slidePlan} t={t} />
           </div>

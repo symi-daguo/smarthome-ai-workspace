@@ -11,6 +11,7 @@ import {
   HistoryOutlined,
   LeftOutlined,
   LinkOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
   RightOutlined,
 } from '@ant-design/icons';
@@ -159,6 +160,9 @@ interface PlanDetail {
   floorplanFloors?: string[];
   /** 装修效果图：与 renderAssetIds 同序，room/representative/useMode 等分组信息存这里 */
   renderAssetIds?: string[];
+  /** 绑定的场景视频（分享页内联播放） */
+  videoAssetIds?: string[];
+  videoTitles?: string[];
   renderAssetMeta?: {
     clientId?: string;
     room?: string;
@@ -215,6 +219,11 @@ export function PlanStudio(): ReactNode {
   const fpInputRef = useRef<HTMLInputElement>(null);
   const raInputRef = useRef<HTMLInputElement>(null);
   const [raPickerOpen, setRaPickerOpen] = useState(false);
+  /** 交付页绑定场景视频（最多 2 条）。不做现场生视频：模型是客户自备的 */
+  const [vidPickerOpen, setVidPickerOpen] = useState(false);
+  const [vidAssets, setVidAssets] = useState<{ id: string; title: string }[]>([]);
+  const [vidPicked, setVidPicked] = useState<string[]>([]);
+  const [boundVideos, setBoundVideos] = useState<string[]>([]);
   const [libAssets, setLibAssets] = useState<{ id: string; title: string }[]>([]);
   const [libPicked, setLibPicked] = useState<string[]>([]);
   const [libLoading, setLibLoading] = useState(false);
@@ -400,6 +409,35 @@ const [editing, setEditing] = useState<{
     message.success(`已添加 ${take.length} 张效果图，请填写实际空间并确认`);
   };
 
+  /** 打开「绑定场景视频」弹层：只列已生成的视频，不在方案页现场生（要消耗额度且慢） */
+  const openVidPicker = async (): Promise<void> => {
+    setVidPickerOpen(true);
+    try {
+      const list = await api<{ id: string; kind: string; title: string; status: string }[]>('/api/media/assets');
+      setVidAssets(list.filter((a) => a.kind === 'video' && a.status === 'ready').map((a) => ({ id: a.id, title: a.title })));
+    } catch (e) {
+      message.error((e as Error).message || '资料库加载失败');
+    }
+  };
+
+  const bindVideos = async (): Promise<void> => {
+    if (!plan) return;
+    const ids = vidPicked.slice(0, 2);
+    if (!ids.length) { setVidPickerOpen(false); return; }
+    try {
+      const r = await api<{ videoAssetIds: string[] }>(`/api/plans/${plan.id}/videos`, {
+        method: 'PATCH',
+        body: JSON.stringify({ videoAssetIds: ids }),
+      });
+      setBoundVideos(r.videoAssetIds);
+      setVidPicked([]);
+      setVidPickerOpen(false);
+      message.success(`已绑定 ${r.videoAssetIds.length} 条场景视频，分享页与客户链接会内联播放`);
+    } catch (e) {
+      message.error((e as Error).message || '绑定失败');
+    }
+  };
+
   const confirmRoom = (i: number): void => {
     if (!raList[i]?.room.trim()) {
       message.warning('请先填写这张效果图对应的空间');
@@ -545,6 +583,7 @@ const [editing, setEditing] = useState<{
           roomConfirmed: m.roomConfirmed ?? false,
         };
       }));
+      setBoundVideos(detail.videoAssetIds ?? []);
       setStep(1);
       setHistoryOpen(false);
       setPreflight(null);
@@ -1474,6 +1513,9 @@ const [editing, setEditing] = useState<{
               <Button size="large" icon={<FullscreenOutlined />} onClick={() => setReaderOpen(true)}>
                 全屏播放
               </Button>
+              <Button size="large" icon={<PlayCircleOutlined />} onClick={() => void openVidPicker()}>
+                {boundVideos.length ? `场景视频（已绑 ${boundVideos.length} 条）` : '绑定场景视频'}
+              </Button>
               <Button size="large" icon={<LinkOutlined />} onClick={() => requireReview(() => void copyLink())}>
                 复制分享链接
               </Button>
@@ -1684,6 +1726,62 @@ const [editing, setEditing] = useState<{
                     ) : null}
                     {added ? (
                       <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.45)', color: '#fff', fontSize: 12 }}>已在本方案</div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 绑定场景视频：只列已生成的视频。刻意不做「在方案页现场生视频」——
+          模型是客户自备的，现场生要消耗额度且慢；先用「AI 生视频」出好片再挂进来。 */}
+      <Modal
+        open={vidPickerOpen}
+        title="从「我的资料」选择场景视频（最多 2 条）"
+        onCancel={() => setVidPickerOpen(false)}
+        onOk={() => void bindVideos()}
+        okText={`绑定 ${Math.min(vidPicked.length, 2)} 条`}
+        okButtonProps={{ disabled: !vidPicked.length }}
+        cancelText="取消"
+        width={760}
+      >
+        {vidAssets.length === 0 ? (
+          <Empty description="资料库里还没有视频。先去「AI 生视频」生成，再回来绑定" />
+        ) : (
+          <>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+              视频会放在分享页最前面，客户在微信里打开先看到画面，再看逐页文案。
+            </Text>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, maxHeight: 380, overflowY: 'auto' }}>
+              {vidAssets.map((a) => {
+                const picked = vidPicked.includes(a.id);
+                return (
+                  <div
+                    key={a.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={picked}
+                    onClick={() => setVidPicked((prev) => (picked ? prev.filter((x) => x !== a.id) : prev.length < 2 ? [...prev, a.id] : prev))}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      setVidPicked((prev) => (picked ? prev.filter((x) => x !== a.id) : prev.length < 2 ? [...prev, a.id] : prev));
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      position: 'relative',
+                      border: `1px solid ${picked ? token.colorPrimary : token.colorBorderSecondary}`,
+                      borderRadius: 10,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div style={{ height: 96, background: token.colorFillTertiary, display: 'flex', alignItems: 'center', justifyContent: 'center', color: token.colorTextTertiary }}>
+                      <PlayCircleOutlined style={{ fontSize: 28 }} />
+                    </div>
+                    <div style={{ padding: '6px 8px', fontSize: 12 }}>{a.title}</div>
+                    {picked ? (
+                      <div style={{ position: 'absolute', top: 6, right: 6, background: token.colorPrimary, color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✓</div>
                     ) : null}
                   </div>
                 );

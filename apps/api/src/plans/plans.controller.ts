@@ -29,9 +29,11 @@ import { PlanPreflightService } from './plan-preflight.service.js';
 import { PlansService } from './plans.service.js';
 import {
   attachFloorplanSchema,
+  bindVideosSchema,
   createPlanSchema,
   updatePlanPageSchema,
   type AttachFloorplanDto,
+  type BindVideosDto,
   type CreatePlanDto,
   type UpdatePlanPageDto,
 } from './plans.schemas.js';
@@ -182,6 +184,21 @@ export class PlansController {
   }
 
   /**
+   * 绑定场景视频（最多 2 条）。
+   * 刻意不做「在方案页现场生视频」——模型是客户自备的，现场生要消耗额度且慢；
+   * 门店用「AI 生视频」出好片后挂进来，分享页就能内联播放。
+   */
+  @RequirePermissions('content:generate')
+  @Patch(':id/videos')
+  bindVideos(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(bindVideosSchema)) dto: BindVideosDto,
+  ) {
+    return this.plans.bindVideos(user.activeTenantId as string, user.id, id, dto.videoAssetIds ?? []);
+  }
+
+  /**
    * 交付三件套打包（参考站 `POST /package`）。
    * 只收前端生成好的 PPTX 与讲稿：图片包由服务端从 media 取，不必再传一遍原图。
    */
@@ -270,6 +287,34 @@ export class PublicPlansController {
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.setHeader('Content-Length', buf.length);
     res.end(buf);
+  }
+
+  /** 分享页场景视频文件流（凭 shareToken 免鉴权）。微信内直接 <video src> 播放 */
+  @Get(':token/video/:index')
+  async video(@Param('token') token: string, @Param('index') index: string, @Res() res: Response): Promise<void> {
+    const plan = await this.plans.byShareToken(token);
+    const ids = (plan as { videoAssetIds?: string[] }).videoAssetIds ?? [];
+    const i = Number(index);
+    const assetId = Number.isInteger(i) && i >= 0 ? ids[i] : undefined;
+    if (!assetId) {
+      res.status(404);
+      res.end();
+      return;
+    }
+    const asset = await this.media.byId(assetId);
+    res.setHeader('Content-Type', asset.mimeType || 'video/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    // 视频体积大且内容不变，给长缓存：微信里来回翻页不必重下
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Content-Length', asset.sizeBytes || 0);
+    if (!asset.sizeBytes) {
+      res.status(404);
+      res.end();
+      return;
+    }
+    // 直接透传文件流：不整段读进内存，视频大了会顶爆容器内存
+    const { createReadStream } = await import('node:fs');
+    createReadStream(this.media.resolveSafe(asset.filePath)).pipe(res);
   }
 
   /** 分享页精装修效果图文件流（凭 shareToken 免鉴权；客户端 LayoutSlide 优先用此图） */

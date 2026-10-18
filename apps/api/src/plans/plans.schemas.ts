@@ -103,3 +103,9 @@ export const updatePlanPageSchema = z.object({
 export type UpdatePlanPageDto = z.infer<typeof updatePlanPageSchema>;
 
 /** 给方案挂接户型图与设备点位（点位布局编辑器 → 方案空间动线页） */
+
+/** 绑定场景视频：最多 2 条（参考站同口径），每条须为 uuid */
+export const bindVideosSchema = z.object({
+  videoAssetIds: z.array(z.string().uuid('视频资产 id 不合法')).max(2, '最多绑定 2 条场景视频').default([]),
+});
+export type BindVideosDto = z.infer<typeof bindVideosSchema>;
