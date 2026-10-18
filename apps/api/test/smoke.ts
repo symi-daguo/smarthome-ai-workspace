@@ -1781,6 +1781,40 @@ async function main(): Promise<void> {
   check('没带 PPTX 文件被打回（400）', pkgNoFile.status === 400);
   await prisma.planProject.delete({ where: { id: reviewSeed.id } });
 
+  // ---------- 生产路径（nginx）配置与后端限制一致 ----------
+  // 这两条只有容器部署才会暴露：vite dev 不经过 nginx。
+  // 0.2.2 修过两个真实缺陷 —— /api/ 只给 12m 而打包端点要 60MB（413），
+  // 以及 location 带尾斜杠导致 /api/plans 被 301 跳走（列表接口坏掉）。
+  {
+    const nginx = readFileSync(join(process.cwd(), '../web/nginx.conf'), 'utf8');
+    // 按「从 location 声明到下一个 location 声明」切块，避免用 } 收尾
+    // —— 块内缩进不一致时 ]} 之类的正则会静默匹配不到，断言假失败。
+    const blockOf = (marker: string): string => {
+      const i = nginx.indexOf(marker);
+      if (i < 0) return '';
+      const rest = nginx.slice(i + marker.length);
+      const j = rest.indexOf('location ');
+      return j < 0 ? rest : rest.slice(0, j);
+    };
+    const plansBlock = blockOf('location /api/plans');
+    const generalBlock = blockOf('location /api/');
+    const num = (blk: string): number => Number((blk.match(/client_max_body_size\s*(\d+)m/) ?? [])[1] ?? NaN);
+    const plansLimit = num(plansBlock);
+    const generalLimit = num(generalBlock);
+    check(
+      `交付包路径的上传上限 >= 后端 FileInterceptor 的 60MB（生产环境否则 413；实测 ${plansLimit}m）`,
+      plansLimit >= 60,
+    );
+    check(
+      '交付包 location 不带尾斜杠（带尾斜杠会让 /api/plans 被 301 跳走）',
+      !/location \/api\/plans\/\s*\{/.test(nginx) && plansBlock.length > 0,
+    );
+    check(
+      `普通上传路径上限独立生效且更小（实测 ${generalLimit}m vs 交付包 ${plansLimit}m）`,
+      generalLimit > 0 && generalLimit <= 20 && generalLimit < plansLimit,
+    );
+  }
+
   // ---------- 素材库投稿：提交 + 我的投稿列表 ----------
   const subFd2 = new FormData();
   subFd2.append('file', new Blob([Buffer.from('fake-mp4-bytes')], { type: 'video/mp4' }), 'clip.mp4');
