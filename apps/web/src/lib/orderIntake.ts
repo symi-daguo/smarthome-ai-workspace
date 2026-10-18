@@ -1,3 +1,4 @@
+import { INTAKE_SCENE_OPTIONS } from '../data/imageScenes.js';
 /**
  * 接单「边聊边记」结构化采集的枚举定义（2026-10-13）
  *
@@ -25,19 +26,9 @@ export const RENO_STAGE_LABEL: Record<string, string> = Object.fromEntries(
   RENO_STAGES.map((s) => [s.value, s.label]),
 );
 
-/** 客户想体验的场景：10 个 */
-export const SCENES = [
-  { value: 'party', label: '会客模式' },
-  { value: 'movie', label: '观影模式' },
-  { value: 'home', label: '回家模式' },
-  { value: 'away', label: '离家模式' },
-  { value: 'sleep', label: '睡眠模式' },
-  { value: 'nightUp', label: '夜起模式' },
-  { value: 'dinner', label: '就餐模式' },
-  { value: 'read', label: '阅读模式' },
-  { value: 'work', label: '办公模式' },
-  { value: 'morning', label: '晨起模式' },
-] as const;
+/** 客户想体验的场景：10 个。与生图场景预设同源（data/imageScenes.ts），
+ *  key 必须逐项对齐后端 zod 白名单 SCENE_KEYS —— 写库前会拒绝字典外的值。 */
+export const SCENES = INTAKE_SCENE_OPTIONS as readonly { value: string; label: string }[];
 
 export type SceneKey = (typeof SCENES)[number]['value'];
 

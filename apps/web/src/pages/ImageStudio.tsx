@@ -25,40 +25,12 @@ import {
 import { api, fileUrl } from '../lib/api';
 import { compressImage } from '../lib/compress';
 import { newRequestId } from '../lib/request-id';
+import { IMAGE_SCENE_LABELS, IMAGE_SCENE_PROMPTS } from '../data/imageScenes.js';
 import { RegionSelector, type RegionSelection } from '../components/RegionSelector';
 import { useActiveConfig } from '../lib/configStore';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
-
-/** 智能场景（17 个常用场景）；自由生图模式下点击即把完整画面描述写入提示词输入框 */
-const SCENES = [
-  '观影模式', '会客模式', '就餐模式', '起夜模式', '阅读模式', '浪漫模式',
-  '派对模式', '晨起模式', '工作模式', '节日模式', '淡彩光', '归家模式',
-  '离家模式', '烹饪模式', '午休模式', '健身模式', '电竞模式',
-];
-
-/** 场景 -> 完整出图描述（自由生图模式点击 chip 直接追加到 textarea，可见、可删、可改，复刻「chip 自动填描述」） */
-const SCENE_PROMPTS: Record<string, string> = {
-  观影模式: '现代家庭影院客厅，电动窗帘缓缓关闭，壁挂电视亮起冷色画面光，主灯熄灭、吊顶灯带与地脚灯渐暗至 20% 暖光，沙发区保留柔和微光，真实室内摄影质感，电影感色调，广角镜头',
-  会客模式: '明亮通透的现代客厅，主灯与吊顶灯带渐亮至会客亮度 4000K 暖白光，茶几区域光线均匀，空间整洁温馨，真实室内摄影质感，平视广角',
-  就餐模式: '餐厅场景，餐桌上方三头吊灯渐亮聚焦餐桌，餐边柜灯带同步亮起，3000K 暖白色调，餐具与花艺点缀，真实室内摄影质感，浅景深',
-  起夜模式: '深夜卧室到走廊动线，人体感应触发床底灯带与走廊地脚灯以 10% 低亮度微光照明，2700K 柔光不刺眼，地面有柔和光带，真实室内摄影质感，夜间氛围',
-  阅读模式: '书房/卧室阅读角，书桌台灯重点照明充足显色性好，环境光柔和无眩光，书架背景整洁，3500K 中性光，真实室内摄影质感',
-  浪漫模式: '卧室浪漫氛围，低色温 2200K 暖光，床头壁灯与灯带调至最柔，隐约烛光氛围，纱帘半透，暗调高级感，真实室内摄影质感',
-  派对模式: '客厅派对场景，RGB 彩色律动灯带沿吊顶与电视墙铺陈，紫蓝粉光影交替，活力动感氛围，烟雾光束感，真实室内摄影质感',
-  晨起模式: '清晨卧室，窗帘缓缓打开透入自然光，灯光模拟日出由暖黄渐亮至冷白 5000K，唤醒氛围，床上用品整洁，真实室内摄影质感，逆光柔和',
-  工作模式: '居家办公场景，明亮均匀的 5000K 功能照明，书桌区域无阴影，屏幕无眩光反射，空间清爽现代，真实室内摄影质感',
-  节日模式: '春节/节日家庭场景，红色节日彩灯与暖白主灯交织，客厅有精致装饰挂件，喜庆而不俗气，真实室内摄影质感',
-  淡彩光: '客厅低饱和淡彩氛围光，墙面与吊顶有粉蓝紫柔和渐变洗墙光，现代极简家具，梦幻而高级，真实室内摄影质感',
-  归家模式: '入户玄关视角，开门瞬间玄关感应灯亮起，客厅灯光由近及远渐次点亮，欢迎回家的温暖动线，3000K 暖光，真实室内摄影质感',
-  离家模式: '全屋灯光依次关闭后的空镜，仅门廊保留一盏夜灯，窗外自然光，整洁安静的现代家居，真实室内摄影质感',
-  烹饪模式: '现代厨房，操作台上方高亮度显色照明，油烟机与橱柜灯带联动无暗区，不锈钢与石材质感，4000K 白光，真实室内摄影质感',
-  午休模式: '午后卧室，纱帘半闭透入柔和漫射光，灯光渐暗至 20%，空调面板微光，安静休憩氛围，真实室内摄影质感',
-  健身模式: '家庭健身角，明亮 5000K 白光均匀照明，镜面墙与运动器材，动感节奏氛围，干净利落，真实室内摄影质感',
-  电竞模式: '电竞房，桌面与背景墙蓝紫色 RGB 氛围光，双显示器冷光，灯带控制屏幕反光，赛博朋克氛围，真实室内摄影质感',
-};
-
 
 const SIZES = [
   { value: '1536x1024', label: '横图 1536x1024' },
@@ -69,10 +41,10 @@ const SIZES = [
 /** 案例库：点击把完整画面描述写入提示词（不是半句占位），真正可直接生成 */
 const CASES: { key: string; title: string; img: string; prompt: string }[] = [
   { key: 'c1', title: '全屋智能方案海报', img: '/images/cases/c1.jpg', prompt: '竖版智能家居全屋方案宣传海报，现代轻奢客厅为主体，吊顶灯带与落地灯暖光层次分明，画面上方留白配标题区，中央可见智能中控屏与智能音箱，科技蓝点缀光效，商业摄影级质感，干净高级' },
-  { key: 'c2', title: '客厅观影场景', img: '/images/cases/c2.jpg', prompt: SCENE_PROMPTS['观影模式'] },
-  { key: 'c3', title: '玄关归家灯光', img: '/images/cases/c3.jpg', prompt: SCENE_PROMPTS['归家模式'] },
-  { key: 'c4', title: '主卧起夜模式', img: '/images/cases/c4.jpg', prompt: SCENE_PROMPTS['起夜模式'] },
-  { key: 'c5', title: '餐厅就餐氛围', img: '/images/cases/c5.jpg', prompt: SCENE_PROMPTS['就餐模式'] },
+  { key: 'c2', title: '客厅观影场景', img: '/images/cases/c2.jpg', prompt: IMAGE_SCENE_PROMPTS['观影模式'] },
+  { key: 'c3', title: '玄关归家灯光', img: '/images/cases/c3.jpg', prompt: IMAGE_SCENE_PROMPTS['归家模式'] },
+  { key: 'c4', title: '主卧起夜模式', img: '/images/cases/c4.jpg', prompt: IMAGE_SCENE_PROMPTS['起夜模式'] },
+  { key: 'c5', title: '餐厅就餐氛围', img: '/images/cases/c5.jpg', prompt: IMAGE_SCENE_PROMPTS['就餐模式'] },
 ];
 
 function SectionLabel({ children }: { children: ReactNode }): ReactNode {
@@ -152,7 +124,7 @@ export function ImageStudio(): ReactNode {
     // 自由生图的提示词完全由用户/scene chip/反推维护，组装函数对它返回空串，不能覆盖
     if (isFree) return;
     const r = wf.sizes.find((s) => s.value === nextSize)?.ratio ?? '';
-    const text = wf.buildPrompt(next, SCENE_PROMPTS, r);
+    const text = wf.buildPrompt(next, IMAGE_SCENE_PROMPTS, r);
     if (force || !promptDirty) {
       setPrompt(text);
       setPromptDirty(false);
@@ -178,7 +150,7 @@ export function ImageStudio(): ReactNode {
   };
 
   /** 场景描述以〔场景：…〕标记写入 textarea，切换时精确增删，不污染用户手写内容 */
-  const sceneTag = (s: string): string => `〔场景：${SCENE_PROMPTS[s]}〕`;
+  const sceneTag = (s: string): string => `〔场景：${IMAGE_SCENE_PROMPTS[s]}〕`;
 
   /** 自由生图模式：场景直接以标记写进 textarea（保持原行为） */
   const toggleSceneFree = (s: string): void => {
@@ -594,7 +566,7 @@ export function ImageStudio(): ReactNode {
               {`${stepScene} ${wf.key === 'bare' ? '叠加智能灯光场景（选 1～3 个，点击自动并入描述）' : '智能场景（选 1～3 个，点击自动填入画面描述）'}`}
             </SectionLabel>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {SCENES.map((s) => {
+              {IMAGE_SCENE_LABELS.map((s) => {
                 const active = wf.key === 'bare' ? draft.scenes.includes(s) : activeScenes.has(s);
                 const toggle = wf.key === 'bare' ? toggleSceneDraft : toggleSceneFree;
                 return (
@@ -604,7 +576,7 @@ export function ImageStudio(): ReactNode {
                     tabIndex={0}
                     onClick={() => toggle(s)}
                     onKeyDown={(e) => e.key === 'Enter' && toggle(s)}
-                    title={SCENE_PROMPTS[s]}
+                    title={IMAGE_SCENE_PROMPTS[s]}
                     style={chipStyle(active)}
                   >
                     {s}

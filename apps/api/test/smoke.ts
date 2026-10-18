@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFile
 import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
+import { SCENE_KEYS } from '../src/orders/orders.schemas.js';
 import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
@@ -895,6 +896,39 @@ async function main(): Promise<void> {
     body: JSON.stringify({ customer: '脏场景', scenes: ['movie', '不存在的场景'] }),
   });
   check('场景 key 字典外被拒（400）', badScene.status === 400);
+  // 跨端一致性：前端灯光场景预设里 inIntake=true 的那些，必须**逐个**在服务端白名单里。
+  // 只断言「服务端拒字典外值」不够 —— 前端多一项或 value 拼错（如 dining/dinner），
+  // 用户点提交才收到 400，那时已经填完一整份接单表了。
+  {
+    const scenesSrc = readFileSync(join(process.cwd(), '../web/src/data/imageScenes.ts'), 'utf8');
+    // 解析每个预设块：label / prompt / intakeKey
+    const presets = scenesSrc
+      .split(/\n  \{\n/)
+      .slice(1)
+      .map((b) => ({
+        label: (b.match(/label: '([^']+)'/) ?? [])[1],
+        prompt: (b.match(/prompt: '([^']+)'/) ?? [])[1],
+        intakeKey: (b.match(/intakeKey: '([^']+)'/) ?? [])[1],
+      }))
+      .filter((x) => x.label);
+    const intakeKeys = presets.map((x) => x.intakeKey).filter(Boolean).sort() as string[];
+    // 接单列表还含一个生图没有的「睡眠模式」，它不带 intakeKey 但仍在白名单里
+    const withSleep = [...intakeKeys, 'sleep'].sort();
+    const allowed = [...SCENE_KEYS].sort();
+    check(
+      `生图场景预设齐备且提示词非空（${presets.length} 个）`,
+      presets.length >= 15 && presets.every((x) => (x.prompt ?? '').length > 20),
+    );
+    check(
+      `前端接单场景与后端白名单逐项对齐（前端 ${withSleep.length} / 后端 ${allowed.length}）`,
+      withSleep.length === allowed.length && withSleep.every((k) => allowed.includes(k as never)),
+    );
+    const wfSrc = readFileSync(join(process.cwd(), '../web/src/data/imageWorkflows.ts'), 'utf8');
+    check(
+      '毛坯房工作流的灯光场景分组不再是空数组',
+      wfSrc.includes('options: IMAGE_SCENE_OPTIONS') && !wfSrc.includes('max: 3,\n        options: [],'),
+    );
+  }
   const badSystem = await request(base, '/api/orders', {
     ...authA, method: 'POST',
     body: JSON.stringify({ customer: '脏系统', systems: { 不存在的系统: { need: 'yes', area: '', detail: '' } } }),

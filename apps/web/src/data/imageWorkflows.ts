@@ -7,6 +7,8 @@
  *   - ratio：写进提示词的比例意图，模型据此安排构图，所以 3:4 / 2:3 等非枚举比例同样生效
  */
 
+import { IMAGE_SCENE_OPTIONS } from './imageScenes.js';
+
 export type WorkflowKey = 'free' | 'bare' | 'cover' | 'poster' | 'colorplan';
 
 /** 单个可选项：label 展示，prompt 是选中后进入提示词的完整描述（不是半句占位） */
@@ -218,7 +220,9 @@ export const IMAGE_WORKFLOWS: ImageWorkflowDef[] = [
         required: false,
         multiple: true,
         max: 3,
-        options: [],
+        // 此前这里是 options: [] —— 界面上写着「最多 3 个」却一个选项都没有。
+        // 预设抽到 data/imageScenes.ts：与自由生图的场景 chip 同源，不再两处各写一份。
+        options: IMAGE_SCENE_OPTIONS,
       },
     ],
     textFields: [],
