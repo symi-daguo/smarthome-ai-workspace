@@ -91,24 +91,41 @@ function pageImage(page: PlanPage): string {
  */
 function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit: 'cover' | 'contain' } {
   const useRendered = Boolean(plan.renderedFloorplanUrl);
-  const hasFloorplan = !useRendered && Boolean(plan.floorplanUrl && plan.layoutPoints?.length);
+  /**
+   * 底图优先级：精装修效果图 > 原始户型图。
+   *
+   * 关键改动：底图和点位是**两件事**，不是二选一。此前写成
+   * `hasFloorplan = !useRendered && ...`，于是生成了精装修图之后
+   * **点位直接消失** —— 用户传图、配点位、跑渲染，一路都对，
+   * 唯独交付物里那个叫「户型与设备点位」的页面上找不到任何设备。
+   * 这属于承诺了却不给，不是「少个功能」。
+   */
+  const base = (useRendered ? plan.renderedFloorplanUrl : plan.floorplanUrl) as string | null | undefined;
+  const hasPoints = Boolean(plan.layoutPoints?.length);
+  const needCompose = Boolean(base && hasPoints);
   const [composite, setComposite] = useState<string | null>(null);
   useEffect(() => {
-    if (!hasFloorplan) {
+    if (!needCompose || !base) {
       setComposite(null);
       return;
     }
     let alive = true;
-    void compositePoints(plan.floorplanUrl as string, plan.layoutPoints ?? [], 1200)
+    void compositePoints(base, plan.layoutPoints ?? [], 1200)
       .then((url) => { if (alive) setComposite(url); })
       .catch(() => { if (alive) setComposite(null); });
     return () => { alive = false; };
-  }, [hasFloorplan, plan.floorplanUrl, plan.layoutPoints]);
+  }, [needCompose, base, plan.layoutPoints]);
 
-  if (useRendered) return { src: plan.renderedFloorplanUrl as string, label: 'AI 精装修效果图', fit: 'cover' };
   // 户型图也用 cover 铺满：contain 会在卡片内留出上下白边，PPT 里非常难看。
   // 点位图标是合成进图里的，裁剪时会跟着一起裁，不会与点位错位。
-  if (hasFloorplan) return { src: composite ?? (plan.floorplanUrl as string), label: '客户户型 · 设备点位图', fit: 'cover' };
+  if (needCompose && base) {
+    return {
+      src: composite ?? base,
+      label: useRendered ? '精装修效果图 · 设备点位图' : '客户户型 · 设备点位图',
+      fit: 'cover',
+    };
+  }
+  if (useRendered) return { src: plan.renderedFloorplanUrl as string, label: 'AI 精装修效果图', fit: 'cover' };
   return { src: '', label: '空间动线实景', fit: 'cover' };
 }
 

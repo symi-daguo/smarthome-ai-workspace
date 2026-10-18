@@ -226,15 +226,23 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
       /* 裁剪失败保留原图，宁可留白也不变形 */
     }
   }
-  if (!floorplan && plan.floorplanUrl && plan.layoutPoints?.length) {
-    try {
-      const composed = await compositePoints(plan.floorplanUrl, plan.layoutPoints, 1400);
-      const [bw, bh] = FLOOR_BOX;
-      // 先合成点位再裁剪：点位图标已经画在图上，跟着一起裁，不会与点位错位
-      const data = await coverCrop(composed, bw, bh, 'center');
-      floorplan = { data, ratio: bw / bh };
-    } catch {
-      floorplan = null;
+  /**
+   * 点位叠加：底图用「精装修效果图优先」，与 PlanSlide 的 useFloorplanVisual 同规则。
+   * 此前条件是 `!floorplan && plan.floorplanUrl`，于是生成了精装修图之后
+   * 点位合成被整段跳过 —— 页面上写着「户型与设备点位」，却一个点位都没有。
+   */
+  if (plan.layoutPoints?.length) {
+    const base = (plan.renderedFloorplanUrl ?? plan.floorplanUrl) as string | null | undefined;
+    if (base) {
+      try {
+        const composed = await compositePoints(base, plan.layoutPoints, 1400);
+        const [bw, bh] = FLOOR_BOX;
+        // 先合成点位再裁剪：点位图标已经画在图上，跟着一起裁，不会与点位错位
+        const data = await coverCrop(composed, bw, bh, 'center');
+        floorplan = { data, ratio: bw / bh };
+      } catch {
+        // 合成失败就沿用前面的底图，宁可没点位也不要整页丢图
+      }
     }
   }
 
