@@ -1336,9 +1336,21 @@ async function main(): Promise<void> {
   const canvasService = app.get(CanvasService);
 
   // 假 ComfyUI：POST /prompt -> GET /history/{id} -> GET /view，让出图链路确定性跑通（上游每 2s 轮询一次）
+  // 云端实例都要鉴权，所以这里让假服务**必须**收到 Bearer 才放行：
+  // 若三步任一步漏带 Authorization，下游 canvas 作业会 failed，对应断言自然变红。
+  const COMFY_SMOKE_KEY = 'comfy-smoke-key-1234';
+  const comfyAuthSeen = new Map<string, string>();
   const comfyPng = Buffer.from('89504e470d0a1a0a', 'hex');
   const comfy = createServer((req, res) => {
     const path = req.url ?? '';
+    const auth = req.headers.authorization ?? 'none';
+    const step = path.startsWith('/prompt') ? 'prompt' : path.startsWith('/history/') ? 'history' : path.startsWith('/view') ? 'view' : null;
+    if (step && !comfyAuthSeen.has(step)) comfyAuthSeen.set(step, auth);
+    if (auth !== `Bearer ${COMFY_SMOKE_KEY}`) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end('{"error":"unauthorized"}');
+      return;
+    }
     if (path.startsWith('/prompt')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{}');
@@ -1355,17 +1367,46 @@ async function main(): Promise<void> {
       res.end(comfyPng);
       return;
     }
+    if (path.startsWith('/system_stats')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"system":{"os":"linux"}}');
+      return;
+    }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end('{}');
   });
   await new Promise<void>((resolve) => comfy.listen(0, '127.0.0.1', resolve));
   const comfyBase = `http://127.0.0.1:${(comfy.address() as AddressInfo).port}`;
+  const comfyImageCfg = (apiKey: string): RequestInit => ({
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ provider: 'comfyui', comfyBaseUrl: comfyBase, comfyApiKey: apiKey, workflowPath: 'comfyui-workflow.json', promptNode: '6', negativeNode: '7', latentNode: '5', seedNode: '3' }),
+  });
   const putComfyCanvas = await request<{ ok: boolean }>(base, '/api/admin/model-config/image', {
     ...authA,
     method: 'PUT',
-    body: JSON.stringify({ provider: 'comfyui', comfyBaseUrl: comfyBase, workflowPath: 'comfyui-workflow.json', promptNode: '6', negativeNode: '7', latentNode: '5', seedNode: '3' }),
+    body: JSON.stringify({ provider: 'comfyui', comfyBaseUrl: comfyBase, comfyApiKey: COMFY_SMOKE_KEY, workflowPath: 'comfyui-workflow.json', promptNode: '6', negativeNode: '7', latentNode: '5', seedNode: '3' }),
   });
   check('画布前置：生图模型配置切到本地 ComfyUI（200）', putComfyCanvas.status === 200);
+
+  // 云端 ComfyUI 鉴权：带 Key 通、不带/错 Key 401 且文案指向「填 API Key」（不再误报成地址错）
+  const comfyProbeOk = await request<{ ok: boolean; detail?: string }>(base, '/api/admin/model-config/test-comfy', { ...authA, method: 'POST' });
+  check('云端 ComfyUI：带 API Key 时连通探测通过', comfyProbeOk.status === 201 && comfyProbeOk.body.ok === true);
+  await request(base, '/api/admin/model-config/image', comfyImageCfg('wrong-key'));
+  const comfyProbeBad = await request<{ ok: boolean; error?: string }>(base, '/api/admin/model-config/test-comfy', { ...authA, method: 'POST' });
+  check(
+    '云端 ComfyUI：Key 错误返回 401 且提示填 API Key（不是误报地址不对）',
+    comfyProbeBad.status === 201 && comfyProbeBad.body.ok === false && /API Key/.test(comfyProbeBad.body.error ?? ''),
+  );
+  await request(base, '/api/admin/model-config/image', comfyImageCfg(COMFY_SMOKE_KEY));
+  const comfyCfgEcho = await request<{ image: { comfyKeyConfigured: boolean; comfyKeyMasked: string | null } }>(base, '/api/admin/model-config', authA);
+  check(
+    '云端 ComfyUI Key 只进不出（状态置位 + 末四位脱敏，不回传明文）',
+    comfyCfgEcho.body.image.comfyKeyConfigured === true &&
+      typeof comfyCfgEcho.body.image.comfyKeyMasked === 'string' &&
+      !comfyCfgEcho.body.image.comfyKeyMasked.includes(COMFY_SMOKE_KEY) &&
+      JSON.stringify(comfyCfgEcho.body).includes(COMFY_SMOKE_KEY.slice(-4)),
+  );
 
   /** 轮询画布作业直到终态（出图异步，上游链路每 2s 轮询一次，最多等 10s） */
   const waitCanvasJob = async (jobId: string): Promise<CanvasJobRow | null> => {
@@ -1471,6 +1512,10 @@ async function main(): Promise<void> {
     '出图成功路径：轮次转 ready 且结果 URL 追加为第 1 个变体',
     canvasAsstDone?.status === 'ready' && canvasAsstDone?.variants.length === 1
       && canvasAsstDone?.variants[0]?.url === canvasJobDone?.resultUrl && canvasAsstDone?.variants[0]?.label === '变体 1' && Boolean(canvasAsstDone?.variants[0]?.createdAt),
+  );
+  check(
+    'ComfyUI 三步（/prompt、/history、/view）全部带 Bearer 头，云端实例可用',
+    ['prompt', 'history', 'view'].every((s) => comfyAuthSeen.get(s) === `Bearer ${COMFY_SMOKE_KEY}`),
   );
 
   // 幂等：已终态作业重复触发不重复出图、不重复追加变体

@@ -381,6 +381,7 @@ export class PlansService {
       if (cfg.provider === 'comfyui') {
         return generateViaComfyui({
           baseUrl: cfg.comfyBaseUrl,
+          apiKey: cfg.comfyApiKey,
           workflow: await this.loadComfyWorkflow(cfg.workflowPath),
           prompt,
           width: 1536,

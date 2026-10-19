@@ -74,7 +74,10 @@ services:
       IMAGE_MODEL: ${IMAGE_MODEL:-}
       IMAGE_BASE_URL: ${IMAGE_BASE_URL:-}
       IMAGE_API_KEY: ${IMAGE_API_KEY:-}
-      COMFYUI_BASE_URL: ${COMFYUI_BASE_URL:-http://127.0.0.1:8188}
+      # ComfyUI：容器内的 127.0.0.1 指向 api 容器自身，本机 ComfyUI 必须走 host.docker.internal（已配 host-gateway）
+      COMFYUI_BASE_URL: ${COMFYUI_BASE_URL:-http://host.docker.internal:8188}
+      # 云端 ComfyUI（RunPod / autodl 反代 / 自建网关）需鉴权，作 Bearer token 三步全带；本机直连留空
+      COMFYUI_API_KEY: ${COMFYUI_API_KEY:-}
       COMFYUI_WORKFLOW_PATH: ${COMFYUI_WORKFLOW_PATH:-/repo/comfyui-workflow.json}
       COMFYUI_PROMPT_NODE: ${COMFYUI_PROMPT_NODE:-6}
       COMFYUI_NEGATIVE_NODE: ${COMFYUI_NEGATIVE_NODE:-7}

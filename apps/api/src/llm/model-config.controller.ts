@@ -35,6 +35,20 @@ function maskKey(key: string | undefined | null): string | null {
   return `••••${key.slice(-4)}`;
 }
 
+/**
+ * ComfyUI 鉴权头：云端实例（RunPod / autodl 反代 / 自建网关）要求 Bearer，
+ * 本机直连默认无鉴权（留空即完全不发该头，行为与此前一致）。
+ */
+function comfyHeaders(apiKey: string | undefined): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
+
+/** ComfyUI 连通探测结果文案：401/403 单独判，否则一律报"地址不对"会误导去改地址 */
+function comfyProbeError(status: number, baseUrl: string): string {
+  if (status === 401 || status === 403) return `ComfyUI 拒绝认证（${status}）：云端实例需在下方填写 ComfyUI API Key（${baseUrl}）`;
+  return `ComfyUI 返回 ${status}，请确认 ComfyUI 已启动且地址正确（${baseUrl}）`;
+}
+
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('admin/model-config')
 export class ModelConfigController {
@@ -45,7 +59,7 @@ export class ModelConfigController {
 
   @RequirePermissions('platform:billing:manage')
   @Get()
-  async status(): Promise<{ chat: ProviderView & { comfyBaseUrl?: string; workflowPath?: string }; image: ProviderView & { comfyBaseUrl?: string; workflowPath?: string; promptNode?: string; negativeNode?: string; latentNode?: string; seedNode?: string }; video: ProviderView }> {
+  async status(): Promise<{ chat: ProviderView & { comfyBaseUrl?: string; workflowPath?: string }; image: ProviderView & { comfyBaseUrl?: string; comfyKeyConfigured?: boolean; comfyKeyMasked?: string | null; workflowPath?: string; promptNode?: string; negativeNode?: string; latentNode?: string; seedNode?: string }; video: ProviderView }> {
     const [chat, image, video] = await Promise.all([
       this.modelConfig.chatConfig(),
       this.modelConfig.imageConfig(),
@@ -70,6 +84,8 @@ export class ModelConfigController {
         keyMasked: image.provider === 'comfyui' ? null : maskKey(image.apiKey),
         source: image.source,
         comfyBaseUrl: image.comfyBaseUrl,
+        comfyKeyConfigured: Boolean(image.comfyApiKey),
+        comfyKeyMasked: maskKey(image.comfyApiKey),
         workflowPath: image.workflowPath,
         promptNode: image.promptNode,
         negativeNode: image.negativeNode,
@@ -281,8 +297,8 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
     const cfg = await this.modelConfig.imageConfig();
     try {
       if (cfg.provider === 'comfyui') {
-        const res = await fetch(`${cfg.comfyBaseUrl}/system_stats`, { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) return { ok: false, error: `ComfyUI 返回 ${res.status}，请确认本机 ComfyUI 已启动且地址正确` };
+        const res = await fetch(`${cfg.comfyBaseUrl}/system_stats`, { headers: comfyHeaders(cfg.comfyApiKey), signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return { ok: false, error: comfyProbeError(res.status, cfg.comfyBaseUrl) };
         return { ok: true, detail: `ComfyUI 在线：${cfg.comfyBaseUrl}` };
       }
       if (cfg.provider === 'openai') {
@@ -304,8 +320,8 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
   async testComfy(): Promise<{ ok: boolean; detail?: string; error?: string }> {
     const cfg = await this.modelConfig.imageConfig();
     try {
-      const res = await fetch(`${cfg.comfyBaseUrl}/system_stats`, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) return { ok: false, error: `ComfyUI 返回 ${res.status}，请确认本机 ComfyUI 已启动且地址正确（${cfg.comfyBaseUrl}）` };
+      const res = await fetch(`${cfg.comfyBaseUrl}/system_stats`, { headers: comfyHeaders(cfg.comfyApiKey), signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return { ok: false, error: comfyProbeError(res.status, cfg.comfyBaseUrl) };
       return { ok: true, detail: `ComfyUI 在线：${cfg.comfyBaseUrl}` };
     } catch (e) {
       return { ok: false, error: `无法连接 ComfyUI（${cfg.comfyBaseUrl}）：${e instanceof Error ? e.message : String(e)}` };

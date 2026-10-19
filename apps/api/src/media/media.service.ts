@@ -229,6 +229,7 @@ export class MediaService {
     } else if (cfg.provider === 'comfyui') {
       img = await generateViaComfyui({
         baseUrl: cfg.comfyBaseUrl,
+        apiKey: cfg.comfyApiKey,
         workflow: await this.loadComfyWorkflow(cfg.workflowPath),
         prompt,
         width: Number(size.split('x')[0]) || 1024,

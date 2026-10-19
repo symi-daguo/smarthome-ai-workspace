@@ -26,6 +26,8 @@ export interface ImageRuntime {
   apiKey?: string;
   model: string;
   comfyBaseUrl: string;
+  /** 云端 ComfyUI 鉴权（Bearer）；本机直连留空 */
+  comfyApiKey?: string;
   workflowPath: string;
   promptNode: string;
   negativeNode: string;
@@ -64,6 +66,7 @@ interface DbImageConfig {
   apiKey?: string;
   model?: string;
   comfyBaseUrl?: string;
+  comfyApiKey?: string;
   workflowPath?: string;
   promptNode?: string;
   negativeNode?: string;
@@ -139,6 +142,7 @@ export class ModelConfigService {
       apiKey: clean(db.apiKey) || fallbackKey || undefined,
       model: clean(db.model) || this.env('IMAGE_MODEL') || (provider === 'openai' ? 'gpt-image-1' : provider === 'comfyui' ? '本地 SD 工作流' : 'image-01'),
       comfyBaseUrl: (clean(db.comfyBaseUrl) || this.env('COMFYUI_BASE_URL', 'http://127.0.0.1:8188')).replace(/\/+$/, ''),
+      comfyApiKey: clean(db.comfyApiKey) || this.envKey('COMFYUI_API_KEY') || undefined,
       workflowPath: clean(db.workflowPath) || this.env('COMFYUI_WORKFLOW_PATH', 'comfyui-workflow.json'),
       promptNode: clean(db.promptNode) || this.env('COMFYUI_PROMPT_NODE', '6'),
       negativeNode: clean(db.negativeNode) || this.env('COMFYUI_NEGATIVE_NODE', '7'),
@@ -183,7 +187,7 @@ export class ModelConfigService {
 
   /**
    * 保存配置：文本字段传空串表示清除（回退 .env）；
-   * apiKey 传空串/缺省表示保持已存密钥不变（前端不回显明文，无法区分"没改"与"想清除"，
+   * apiKey / comfyApiKey 传空串/缺省表示保持已存密钥不变（前端不回显明文，无法区分"没改"与"想清除"，
    * 清除密钥请用「恢复 .env 默认」整行重置）。
    */
   async save(scope: ConfigScope, dto: Record<string, string | undefined>, actorId: string): Promise<void> {
@@ -192,9 +196,9 @@ export class ModelConfigService {
     const merged: Record<string, string> = { ...existing };
     for (const [key, value] of Object.entries(dto)) {
       if (value === undefined) continue;
-      if (key === 'apiKey') {
+      if (key === 'apiKey' || key === 'comfyApiKey') {
         const v = clean(value);
-        if (v) merged.apiKey = v;
+        if (v) merged[key] = v;
         continue;
       }
       merged[key] = clean(value);

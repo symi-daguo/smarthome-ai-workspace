@@ -48,6 +48,8 @@ interface ProviderView {
   keyMasked: string | null;
   source: 'db' | 'env';
   comfyBaseUrl?: string;
+  comfyKeyConfigured?: boolean;
+  comfyKeyMasked?: string | null;
   workflowPath?: string;
   promptNode?: string;
   negativeNode?: string;
@@ -90,6 +92,7 @@ interface ImageForm {
 }
 interface ComfyForm {
   comfyBaseUrl: string;
+  comfyApiKey: string;
   workflowPath: string;
   promptNode: string;
   negativeNode: string;
@@ -185,6 +188,8 @@ export function ModelConfig(): ReactNode {
     });
     comfyForm.setFieldsValue({
       comfyBaseUrl: s.image.comfyBaseUrl ?? '',
+      // Key 只进不出：表单恒为空，用户留空即保持原值不变
+      comfyApiKey: '',
       workflowPath: s.image.workflowPath ?? '',
       promptNode: s.image.promptNode ?? '',
       negativeNode: s.image.negativeNode ?? '',
@@ -471,15 +476,15 @@ export function ModelConfig(): ReactNode {
             styles={{ body: { padding: 18 } }}
           >
             <Form form={imageForm} layout={isWide ? 'horizontal' : 'vertical'} labelCol={isWide ? { span: 4 } : undefined} wrapperCol={isWide ? { span: 20 } : undefined}>
-              <Form.Item name="provider" label="Provider" rules={[{ required: true }]} extra="选 ComfyUI 时请在下方「ComfyUI 本地生图」卡片配置地址与工作流">
+              <Form.Item name="provider" label="Provider" rules={[{ required: true }]} extra="选 ComfyUI 时请在下方「ComfyUI 生图」卡片配置地址与工作流">
                 <Radio.Group optionType="button" buttonStyle="solid">
                   <Radio.Button value="minimax">MiniMax（云端）</Radio.Button>
                   <Radio.Button value="openai">OpenAI 兼容</Radio.Button>
-                  <Radio.Button value="comfyui">ComfyUI（本地）</Radio.Button>
+                  <Radio.Button value="comfyui">ComfyUI</Radio.Button>
                 </Radio.Group>
               </Form.Item>
               {imageProvider === 'comfyui' ? (
-                <Alert type="success" showIcon style={{ marginBottom: 12 }} message="已选择 ComfyUI 本地生图，连接参数见下方独立卡片；保存本卡即切换出图后端为 ComfyUI。" />
+                <Alert type="success" showIcon style={{ marginBottom: 12 }} message="已选择 ComfyUI 生图，连接参数见下方独立卡片（本机与云端实例都支持）；保存本卡即切换出图后端为 ComfyUI。" />
               ) : (
                 <>
                   <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true, message: '请填写 Base URL' }, { pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]}>
@@ -498,16 +503,19 @@ export function ModelConfig(): ReactNode {
             <TestAlert result={results.image} />
           </Card>
 
-          {/* —— ComfyUI 本地生图（常驻可见） —— */}
+          {/* —— ComfyUI 生图（常驻可见，本机 / 云端均支持） —— */}
           <Card
-            title={<Space><DesktopOutlined style={{ color: '#5B5BF0' }} />ComfyUI 本地生图（工作流配置）</Space>}
+            title={<Space><DesktopOutlined style={{ color: '#5B5BF0' }} />ComfyUI 生图（本地 / 云端，工作流配置）</Space>}
             styles={{ body: { padding: 18 } }}
           >
-            <Text type="secondary">本机启动 ComfyUI 后，在此填写地址与工作流；把上方「生图服务」Provider 选为 ComfyUI 即启用。镜像已内置 SD1.5 模板（apps/api/comfyui-workflow.json），留空即用；也可填自定义导出文件路径。</Text>
+            <Text type="secondary">本机启动 ComfyUI 后，在此填写地址与工作流；把上方「生图服务」Provider 选为 ComfyUI 即启用。镜像已内置 SD1.5 模板（apps/api/comfyui-workflow.json），留空即用；也可填自定义导出文件路径。云端实例（RunPod / autodl 反代 / 自建网关）同样支持：填云端地址 + API Key 即可。</Text>
             <Divider style={{ margin: '12px 0' }} />
             <Form form={comfyForm} layout={isWide ? 'horizontal' : 'vertical'} labelCol={isWide ? { span: 4 } : undefined} wrapperCol={isWide ? { span: 20 } : undefined}>
-              <Form.Item name="comfyBaseUrl" label="ComfyUI 地址" rules={[{ pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]} extra="本机默认 http://127.0.0.1:8188">
-                <Input placeholder="http://127.0.0.1:8188" allowClear />
+              <Form.Item name="comfyBaseUrl" label="ComfyUI 地址" rules={[{ pattern: /^https?:\/\/.+/, message: '需以 http:// 开头' }]} extra="本机部署（容器内）：http://host.docker.internal:8188；未用容器的本机直连： http://127.0.0.1:8188">
+                <Input placeholder="http://host.docker.internal:8188" allowClear />
+              </Form.Item>
+              <Form.Item name="comfyApiKey" label="API Key" extra={status.image.comfyKeyConfigured ? `已保存（${status.image.comfyKeyMasked}），留空则保持不变` : '本机直连留空；云端实例填 API Key（作 Bearer 鉴权）'}>
+                <Input.Password placeholder="本机直连留空；云端实例填 API Key" autoComplete="new-password" />
               </Form.Item>
               <Form.Item name="workflowPath" label="工作流 JSON" extra="留空用镜像内置模板；自定义填 ComfyUI「Workflow → Export (API)」导出的文件路径">
                 <Input placeholder="留空 = 内置 apps/api/comfyui-workflow.json" allowClear />
@@ -619,7 +627,7 @@ export function ModelConfig(): ReactNode {
                       />
                       <Divider style={{ margin: '4px 0' }} />
                       <Descriptions size="small" column={1} items={[
-                        { key: '1', label: 'ComfyUI（本地生图）', children: '① 本机安装启动 ComfyUI（默认 http://127.0.0.1:8188）→ ② 搭好工作流，菜单 Workflow → Export (API) 导出 JSON → ③ 存为 comfyui-workflow.json → ④ 在上方「ComfyUI 本地生图」卡填地址与工作流并保存，再把「生图服务」Provider 选 ComfyUI。项目已内置一份 SD1.5 模板可直接用。' },
+                        { key: '1', label: 'ComfyUI（生图，支持本机/云端）', children: '本机方案：① 启动 ComfyUI → ② 搭好工作流，菜单 Workflow → Export (API) 导出 JSON → ③ 存为 comfyui-workflow.json → ④ 在「ComfyUI 生图」卡填地址（容器部署用 http://host.docker.internal:8188）与工作流并保存，再把「生图服务」Provider 选 ComfyUI；API Key 留空即可，项目已内置一份 SD1.5 模板可直接用。云端方案：地址填云端实例地址（如 https://xxx.runpod.ws/proxy/8188），API Key 填云端密钥，按 Bearer 鉴权自动带入 /prompt、/history、/view 三次请求。' },
                         { key: '2', label: 'OpenAI Sora（本地/云生视频）', children: '生视频 Provider 选 OpenAI Sora，Base URL 填 https://api.openai.com/v1（或兼容网关），Key 填 OpenAI 平台 Key，模型填 sora-2，保存即可。' },
                       ]} />
                     </Space>

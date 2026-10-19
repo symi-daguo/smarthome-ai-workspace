@@ -10,7 +10,7 @@
 
 - 后端：NestJS 12（ESM）+ Prisma 7 + PostgreSQL 18（pgvector）
 - 前端：React 19 + Ant Design 6 + Vite 8
-- 模型接入：对话走 OpenAI 兼容协议（可接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图支持 MiniMax `image-01` / OpenAI / 本地 ComfyUI；生视频支持 MiniMax（留空自动选 `T2V/I2V-01-Director`，可指定 `MiniMax-H3` 等带原生音轨的模型）或 OpenAI Sora；前端「模型配置」页**在线编辑、保存即生效**（DB 持久化，优先于 .env），含 provider 引导与连通性测试
+- 模型接入：对话走 OpenAI 兼容协议（可接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图支持 MiniMax `image-01` / OpenAI / ComfyUI（**本机与云端实例均可**，云端填 API Key 走 Bearer 鉴权）；生视频支持 MiniMax（留空自动选 `T2V/I2V-01-Director`，可指定 `MiniMax-H3` 等带原生音轨的模型）或 OpenAI Sora；前端「模型配置」页**在线编辑、保存即生效**（DB 持久化，优先于 .env），含 provider 引导与连通性测试
 - MiniMax 官方另有语音合成（`speech-2.6-hd` 等，`/v1/t2a_v2`）、音乐生成（`music-3.0`）、音色克隆与联网搜索能力，本项目**尚未接入**；已接入部分仅为上行的对话 / 图像 / 视频三类
 - PPT 生成：pptxgenjs（MIT，浏览器端生成原生可编辑 16:9 幻灯片）
 
@@ -185,7 +185,7 @@ NPM_REGISTRY=https://registry.npmmirror.com/ docker compose up -d --build
 
 ## 模型与计费配置
 
-登录后侧栏「系统管理 → 模型配置」页可**在线完成全部模型配置**：对话 / 生图 / ComfyUI / 生视频四张可编辑卡片（Base URL、API Key、模型、provider 选择、ComfyUI 地址与工作流节点映射），保存即生效、持久化到数据库（无需重启）；「选用」按钮一键填入 DeepSeek / 通义千问 / 智谱 / Kimi / OpenAI / MiniMax / Ollama / LM Studio / vLLM 的推荐地址与模型；每卡带连通性测试与「恢复 .env 默认」。API Key 保存后只回显末四位，绝不外传明文。
+登录后侧栏「系统管理 → 模型配置」页可**在线完成全部模型配置**：对话 / 生图 / ComfyUI / 生视频四张可编辑卡片（Base URL、API Key、模型、provider 选择、ComfyUI 地址/API Key/工作流节点映射），保存即生效、持久化到数据库（无需重启）；「选用」按钮一键填入 DeepSeek / 通义千问 / 智谱 / Kimi / OpenAI / MiniMax / Ollama / LM Studio / vLLM 的推荐地址与模型；每卡带连通性测试与「恢复 .env 默认」。API Key 保存后只回显末四位，绝不外传明文。
 
 `.env` 仅作为**部署默认值**（DB 未配置或点「恢复 .env 默认」时生效）：
 
@@ -198,9 +198,10 @@ LLM_MODEL=deepseek-chat                          # 可选：锁定模型；留�
 MiniMax_BASE_URL=https://api.minimaxi.com/v1     # 默认 provider（LLM_* 未设时生效）
 MiniMax_API_KEY=你的key
 
-# —— 生图：minimax(默认) | openai | comfyui(本地) ——
+# —— 生图：minimax(默认) | openai | comfyui(本机或云端) ——
 IMAGE_PROVIDER=comfyui
-COMFYUI_BASE_URL=http://127.0.0.1:8188
+COMFYUI_BASE_URL=http://host.docker.internal:8188   # 容器部署访问宿主机；非容器部署用 http://127.0.0.1:8188
+COMFYUI_API_KEY=                                      # 云端 ComfyUI（RunPod/autodl 反代/自建网关）填 Bearer；本机直连留空
 COMFYUI_WORKFLOW_PATH=./comfyui-workflow.json    # 项目内置 SD1.5 模板，可换成自己导出的工作流
 
 # —— 生视频：VIDEO_PROVIDER=minimax(T2V/I2V-01-Director，默认) | openai(Sora 2 videos API) ——
@@ -217,7 +218,7 @@ JWT_SECRET=（openssl rand -hex 32 生成）
 SEED_ADMIN_PASSWORD=（自定义强密码）
 ```
 
-改完 `.env` 重启后端生效（`docker compose up -d api`）；页面上的在线配置则保存即生效。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需本机启动 ComfyUI 并在 `Workflow → Export (API)` 导出工作流 JSON（或直接使用项目内置模板）。
+改完 `.env` 重启后端生效（`docker compose up -d api`）；页面上的在线配置则保存即生效。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需在「Workflow → Export (API)」导出工作流 JSON（或直接使用项目内置模板），**本机与云端实例都支持**：本机直连时地址填宿主机地址（容器部署须用 `host.docker.internal`，容器里的 `127.0.0.1` 指向容器自身）并留空 API Key；云端实例（RunPod / autodl 反代 / 自建网关）填云端地址与 API Key，认证头会自动带入 `/prompt`、`/history`、`/view` 三次请求。注意 ComfyUI 仅用于**生图**，生视频 provider 只有 `minimax` 与 `openai`。
 
 ## 知识库联动：优势与场景
 

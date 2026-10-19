@@ -140,14 +140,22 @@ export async function generateViaOpenaiEdit(opts: {
   throw new ServiceUnavailableException({ code: 'IMAGE_EDIT_FAILED', message: '局部重绘返回空结果' });
 }
 
+/** ComfyUI 三步调用共用请求头：云端实例（RunPod / autodl 反代 / 自建网关）需 Bearer，本地默认无鉴权 */
+function comfyHeaders(apiKey: string | undefined): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
+
 /**
- * ComfyUI 本地 workflow 生图（官方 Server API：POST /prompt -> 轮询 GET /history/{id} -> GET /view 下载）。
+ * ComfyUI workflow 生图（官方 Server API：POST /prompt -> 轮询 GET /history/{id} -> GET /view 下载）。
+ * 同时支持**本机直连**（apiKey 留空）与**云端实例**（apiKey 作 Bearer token 三步全带）；
+ * 云端反代常把工作流放在子路径下（https://host/proxy/8188），baseUrl 带子路径即可，无需额外配置。
  * 工作流 JSON 由用户在 ComfyUI「Workflow -> Export(API)」导出后放到 COMFYUI_WORKFLOW_PATH；
  * 提示词注入 COMFYUI_PROMPT_NODE（默认 6，CLIPTextEncode 正向），负向注入 COMFYUI_NEGATIVE_NODE（默认 7），
  * 尺寸写入 COMFYUI_LATENT_NODE（默认 5，EmptyLatentImage），随机种子写入 COMFYUI_SEED_NODE（默认 3，KSampler）。
  */
 export async function generateViaComfyui(opts: {
   baseUrl: string;
+  apiKey?: string;
   workflow: Record<string, unknown>;
   prompt: string;
   width: number;
@@ -157,6 +165,7 @@ export async function generateViaComfyui(opts: {
   latentNode: string;
   seedNode: string;
 }): Promise<GeneratedImage> {
+  const headers = comfyHeaders(opts.apiKey);
   const graph = structuredClone(opts.workflow) as Record<string, { inputs?: Record<string, unknown> }>;
   const setNode = (id: string, patch: Record<string, unknown>): void => {
     if (graph[id]?.inputs) Object.assign(graph[id].inputs as object, patch);
@@ -170,18 +179,21 @@ export async function generateViaComfyui(opts: {
   const promptId = randomUUID();
   const submit = await fetch(`${opts.baseUrl}/prompt`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ prompt: graph, client_id: clientId, prompt_id: promptId }),
   });
   if (!submit.ok) {
     const errText = await submit.text().catch(() => '');
+    if (submit.status === 401 || submit.status === 403) {
+      throw new ServiceUnavailableException({ code: 'COMFYUI_UNAUTHORIZED', message: 'ComfyUI 拒绝认证（401/403）：云端实例需填 ComfyUI API Key' });
+    }
     throw new ServiceUnavailableException({ code: 'COMFYUI_SUBMIT_FAILED', message: `ComfyUI 提交失败：${errText.slice(0, 200)}` });
   }
 
   // 轮询 history 直到产出（最长 3 分钟）
   for (let i = 0; i < 90; i += 1) {
     await new Promise((r) => setTimeout(r, 2000));
-    const h = await fetch(`${opts.baseUrl}/history/${promptId}`).catch(() => null);
+    const h = await fetch(`${opts.baseUrl}/history/${promptId}`, { headers }).catch(() => null);
     if (!h?.ok) continue;
     const hist = (await h.json().catch(() => null)) as Record<
       string,
@@ -192,7 +204,7 @@ export async function generateViaComfyui(opts: {
     if (saved.length === 0) continue;
     const img = saved[0];
     const params = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder ?? '', type: img.type ?? 'output' });
-    const view = await fetch(`${opts.baseUrl}/view?${params.toString()}`);
+    const view = await fetch(`${opts.baseUrl}/view?${params.toString()}`, { headers });
     if (!view.ok) throw new ServiceUnavailableException({ code: 'COMFYUI_VIEW_FAILED', message: `ComfyUI 取图失败 ${view.status}` });
     const buffer = Buffer.from(await view.arrayBuffer());
     const ext = img.filename.split('.').pop()?.toLowerCase() ?? 'png';

@@ -2,6 +2,60 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.2.17] - 2026-10-19
+
+补齐 **ComfyUI 云端对接**，并把「图片/视频如何进业务」的完整链路梳理成文。
+上一轮核实 ComfyUI 对接时发现的两个真实缺口，本轮一次改完。
+
+### 补齐：ComfyUI 云端实例此前一律 401
+
+`generateViaComfyui` 的 `POST /prompt`、轮询 `GET /history/{id}`、`GET /view` **三步都不带任何认证头**，
+连通测试 `POST /api/admin/model-config/test-comfy` 同样不带。本机 ComfyUI 默认无鉴权所以能用，
+但云端实例（RunPod / autodl 反代 / 自建网关）都要求 Bearer —— **配置项里连 Key 字段都没有**。
+
+改动（前后端 + 部署配置一次到位，不留半成品）：
+
+- `image-provider.ts`：新增 `comfyHeaders()`，三步共用；401/403 单独报
+  `COMFYUI_UNAUTHORIZED` 并提示填 Key，不再混进「提交失败」
+- `model-config.service.ts`：`ImageRuntime` 增 `comfyApiKey`（DB > `COMFYUI_API_KEY`）；
+  `save()` 里与 `apiKey` 同语义 —— **空串 = 保持原值**，清除走「恢复默认」整行删除
+- `model-config.controller.ts`：`status()` 增 `comfyKeyConfigured` / `comfyKeyMasked`（末四位）；
+  探测遇 401/403 文案指向「填 API Key」，不再一律误报「地址不对」
+- `media.service.ts` / `plans.service.ts`：素材生图、户型渲染生图两个调用点都透传 Key
+- 前端「模型配置」页 ComfyUI 卡新增 API Key 输入（Password 框、留空保持、脱敏回显），
+  卡片名与接入指引由「本地生图」改为「生图（本地/云端）」
+
+### 修掉：容器里的 `127.0.0.1` 指向容器自己
+
+compose 默认 `COMFYUI_BASE_URL=http://127.0.0.1:8188`，但容器内该地址指向 **api 容器自身**，
+等于「永远连不上宿主机 ComfyUI」，且只报「连接失败」，用户会误判成 ComfyUI 没启动。
+默认改 `http://host.docker.internal:8188`（`extra_hosts` 早已配 host-gateway，
+容器内 `/etc/hosts` 实测 IPv4 `192.168.65.254` + IPv6 双栈均在）。
+
+**有意不做**：ComfyUI 只用于生图，不支持生视频 —— 视频工作流无法标准化输出，
+为一家实现写特例不划算。README 已注明。
+
+### smoke +4 条断言（含一条「强制鉴权夹具」）
+
+假 ComfyUI 改为**必须收到 Bearer 才放行**：`/prompt`、`/history`、`/view` 三步
+收到的 `Authorization` 全对才算过。与已有画布出图断言构成双保险 ——
+再删任何一个 fetch 的 headers，画布作业会 `failed` 且三步断言独立变红。
+
+另外 3 条：带 Key 探测通过 / Key 错误提示填 API Key / Key 只进不出（响应体不含明文）。
+
+> 本轮两次断言红都是**夹具与断言自身的问题，不是产品代码错**：
+> ① 假 ComfyUI 少实现 `/system_stats`（真实 ComfyUI 有）；
+> ② 断言写 `status === 200`，而 Nest 对 POST 默认返回 **201**（实测确认）。
+> 两次都是先分清夹具还是实现，避免去改本来正确的代码。
+
+### 文档：媒体资产链路梳理
+
+全项目只有一个资产中心 `MediaAsset`，5 条写入路径 → 9 处业务引用，
+字段归属逐个 grep schema 核对后写入
+[`replica/plan2-全量逆向-2026-10-16.md`](file:///Volumes/hasskit/codex/aisaas/replica/plan2-%E5%85%A8%E9%87%8F%E9%80%86%E5%90%91-2026-10-16.md) 第三十五节。
+同时登记一处已知设计不一致：`Product.imageUrl` 存文件 URL 而其余引用字段存 asset id
+（备份侧用正则反解），当前可用但不够优雅，本轮不重构。
+
 ## [0.2.16] - 2026-10-19
 
 逐板块对照参考站**当前代码**（重新扫 `.ref-site/scripts/`，不靠记忆），
