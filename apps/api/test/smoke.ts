@@ -613,6 +613,30 @@ async function main(): Promise<void> {
     putAgain.status === 200 && cfgAfter2.body.chat.keyMasked === '••••1234' && cfgAfter2.body.chat.model.startsWith('（跟随'),
   );
 
+  // ---------- 开源定位：额度耗尽只暂停 AI，不锁功能 ----------
+  // 用户口径：客户用自己充值/本地的模型，扣费实际不发生。
+  // 额度只能是「用量可视化 + 超产熔断」，绝不能变成使用门槛 —— 这条断言把承诺钉死。
+  {
+    const keep = await prisma.tenant.findUnique({ where: { id: tenantA }, select: { tokenBalance: true } });
+    await prisma.tenant.update({ where: { id: tenantA }, data: { tokenBalance: 0 } });
+    const blocked: string[] = [];
+    for (const [name, path] of [
+      ['方案', '/api/plans'], ['产品库', '/api/products'], ['接单', '/api/orders'],
+      ['反馈', '/api/feedback'], ['资料库', '/api/media/assets'], ['知识库', '/api/knowledge/docs'],
+      ['团队', '/api/team/members'], ['布局', '/api/layouts'],
+    ] as const) {
+      const r = await request(base, path, authA);
+      if (r.status !== 200) blocked.push(`${name}=${r.status}`);
+    }
+    check(`额度耗尽不锁任何非 AI 功能（实测阻塞 ${blocked.length} 个）`, blocked.length === 0);
+    const ai = await request(base, '/api/media/images', {
+      ...authA, method: 'POST', body: JSON.stringify({ prompt: '一张现代客厅效果图', size: '1024x1024' }),
+    });
+    check('额度耗尽时 AI 调用被暂停且给出可读原因（非 500）',
+      ai.status === 403 && (ai.body as { message?: string })?.message === 'TOKEN_INSUFFICIENT');
+    await prisma.tenant.update({ where: { id: tenantA }, data: { tokenBalance: keep?.tokenBalance ?? 80_000 } });
+  }
+
   const badScope = await request(base, '/api/admin/model-config/nope', { ...authA, method: 'PUT', body: JSON.stringify({ baseUrl: 'x' }) });
   check('未知 scope 保存被拒（400/404）', badScope.status === 400 || badScope.status === 404);
 
