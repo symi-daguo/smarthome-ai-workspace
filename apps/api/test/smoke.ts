@@ -3035,6 +3035,35 @@ async function main(): Promise<void> {
     walk(webRoot);
     check(`仓库未打包任何字体文件（发现 ${fontFiles.length} 个）`, fontFiles.length === 0);
 
+    // ③ 首次部署安全：公开弱默认值必须留空。
+    //    曾把 JWT_SECRET=change-me-in-production / SEED_ADMIN_PASSWORD=Admin@123456
+    //    写进 .env.example。compose 的 `:?` 只检查「变量有没有」，有占位值照样放行，
+    //    于是伙伴 cp 完直接上线 = 全网公开的签名密钥 + 公开的管理员密码。
+    //    现在这三项留空，compose 会拒绝启动；这条断言防止将来被填回去。
+    {
+      const envExample = readFileSync(new URL('../../../../.env.example', import.meta.url), 'utf-8');
+      const valOf = (k: string): string =>
+        ((envExample.match(new RegExp('^' + k + '=(.*)$', 'm')) ?? [])[1] ?? '').trim();
+      const weak = ['JWT_SECRET', 'SEED_ADMIN_PHONE', 'SEED_ADMIN_PASSWORD'].filter((k) => valOf(k) !== '');
+      check(
+        `.env.example 的三项必填凭据留空，compose 才能真正拦住弱默认值（残留 ${weak.length} 项）`,
+        weak.length === 0,
+      );
+      check(
+        '.env.example 说明了 JWT_SECRET 为什么要改（公开默认可伪造 token）',
+        /伪造登录 token|伪造.*token/.test(envExample),
+      );
+      // 用子串判断而不是正则：`${JWT_SECRET:?…}` 里的 `$\{` 在 TS→JS 两层转义下极易写错，
+      // 写错了断言会「假失败」——比没有断言更糟。正则转义问题已经坑过一次。
+      const composeYml = readFileSync(new URL('../../../../docker-compose.yml', import.meta.url), 'utf-8');
+      const guarded = ['JWT_SECRET', 'SEED_ADMIN_PHONE', 'SEED_ADMIN_PASSWORD']
+        .filter((k) => composeYml.includes('{' + k + ':?'));
+      check(
+        `compose 对三项凭据用 :? 强校验（缺值即拒绝启动）（实际 ${guarded.length}/3）`,
+        guarded.length === 3,
+      );
+    }
+
     // ② 字体栈必须只有一个来源：styles.css 是唯一定义处，fonts.ts 用 ?raw 提取。
     //    曾经两边各写一份，smoke 立刻报不一致——两份副本本身就是漂移风险源。
     const fontsTs = readFileSync(join(webRoot, 'src/theme/fonts.ts'), 'utf8');

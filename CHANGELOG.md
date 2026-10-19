@@ -2,6 +2,58 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.2.10] - 2026-10-18
+
+**首次部署安全门**：开源自部署的第一道防线此前形同虚设。
+
+### 抓到的真实风险
+
+`.env.example` 里原本写着：
+
+```
+JWT_SECRET=change-me-in-production
+SEED_ADMIN_PASSWORD=Admin@123456
+```
+
+这两个值**在本仓库里人人可查**。而 compose 的 `:?` 强制检查
+「变量有没有」，**有占位值照样放行** —— 于是伙伴 `cp .env.example .env`
+直接上线，等于：
+
+- 全网公开的 JWT 签名密钥 → 任何人都能伪造登录 token 接管部署
+- 全网公开的管理员密码 → 任何人都能登进租户管理员
+
+注释里写着「生产 compose 强制要求显式设置，拒绝默认值启动」，但**它并没有真的拒绝默认值**。
+
+### Fixed
+
+三项凭据在 `.env.example` 里改为**留空**，把强制力交给 compose：
+
+```
+JWT_SECRET=
+SEED_ADMIN_PHONE=
+SEED_ADMIN_PASSWORD=
+```
+
+实测模拟伙伴部署（`cp .env.example .env` 后直接 `docker compose config`）：
+
+```
+error: required variable JWT_SECRET is missing a value: 生产必须设置 JWT_SECRET（openssl rand -hex 32）
+error: required variable SEED_ADMIN_PASSWORD is missing a value: ...
+error: required variable SEED_ADMIN_PHONE is missing a value: ...
+```
+
+**三条明确报错、拒绝启动**，而不是带着弱密钥跑起来。
+
+README「快速开始」补了首次部署必填步骤（含 `openssl rand` 生成命令）。
+
+### 新增断言（3 条，防回退）
+
+```
+.env.example 的三项必填凭据留空，compose 才能真正拦住弱默认值
+.env.example 说明了 JWT_SECRET 为什么要改（公开默认可伪造 token）
+compose 对三项凭据用 :? 强校验（缺值即拒绝启动）
+```
+
 ## [0.2.9] - 2026-10-18
 
 **生产就绪度实测**，补上一个真正的硬伤：有备份、没恢复。

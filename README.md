@@ -98,6 +98,23 @@
 
 ## 快速开始
 
+### 首次部署前必填三项（漏了容器会拒绝启动）
+
+```bash
+cp .env.example .env
+
+# 1) JWT 签名密钥 —— 必须改。默认值是公开的（在本仓库里人人可查），
+#    拿到它就能伪造登录 token 接管你的部署
+echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env
+
+# 2) 第一个管理员账号（手机号 + 密码），用默认密码等于没有密码
+sed -i.bak "s/^SEED_ADMIN_PHONE=.*/SEED_ADMIN_PHONE=你的手机号/" .env
+echo "SEED_ADMIN_PASSWORD=$(openssl rand -base64 18)" >> .env
+```
+
+这三项在 `.env.example` 里**故意留空**，所以 `docker compose up` 会直接报错停下，
+而不是带着弱默认值跑起来 —— 这是开源自部署必须守住的第一道门。
+
 ```bash
 cp .env.example .env          # 填入你的模型 key 与密钥（见下）
 docker compose up -d db # 或使用本机 postgres
