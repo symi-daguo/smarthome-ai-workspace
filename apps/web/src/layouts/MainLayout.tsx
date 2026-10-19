@@ -252,8 +252,8 @@ export function MainLayout(): ReactNode {
       children: [
         { key: '/treasure', icon: <ToolOutlined />, label: '智能百宝箱' },
         { key: '/knowledge', icon: <BookOutlined />, label: '我的知识库' },
-        { key: '/works', icon: <FolderOpenOutlined />, label: '我的资料库' },
-        { key: '/materials', icon: <StarOutlined />, label: '视频素材库' },
+        { key: '/works', icon: <FolderOpenOutlined />, label: '我的作品' },
+        { key: '/materials', icon: <StarOutlined />, label: '素材库' },
         { key: '/content', icon: <FileSearchOutlined />, label: '内容提取' },
       ],
     };

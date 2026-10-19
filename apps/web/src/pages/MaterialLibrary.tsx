@@ -89,7 +89,7 @@ function MaterialCard({ m, owned, onBuy, onPreview }: { m: Material; owned: bool
                 border: 'none',
               }}
             >
-              下载 1 元
+              下载（100 额度）
             </Button>
           )}
         </div>
@@ -164,7 +164,7 @@ export function MaterialLibrary(): ReactNode {
         body: JSON.stringify({ key }),
       });
       setOwnedKeys((prev) => [...prev, key]);
-      message.success('购买成功，已扣 1 元额度，可直接下载原图');
+      message.success('已解锁该素材（扣 100 额度），可直接下载原图与完整视频');
     } catch (e) {
       message.error((e as Error).message || '购买失败');
     }
@@ -175,15 +175,15 @@ export function MaterialLibrary(): ReactNode {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 280 }}>
           <Title level={3} style={{ marginBottom: 4 }}>视频素材库</Title>
-          <Text type="secondary">发现同行的优秀视频作品。首次购买支付 1 元额度，即可下载对应原图和完整视频。</Text>
+          <Text type="secondary">发现同行的优秀视频作品。解锁一条可下载对应原图与完整视频，同一素材只解锁一次。本部署不提供在线支付，这里扣的是平台内额度（用量统计，非货币）。</Text>
         </div>
         <Card
           size="small"
           style={{ background: token.colorPrimaryBg, border: 'none', maxWidth: 280 }}
           styles={{ body: { padding: '10px 14px' } }}
         >
-          <Text strong style={{ color: token.colorPrimary, fontSize: 13 }}>创作者收益</Text>
-          <Text style={{ display: 'block', fontSize: 12.5 }}>审核发布奖 5 元 · 不同公司首次购买再得 1 元</Text>
+          <Text strong style={{ color: token.colorPrimary, fontSize: 13 }}>为什么要投稿</Text>
+          <Text style={{ display: 'block', fontSize: 12.5 }}>同行作品进素材库，门店之间互相省事。投稿免费，不结算货币。</Text>
         </Card>
       </div>
 
@@ -205,7 +205,7 @@ export function MaterialLibrary(): ReactNode {
         </div>
       ) : tab === 'bought' ? (
         ownedKeys.length === 0 ? (
-          <Empty description="还没有购买记录，在「优秀素材」下载 1 元即可购买" style={{ marginTop: 48 }} />
+          <Empty description="还没有解锁记录，在「优秀素材」解锁后可下载原图" style={{ marginTop: 48 }} />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16, marginTop: 8 }}>
             {EXCELLENT.filter((m) => ownedKeys.includes(m.key)).map((m) => (
@@ -219,7 +219,7 @@ export function MaterialLibrary(): ReactNode {
             <Space direction="vertical" size={10} style={{ width: '100%' }}>
               <Text type="secondary" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
                 上传你的原创视频投稿，审核通过后会进入「优秀素材」供同行下载。
-                投稿免费；审核通过发布奖 5 元，不同公司首次购买再得 1 元。
+                投稿免费；审核通过后进入素材库供同行使用。
               </Text>
               <Space wrap>
                 <Upload

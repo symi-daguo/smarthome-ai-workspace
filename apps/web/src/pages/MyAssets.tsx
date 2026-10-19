@@ -153,7 +153,7 @@ export function MyAssets(): ReactNode {
 
   return (
     <div style={{ width: '100%', paddingBottom: 24 }}>
-      <Title level={3} style={{ marginBottom: 4 }}>我的资料库</Title>
+      <Title level={3} style={{ marginBottom: 4 }}>我的作品</Title>
       <Text type="secondary">你生成的图片、视频、方案都保存在这里，随时查看与下载</Text>
 
       <div style={{ display: 'flex', gap: 8, margin: '18px 0 20px', flexWrap: 'wrap' }}>
