@@ -5,8 +5,10 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { withRetry } from '../common/retry.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
@@ -352,14 +354,13 @@ export class PlansService {
       });
     }
 
-    // 费用按精装修 = 1 倍生图（300 token），与单张效果图持平
-    await this.tokens.consume(
-      tenantId,
-      300,
-      'CONSUME',
-      { kind: 'plan-render-floorplan', planId: id },
-      userId,
-    );
+    // 费用按精装修 = 1 倍生图（300 token），与单张效果图持平。
+    //
+    // 这里只**预检余额**，实际扣费移到生成成功之后。此前是「先扣后生成」：
+    // 渲染一次要 20~30 秒、链路长失败率高，生成失败用户就白扣了额度。
+    const RENDER_COST = 300;
+    const bal = await this.tokens.balance(tenantId);
+    if (bal.tokenBalance < RENDER_COST) throw new ForbiddenException('TOKEN_INSUFFICIENT');
 
     const styleName = STYLE_NAMES[plan.style] ?? plan.style;
     const ecosystem = plan.ecosystem || '主流智能家居';
@@ -371,42 +372,57 @@ export class PlansService {
       `4K 渲染、暖色灯光氛围、写实质感、真实样板房摄影视角。`,
     ].join('');
 
+    // 生成走这里，失败会重试：只重试「再试一次有可能成功」的错误
+    // （超时 / 连接重置 / 5xx / 429）；参数错与 key 无效（4xx）立刻抛出，
+    // 重试多少次都一样，只会白让用户等。参考站 floorplan-render.js 的
+    // MAX_POLL_FAILURES=6 是同一量级的思路。
     let img: { buffer: Buffer; mimeType: string; ext: string };
-    if (cfg.provider === 'comfyui') {
-      img = await generateViaComfyui({
-        baseUrl: cfg.comfyBaseUrl,
-        workflow: await this.loadComfyWorkflow(cfg.workflowPath),
-        prompt,
-        width: 1536,
-        height: 1024,
-        promptNode: cfg.promptNode,
-        negativeNode: cfg.negativeNode,
-        latentNode: cfg.latentNode,
-        seedNode: cfg.seedNode,
-      });
-    } else if (cfg.provider === 'openai') {
-      img = await generateViaOpenai({
-        baseUrl: cfg.baseUrl,
-        apiKey,
-        model: cfg.model || 'gpt-image-1',
-        prompt,
-        size: '1536x1024',
-      });
-    } else {
-      img = await generateViaMinimax({
-        baseUrl: cfg.baseUrl,
-        apiKey,
-        model: cfg.model || 'image-01',
-        prompt,
-        aspect: '16:9',
-      });
-    }
+    img = await withRetry(async () => {
+      if (cfg.provider === 'comfyui') {
+        return generateViaComfyui({
+          baseUrl: cfg.comfyBaseUrl,
+          workflow: await this.loadComfyWorkflow(cfg.workflowPath),
+          prompt,
+          width: 1536,
+          height: 1024,
+          promptNode: cfg.promptNode,
+          negativeNode: cfg.negativeNode,
+          latentNode: cfg.latentNode,
+          seedNode: cfg.seedNode,
+        });
+      } else if (cfg.provider === 'openai') {
+        return generateViaOpenai({
+          baseUrl: cfg.baseUrl,
+          apiKey,
+          model: cfg.model || 'gpt-image-1',
+          prompt,
+          size: '1536x1024',
+        });
+      } else {
+        return generateViaMinimax({
+          baseUrl: cfg.baseUrl,
+          apiKey,
+          model: cfg.model || 'image-01',
+          prompt,
+          aspect: '16:9',
+        });
+      }
+    }, { attempts: 3, baseDelayMs: 1500, timeoutMs: 180_000 });
     if (!img.buffer.length) throw new ServiceUnavailableException('ASSET_EMPTY');
 
     const rel = `uploads/${this.dayDir()}/${randomUUID()}.${img.ext}`;
     const abs = join(this.uploadDir(), rel);
     await mkdir(join(abs, '..'), { recursive: true });
     await writeFile(abs, img.buffer);
+    // 走到这里说明图真的出来了，现在才扣费
+    await this.tokens.consume(
+      tenantId,
+      RENDER_COST,
+      'CONSUME',
+      { kind: 'plan-render-floorplan', planId: id },
+      userId,
+    );
+
     const asset = await this.prisma.mediaAsset.create({
       data: {
         tenantId,

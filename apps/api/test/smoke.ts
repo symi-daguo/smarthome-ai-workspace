@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
 import { SCENE_KEYS } from '../src/orders/orders.schemas.js';
 import { IdempotencyService } from '../src/common/idempotency.service.js';
+import { withRetry, defaultIsRetryable } from '../src/common/retry.js';
 import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
@@ -2237,6 +2238,58 @@ async function main(): Promise<void> {
   );
   const stillOne = await prisma.mediaAsset.count({ where: { clientRequestId: idemKey } });
   check('幂等键在库中唯一（重放没有产生第二条产物）', stillOne === 1);
+
+  // ---------- 生成调用的有限重试（0.2.11）----------
+  // 参考站 floorplan-render.js 用 MAX_POLL_FAILURES=6 表达同一量级的思路：
+  // 生图链路长、失败率高，不该一次抖动就让用户白等白扣。
+  {
+    const retryable = (e: unknown): boolean => defaultIsRetryable(e);
+
+    check('超时 / 连接重置类错误判定为可重试',
+      retryable(Object.assign(new Error('x'), { name: 'TimeoutError' }))
+      && retryable(new Error('socket hang up')) && retryable(new Error('ETIMEDOUT')));
+    check('5xx 与 429 判定为可重试',
+      retryable({ status: 500 }) && retryable({ status: 503 }) && retryable({ status: 429 }));
+    check('4xx 判定为不可重试（参数错/key 无效重试也没用，只会白等）',
+      !retryable({ status: 400 }) && !retryable({ status: 401 }) && !retryable({ status: 403 }));
+
+    let calls = 0;
+    const flaky = await withRetry(async () => {
+      calls += 1;
+      if (calls < 3) throw new Error('fetch failed');
+      return 'ok';
+    }, { attempts: 3, baseDelayMs: 1 });
+    check('网络抖动会重试直到成功（不把一次抖动变成一次失败）', flaky === 'ok' && calls === 3);
+
+    let authCalls = 0;
+    let authErr = '';
+    try {
+      await withRetry(async () => { authCalls += 1; throw { status: 401, message: 'bad key' }; },
+        { attempts: 3, baseDelayMs: 1 });
+    } catch (e) { authErr = (e as { message?: string })?.message ?? ''; }
+    check('key 无效时立刻失败不重试（不把 30 秒变成 90 秒）', authCalls === 1 && authErr === 'bad key');
+
+    let fiveCalls = 0;
+    let fiveErr = '';
+    try {
+      await withRetry(async () => { fiveCalls += 1; throw { status: 503, message: 'upstream down' }; },
+        { attempts: 3, baseDelayMs: 1 });
+    } catch (e) { fiveErr = (e as { message?: string })?.message ?? ''; }
+    check('上游持续故障会重试到耗尽，且抛出的是原始原因', fiveCalls === 3 && fiveErr === 'upstream down');
+
+    const t0 = Date.now();
+    let timedOut = false;
+    try { await withRetry(() => new Promise<never>(() => {}), { attempts: 1, timeoutMs: 200 }); }
+    catch { timedOut = true; }
+    check('单次调用有超时兜底（不会无限等待）', timedOut && Date.now() - t0 < 3000);
+
+    let defCalls = 0;
+    try {
+      await withRetry(async () => { defCalls += 1; throw new Error('fetch failed'); }, { baseDelayMs: 1 });
+    } catch { /* 预期抛错 */ }
+    check('默认尝试次数有限（默认 3 次，不是无限重试）', defCalls === 3);
+  }
+
   await prisma.mediaAsset.delete({ where: { id: seededAsset.id } });
 
   // 生视频走同一套幂等机制，且单价更高，更不能漏。
