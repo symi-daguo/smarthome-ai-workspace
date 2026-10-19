@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 # 构建上下文固定为仓库根目录：docker build -f apps/api/Dockerfile .
-FROM node:24.19.0-alpine
+FROM node:24.22.0-alpine
 
 # argon2 原生模块构建工具链 + 运行时 libstdc++
 RUN apk add --no-cache python3 make g++ libstdc++
 
 WORKDIR /repo
 
-RUN corepack enable && corepack prepare pnpm@11.5.3 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.6 --activate
 
 # registry 可覆盖：默认留空即走官方源（CI / 海外部署）。
 # 国内网络构建时：NPM_REGISTRY=https://registry.npmmirror.com/ docker compose build api

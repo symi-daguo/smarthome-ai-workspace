@@ -8,8 +8,16 @@
 
 ## 技术栈
 
-- 后端：NestJS 12（ESM）+ Prisma 7 + PostgreSQL 18（pgvector）
-- 前端：React 19 + Ant Design 6 + Vite 8
+全部为 **2026 年当前最新稳定版**（逐个取自 registry `dist-tags` 实测，不凭印象）。
+两处**刻意不升到最新**的，理由见「依赖安全」与下方注释：
+
+- 后端：NestJS 12.1.3（ESM）+ Prisma 7.10.1 + PostgreSQL 18.6（pgvector）
+- 前端：React 19.3.1 + Ant Design 6.6.6 + Vite 8.3.4
+- 语言：TypeScript **6.0.3**（不是最新 7.0.2：`@nestjs/swagger@12.0.2` 的 peer 是
+  `^5.5.0 || ^6.0.0`，且微软官方声明 7.0 没有稳定编程式 API、内嵌 TS 的工具链要等 7.1）
+- 构建：pnpm **11.28.6**（不是最新 12.14.0：pnpm 12 拒绝在 corepack 下运行，
+  且会把自己的平台二进制写进项目 lockfile）
+- 部署镜像：Node **24.22.0**-alpine（当前 LTS 最新）、nginx **1.30**-alpine（稳定线；奇数版是 mainline）
 - 模型接入：对话走 OpenAI 兼容协议（可接任意国内外云端或本地 Ollama/LM Studio/vLLM）；生图支持 MiniMax `image-01` / OpenAI / ComfyUI（**本机与云端实例均可**，云端填 API Key 走 Bearer 鉴权）；生视频支持 MiniMax（留空自动选 `T2V/I2V-01-Director`，可指定 `MiniMax-H3` 等带原生音轨的模型）或 OpenAI Sora；前端「模型配置」页**在线编辑、保存即生效**（DB 持久化，优先于 .env），含 provider 引导与连通性测试
 - MiniMax 官方另有语音合成（`speech-2.6-hd` 等，`/v1/t2a_v2`）、音乐生成（`music-3.0`）、音色克隆与联网搜索能力，本项目**尚未接入**；已接入部分仅为上行的对话 / 图像 / 视频三类
 - PPT 生成：pptxgenjs（MIT，浏览器端生成原生可编辑 16:9 幻灯片）
@@ -217,6 +225,25 @@ BILLING_PLAN_PRIVATE_TOKENS=160
 JWT_SECRET=（openssl rand -hex 32 生成）
 SEED_ADMIN_PASSWORD=（自定义强密码）
 ```
+
+### 依赖安全
+
+```bash
+pnpm audit --registry=https://registry.npmjs.org   # 必须显式指定官方 registry
+```
+
+> 走国内镜像时该审计端点不存在，会报 `ERR_PNPM_AUDIT_ENDPOINT_NOT_EXISTS`，
+> 那是镜像的问题不是项目有洞。
+
+间接依赖的已知漏洞统一在 `pnpm-workspace.yaml` 的 `overrides` 里顶到已修复版本，
+**不新增依赖**。当前状态：**16 条 → 1 条**，剩余 1 条是 `sprintf-js`（moderate，
+经 `mammoth > argparse` 引入），审计建议的修复版 `1.1.4` **并不存在**
+（官方 dist-tags 最新仍是 1.1.3，2023-09-11 后无更新）——属**上游无修复**，
+已顶到现存最新版。该包只用于 argparse 的帮助文本格式化，不处理用户可控的格式串。
+
+许可证：766 个依赖中 MIT 604 / ISC 65 / Apache-2.0 51 / BSD 34，
+其余为 Unlicense(3) / BlueOak(2) / CC0(2) / MPL-2.0(2) / EPL-2.0(1) / Python-2.0(1)，
+**无 GPL-only / AGPL / SSPL / BUSL**。`jszip` 为 `(MIT OR GPL-3.0-or-later)` 双许可，取 MIT 侧。
 
 改完 `.env` 重启后端生效（`docker compose up -d api`）；页面上的在线配置则保存即生效。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需在「Workflow → Export (API)」导出工作流 JSON（或直接使用项目内置模板），**本机与云端实例都支持**：本机直连时地址填宿主机地址（容器部署须用 `host.docker.internal`，容器里的 `127.0.0.1` 指向容器自身）并留空 API Key；云端实例（RunPod / autodl 反代 / 自建网关）填云端地址与 API Key，认证头会自动带入 `/prompt`、`/history`、`/view` 三次请求。注意 ComfyUI 仅用于**生图**，生视频 provider 只有 `minimax` 与 `openai`。
 

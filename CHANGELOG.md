@@ -2,6 +2,109 @@
 
 本项目遵循语义化版本（SemVer）。0.x 阶段 API 不做稳定性承诺。
 
+## [0.2.18] - 2026-10-19
+
+**技术栈全量对齐 2026 当前最新稳定版**，并清掉 16 条间接依赖漏洞。
+每个版本都取自 registry 的 `dist-tags` 实测，不靠印象。
+
+### 版本升级（全部实跑门禁验证）
+
+| 包 | 旧 → 新 | 说明 |
+|---|---|---|
+| @nestjs/common、core、platform-express | 12.1.2 → **12.1.3** | |
+| @nestjs/jwt | 12.0.2 → **12.0.3** | |
+| @nestjs/cli | 12.0.5 → **12.0.8** | |
+| @nestjs/throttler | 6.7.0 → **6.7.1** | |
+| @prisma/client、adapter-pg、prisma | 7.10.0 → **7.10.1** | 见下「`latest` 不等于稳定版」 |
+| antd | 6.6.5 → **6.6.6** | |
+| react / react-dom | 19.3.0 → **19.3.1** | |
+| lucide | 1.55.0 → **1.59.0** | |
+| @casl/ability | 7.0.1 → **7.0.2** | |
+| zod | 4.6.5 → **4.6.7** | |
+| pg / @types/pg | 8.23.0 → **8.23.1** | |
+| @types/node | 26.6.2 → **26.6.5** | |
+| @vitejs/plugin-react | 6.1.1 → **6.1.2** | |
+| pnpm | 11.5.3 → **11.28.6** | 11.x 最后一个稳定版 |
+| Node（部署镜像） | 24.19.0 → **24.22.0** | 当前 LTS 最新（Krypton 线） |
+| nginx（部署镜像） | 1.29 → **1.30** | 1.29 是 mainline，部署应用稳定线（偶数版） |
+
+**`dist-tags.latest` 不等于稳定版**：Prisma 的 `latest` 当时指向 `8.0.0-rc.23`
+（预发布），真正的稳定版是 `prev` 标签的 `7.10.1`。盲目「升到 latest」会升到 RC 上。
+
+升级 Prisma 后必须 `pnpm prisma:generate` 重生成客户端，
+否则 `PrismaService` 上的模型属性会全部消失，typecheck 报 TS2339。
+
+### 安全：16 条间接依赖漏洞 → 1 条
+
+`pnpm audit` 报出 16 条（1 critical / 5 high / 5 moderate / 5 low），
+**全部是间接依赖**，不新增依赖，用 `pnpm-workspace.yaml` 的 `overrides` 顶到已修复版本：
+
+- `lodash@3.2.0 → 4.18.1`（critical + 4 条：mammoth > argparse，原型污染与命令注入）
+- `image-size@1.2.1 → 2.0.3`（high：pptxgenjs）
+- `uuid@8.3.0 → 11.1.1`、`bl@4.0.1 → 4.0.3`、`fast-csv@4.3.1 → 4.3.6`
+- `dompurify@3.4.15 → 3.4.16`、`katex@0.16.47 → 0.18.2`
+- `ansi-regex@5.0.0 → 5.0.1`（仅 devDep 链）
+
+用**精确版本选择器**而非整包覆盖：整包覆盖会把项目里已修好的解析（如 uuid 14.0.2）
+一起降级，反而倒退。
+
+**剩余 1 条是上游无修复**：`sprintf-js` 的 advisory 写「≥ 1.1.4 已修复」，
+但官方 dist-tags 最新仍是 **1.1.3**（2023-09-11 后无更新）——修复版根本不存在，
+只能顶到现存最新版。该包仅用于 argparse 帮助文本格式化，不处理用户可控格式串。
+
+三个踩过的坑：
+1. overrides 放 **package.json 已失效**（pnpm 11 起不再读 `pnpm` 字段，会被静默忽略），
+   新位置是 `pnpm-workspace.yaml`
+2. 选择器不支持 `>=` 形式，`lodash>=3.2.0` 会报 `Cannot parse the "=3.2.0" selector`
+3. `pnpm audit` 走国内镜像会报 `ERR_PNPM_AUDIT_ENDPOINT_NOT_EXISTS`，
+   必须 `--registry=https://registry.npmjs.org`
+
+升级后 smoke 441/441 全绿 —— PPTX（image-size 跨大版本）、docx（lodash 3→4 跨大版本）、
+Excel（uuid 8→11 跨大版本）三条受影响链路都被断言覆盖，确认没打坏运行时。
+
+### TypeScript：定在 6.0.3，不升 7.0.2
+
+最新稳定版是 **7.0.2**（Go 重写版），但**装不上**，两条硬证据：
+
+1. `@nestjs/swagger@12.0.2` 的 peerDependencies 明确写着 `typescript: "^5.5.0 || ^6.0.0"`
+   ——装 7.0.2 直接 unmet peer
+2. 微软官方公告明确：**7.0 没有稳定的编程式 API**，内嵌 TS 的工具链要等 7.1；
+   官方建议「先迁移到 6，再评估 7」，不要跨级跳
+
+因此升到 **6.0.3**（2026-04-16 发布），是当前工具链能接受的最新稳定版，
+也是官方指定的过渡跳板。`pnpm peers check` 从 1 项 unmet 变为 **0 项**。
+
+TS6 有一处破坏性变更已修：控制器里 `Express.Multer.File` 全部报 TS2694，
+原因是 TS 6 收紧了 `@types` 的全局命名空间增强，必须有显式引用。
+新增 `apps/api/src/global-types.d.ts` 三行 reference 解决，文件头写清了原因与版本依据。
+
+### pnpm：停在 11.28.6，不升 12.14.0
+
+pnpm 12.14.0 实测**不可用**，两条硬证据：
+
+1. **pnpm 12 拒绝在 corepack 下运行**。脚本里的 `pnpm -r` 会解析到系统 pnpm，
+   版本自检直接拦死：加 `devEngines.packageManager` 也无效（已实测）。
+2. 它把**自己的平台二进制写进项目 lockfile**，多出 159 行
+   `@pnpm/exe.*`（android/linux/darwin × 多架构）——与应用的依赖图无关的噪音。
+
+本机根因是 **corepack 没启用 shim**，`corepack enable` 后 pnpm 会按 `packageManager`
+字段自动切换版本。Dockerfile 里 `corepack prepare pnpm@11.28.6 --activate` 已同步。
+
+### 许可证审计
+
+766 个依赖：MIT 604 / ISC 65 / Apache-2.0 51 / BSD 34，
+其余 Unlicense(3) / BlueOak-1.0.0(2) / CC0-1.0(2) / MPL-2.0(2) / EPL-2.0(1) / Python-2.0(1)。
+**无 GPL-only / AGPL / SSPL / BUSL**。
+`jszip` 为 `(MIT OR GPL-3.0-or-later)` 双许可、`dompurify` 为 `(MPL-2.0 OR Apache-2.0)` 双许可，
+均取宽松侧，符合 AGENTS.md 的依赖准入要求。
+
+### 文档
+
+`AGENTS.md` 新增三节：**技术栈版本纪律**（如何核对、为什么 `latest` 不可信）、
+**间接依赖漏洞修复**（overrides 位置与语法陷阱、审计命令）、
+并补上「不要给门禁命令接 `| tail -N`」——本次就踩了这个坑，
+`pnpm typecheck | tail` 因管道缓冲把编译失败读成了通过。
+
 ## [0.2.17] - 2026-10-19
 
 补齐 **ComfyUI 云端对接**，并把「图片/视频如何进业务」的完整链路梳理成文。

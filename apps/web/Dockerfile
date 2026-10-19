@@ -2,11 +2,11 @@
 # 构建上下文固定为仓库根目录：docker build -f apps/web/Dockerfile .
 
 # ---- 构建阶段 ----
-FROM node:24.19.0-alpine AS builder
+FROM node:24.22.0-alpine AS builder
 
 WORKDIR /repo
 
-RUN corepack enable && corepack prepare pnpm@11.5.3 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.6 --activate
 
 # registry 可覆盖：默认留空即走官方源（CI / 海外部署）。
 # 国内网络构建时：NPM_REGISTRY=https://registry.npmmirror.com/ docker compose build web
@@ -37,7 +37,7 @@ ENV VITE_API_BASE_URL=
 RUN pnpm --filter @app/web build
 
 # ---- 运行阶段 ----
-FROM nginx:1.29-alpine
+FROM nginx:1.30-alpine
 
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /repo/apps/web/dist /usr/share/nginx/html
