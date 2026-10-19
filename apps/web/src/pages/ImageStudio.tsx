@@ -206,7 +206,7 @@ export function ImageStudio(): ReactNode {
     return false;
   };
 
-  /** 从「我的资料库」选参考图（与视频页首帧选择同源，不重复造轮子） */
+  /** 从「我的作品」选参考图（与视频页首帧选择同源，不重复造轮子） */
   const openPicker = async (): Promise<void> => {
     try {
       const list = await api<{ id: string; kind: string; title: string }[]>('/api/media/assets');
@@ -293,7 +293,7 @@ export function ImageStudio(): ReactNode {
       const url = fileUrl(`${r.url}?t=${Date.now()}`);
       setHistory((prev) => [{ id: r.id, url }, ...prev]);
       setHistIdx(0);
-      message.success(r.deduped ? '这次提交此前已成功出图，直接取回原图（未重复消耗算力）' : '图片已生成并保存到「我的资料库」');
+      message.success(r.deduped ? '这次提交此前已成功出图，直接取回原图（未重复消耗算力）' : '图片已生成并保存到「我的作品」');
     } catch (e) {
       message.error((e as Error).message || '生成失败');
     } finally {
@@ -469,8 +469,8 @@ export function ImageStudio(): ReactNode {
       <Title level={3} style={{ marginBottom: 4 }}>AI 图片生成</Title>
       <Text type="secondary">
         {isFree
-          ? '点场景/案例自动填入完整提示词，或上传参考图一键反推画面描述，生成同风格空间效果图；结果自动存入「我的资料库」'
-          : `${wf.description}；提示词可自由修改，结果自动存入「我的资料库」`}
+          ? '点场景/案例自动填入完整提示词，或上传参考图一键反推画面描述，生成同风格空间效果图；结果自动存入「我的作品」'
+          : `${wf.description}；提示词可自由修改，结果自动存入「我的作品」`}
       </Text>
 
       {/* 工作流分段控件 */}
@@ -748,7 +748,7 @@ export function ImageStudio(): ReactNode {
         </div>
       ) : null}
         <Modal
-          title="从「我的资料库」选择参考图"
+          title="从「我的作品」选择参考图"
           open={pickerOpen}
           onCancel={() => setPickerOpen(false)}
           footer={null}

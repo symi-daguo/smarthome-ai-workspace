@@ -422,7 +422,7 @@ export function LightingStudio(): ReactNode {
       await api(`/api/lighting/${id}`, { method: 'PATCH', body: JSON.stringify({ videoAssetId: r.url, status: 'ready' }) });
       setVideoUrl(fileUrl(`${r.url}?t=${Date.now()}`));
       void loadScenes();
-      message.success('灯光场景视频已生成并保存到「我的资料库」');
+      message.success('灯光场景视频已生成并保存到「我的作品」');
       setStep(3);
     } catch (e) {
       message.error(e instanceof Error ? e.message : '出片失败');

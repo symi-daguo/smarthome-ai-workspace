@@ -25,7 +25,7 @@ const RULES: { key: IntentKey; label: string; route: string; words: string[] }[]
   // 知识库与资料库都用「资料」二字做泛称，这里用更具体的词区分：
   // 「文档/知识库/手册/企业资料」偏知识库；「我的资料/之前生成/以前做的」偏产物库。
   { key: 'knowledge', label: '我的知识库', route: '/knowledge', words: ['知识库', '文档', '企业资料', '产品手册', '说明书'] },
-  { key: 'assets', label: '我的资料库', route: '/works', words: ['我的资料', '资料库', '之前生成', '之前做的', '以前做的', '以前生成', '历史作品', '上次做的'] },
+  { key: 'assets', label: '我的作品', route: '/works', words: ['我的资料', '资料库', '之前生成', '之前做的', '以前做的', '以前生成', '历史作品', '上次做的'] },
   { key: 'quote', label: '智能报价', route: '/quote', words: ['报价', '算价', '多少钱', '价格单', '预算清单'] },
   { key: 'plan', label: '智能方案生成', route: '/plan', words: ['方案', '提案', '全屋智能规划', '设计稿', '施工图', '汇报'] },
   { key: 'video', label: 'AI 生视频', route: '/video', words: ['视频', '动画', '短片', '运镜', '延时'] },
