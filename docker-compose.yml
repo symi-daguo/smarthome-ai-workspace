@@ -51,7 +51,11 @@ services:
         # 留空=官方源（CI/海外）；国内网络：NPM_REGISTRY=https://registry.npmmirror.com/ docker compose build
         NPM_REGISTRY: ${NPM_REGISTRY:-}
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
+      # 硬编码 production，不接受宿主 .env 覆盖。
+      # 这个镜像只用于部署：main.ts 里的生产红线（拒绝默认 JWT_SECRET / 默认种子密码）
+      # 与日志收敛都挂在 NODE_ENV==='production' 上，被宿主变量改成 development 会让两者一起失效。
+      # 本地开发走 vite dev 直连 3080，不经过本 compose。
+      NODE_ENV: production
       PORT: '3080'
       DATABASE_URL: postgresql://smarthome:smarthome@db:5432/smarthome?schema=public
       JWT_SECRET: ${JWT_SECRET:?生产必须设置 JWT_SECRET（openssl rand -hex 32）}

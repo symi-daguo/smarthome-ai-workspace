@@ -297,6 +297,60 @@ export function DeviceLayout(): ReactNode {
     if (mode === 'wifi' && !imgSrc) setGuideOpen(true);
   }, [mode, imgSrc]);
 
+  /**
+   * 热力图工作台状态持久化（参考站 wifi-heatmap.js 有「已恢复上次保存的墙体、设备和参数」，
+   * 我方此前缺，刷新页面 = 几分钟的画墙与布点全部白做）。
+   *
+   * 只存**编辑中的草稿**（墙、设备坐标与功率、尺寸、衰减参数），
+   * 不存底图二进制 —— 底图来自用户上传的文件，刷新后重新选即可，
+   * 把 base64 塞进 localStorage 很快会撑爆 5MB 配额。
+   */
+  const WIFI_DRAFT_KEY = 'saas_wifi_draft_v1';
+  useEffect(() => {
+    if (mode !== 'wifi') return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(WIFI_DRAFT_KEY, JSON.stringify({
+          walls, points, powers, planW, planH, wallAtten, sigThreshold, heatAlpha, title,
+        }));
+      } catch {
+        // 配额满或隐私模式禁写：不影响主流程，静默跳过
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [mode, walls, points, powers, planW, planH, wallAtten, sigThreshold, heatAlpha, title]);
+
+  /** 进入 WiFi 模式时恢复一次草稿；「重新开始」按钮会清掉它 */
+  const [wifiRestored, setWifiRestored] = useState(false);
+  useEffect(() => {
+    if (mode !== 'wifi' || wifiRestored) return;
+    setWifiRestored(true);
+    try {
+      const raw = localStorage.getItem(WIFI_DRAFT_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw) as {
+        walls?: WallSeg[]; points?: typeof points; powers?: Record<string, number>;
+        planW?: number; planH?: number; wallAtten?: number; sigThreshold?: number;
+        heatAlpha?: number; title?: string;
+      };
+      const w = d.walls?.length ?? 0;
+      const p = d.points?.length ?? 0;
+      if (!w && !p) return;
+      if (d.walls) setWalls(d.walls);
+      if (d.points) setPoints(d.points);
+      if (d.powers) setPowers(d.powers);
+      if (d.planW) setPlanW(d.planW);
+      if (d.planH) setPlanH(d.planH);
+      if (d.wallAtten) setWallAtten(d.wallAtten);
+      if (d.sigThreshold) setSigThreshold(d.sigThreshold);
+      if (d.heatAlpha) setHeatAlpha(d.heatAlpha);
+      if (d.title) setTitle(d.title);
+      message.info(`已恢复上次保存的墙体、设备和参数（${w} 段墙 / ${p} 个设备）`);
+    } catch {
+      // 草稿损坏就直接丢弃，不让坏数据卡住工具
+    }
+  }, [mode, wifiRestored]);
+
   /** 信号网格规模：限制总格数，保证拖墙/拖设备时能实时重算 */
   const grid = useMemo(() => (imgSize ? fieldGrid(imgSize.w, imgSize.h) : null), [imgSize]);
 
@@ -476,6 +530,21 @@ export function DeviceLayout(): ReactNode {
   /** 导出带墙体与摘要的热力图 PNG */
   const exportWifiPng = useCallback(async () => {
     if (!imgSrc) return;
+    // 保存/导出前的三道校验（参考站 wifi-heatmap.js 同款话术）：
+    // 画墙与放网关都是分钟级工作，条件不满足还导出会得到一张空图，
+    // 用户只会以为是工具坏了，不会想到是前置条件没满足。
+    if (!wifiSources.length) {
+      message.warning('请至少添加一个 WiFi 设备（网关 / AP）再导出');
+      return;
+    }
+    if (!walls.length) {
+      message.warning('还没识别或补画墙体，墙体直接影响穿墙衰减，建议先画墙再导出');
+      return;
+    }
+    if (!points.some((p) => p.category === 'gateway')) {
+      message.warning('尚未放置网关，无法计算信号来源；请从产品库点选网关后再导出');
+      return;
+    }
     try {
       const dataUrl = await compositeWifiPlan({
         baseSrc: imgSrc,
