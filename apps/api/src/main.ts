@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -17,7 +18,20 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: ['log', 'warn', 'error'] });
+  /**
+   * 日志级别按环境收敛。
+   *
+   * 生产只留 warn / error：`RoutesResolver` 会把 140+ 条路由映射逐条打进 `log` 级别，
+   * 那是开发期排查路由冲突用的噪音 —— 容器里 `docker logs` 全被它刷满，
+   * 真正要看的错误反而找不到。
+   * 开发环境保留 log（要看「模块没被加载」这类问题），debug 留给追调用链。
+   */
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    logger: IS_PROD ? ['warn', 'error'] : ['log', 'warn', 'error', 'debug'],
+  });
+  // 把 RoutesResolver 那条启动横幅也压掉：它走 log 级别，
+  // 上面已把生产 logger 收敛到 warn/error，这里再兜一次防止框架内部直接写 console
+  if (IS_PROD) Logger.overrideLogger(['warn', 'error']);
 
   // nginx 反代后限流按真实客户端 IP 计数（否则所有请求同算代理 IP，限流失效/误伤）
   app.set('trust proxy', 1);

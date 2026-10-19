@@ -241,7 +241,7 @@ export function ProductCenter(): ReactNode {
     }
     modal.confirm({
       title: `AI 批量处理 ${selectedIds.length} 个产品？`,
-      content: '智能体将补全缺失的品牌/型号/布置提示、按品类字典归位分类，并生成白底产品主图（产品图即点位图标）。生图按张扣减额度，单个失败不影响其余。',
+      content: '智能体将补全缺失的品牌/型号/布置提示、按品类字典归位分类，并生成白底产品主图（产品图即点位图标）。单个失败不影响其余。',
       okText: '开始处理',
       cancelText: '取消',
       onOk: async () => {

@@ -293,7 +293,7 @@ export function ImageStudio(): ReactNode {
       const url = fileUrl(`${r.url}?t=${Date.now()}`);
       setHistory((prev) => [{ id: r.id, url }, ...prev]);
       setHistIdx(0);
-      message.success(r.deduped ? '这次提交此前已成功出图，直接取回原图（未重复扣额度）' : '图片已生成并保存到「我的资料库」');
+      message.success(r.deduped ? '这次提交此前已成功出图，直接取回原图（未重复消耗算力）' : '图片已生成并保存到「我的资料库」');
     } catch (e) {
       message.error((e as Error).message || '生成失败');
     } finally {
@@ -661,8 +661,8 @@ export function ImageStudio(): ReactNode {
             </Button>
             <Text type="secondary" style={{ fontSize: 13 }}>
               {isFree
-                ? '每张按额度扣费，生成结果自动保存到「我的资料库」并可直接用作生视频首帧'
-                : `本次输出比例：${ratio || '跟随尺寸'}；每张按额度扣费，结果自动存入「我的资料库」`}
+                ? '生成结果自动保存到「我的作品」，可直接用作生视频首帧'
+                : `本次输出比例：${ratio || '跟随尺寸'}；结果自动存入「我的作品」`}
             </Text>
           </div>
         </div>

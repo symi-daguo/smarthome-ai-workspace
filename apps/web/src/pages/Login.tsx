@@ -33,7 +33,7 @@ const BRAND_SOLID = '#5B5BF0';
 // 与本项目开源自部署的定位矛盾，而登录页是用户第一眼看到的地方。
 const VALUE_POINTS = [
   '智能方案、效果图、灯光场景、营销文案，全链路 AI 生成',
-  '开源自部署免费，额度透明可控，每个 token 花在哪都查得到',
+  '开源自部署免费，模型你自己配，算力消耗看得见、也随时能查',
   '多租户与细粒度权限，团队协作开箱即用',
 ];
 
@@ -210,7 +210,7 @@ export function Login(): ReactNode {
             {tab === 'login' ? '欢迎回来' : '创建账号'}
           </Title>
           <Paragraph type="secondary" style={{ marginBottom: 20 }}>
-            {tab === 'login' ? '登录后继续你的 AI 创作' : '注册即自动开通团队，并赠送 80,000 token 体验额度'}
+            {tab === 'login' ? '登录后继续你的 AI 创作' : '注册即自动开通团队，所有功能直接可用，不设付费门槛'}
           </Paragraph>
 
           {error ? (

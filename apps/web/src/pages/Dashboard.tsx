@@ -706,7 +706,7 @@ export function Dashboard(): ReactNode {
               placeholder="描述你的需求，例如：为 120㎡ 三居生成一套无主灯设计方案"
             />
             <Text type="secondary" style={{ display: 'block', textAlign: 'center', fontSize: 12, marginTop: 8 }}>
-              内容由所配置的模型实时生成，按额度计费
+              内容由你自己配置的模型实时生成
             </Text>
           </div>
         </footer>

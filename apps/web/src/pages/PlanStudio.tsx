@@ -505,7 +505,7 @@ const [editing, setEditing] = useState<{
       setStep(1);
       message.success(
         created.deduped
-          ? '这次提交此前已生成过方案，直接取回原方案（未重复扣额度）'
+          ? '这次提交此前已生成过方案，直接取回原方案（未重复消耗算力）'
           : `方案文案已生成（${created.pages.length} 页），可逐页审稿编辑`,
       );
     } catch (e) {

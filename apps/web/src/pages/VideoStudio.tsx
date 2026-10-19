@@ -151,7 +151,7 @@ export function VideoStudio(): ReactNode {
       setVideoUrl(fileUrl(`${r.url}?t=${Date.now()}`));
       message.success(
         r.deduped
-          ? '这次提交此前已成功出片，直接取回原视频（未重复扣额度）'
+          ? '这次提交此前已成功出片，直接取回原视频（未重复消耗算力）'
           : firstFrame ? '视频已生成（图生视频）并保存到「我的资料库」' : '视频已生成并保存到「我的资料库」',
       );
     } catch (e) {
@@ -354,7 +354,7 @@ export function VideoStudio(): ReactNode {
               生成视频
             </Button>
             <Text type="secondary" style={{ fontSize: 13 }}>
-              按额度扣费（单价由部署者配置），生成约需 1-3 分钟
+              用你自己配置的模型生成，约需 1-3 分钟
             </Text>
           </div>
         </div>
