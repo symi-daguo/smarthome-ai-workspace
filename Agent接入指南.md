@@ -2,7 +2,7 @@
 
 面向任何能发 HTTP 请求的外部 AI Agent（豆包、Trae、MiniMax、Claude Code、WorkBuddy、自研脚本……）。
 本文只讲**怎么把本系统接进来并安全地用起来**；具体有哪些能力由
-`GET /api/agent/manifest` 自描述，接入方不必照抄本文。
+`GET /api/agent/manifest` 自描述，接入方不必照搬本文。
 
 ---
 
@@ -10,8 +10,8 @@
 
 | 方式 | 端点 | 适合 |
 |---|---|---|
-| **能力清单**（推荐起点） | `GET /api/agent/manifest` | 所有平台。返回 138 条操作、权限、风险等级与用法说明 |
-| **OpenAPI** | `GET /api/docs`（页面）<br>`GET /api/docs-json`（机器可读） | 需要自动生成客户端 / 补全 / 调试台 |
+| **能力清单**（推荐起点） | `GET /api/agent/manifest` | 所有平台。返回 18 组、150 条操作、权限、风险等级与用法说明 |
+| **OpenAPI** | `GET /api/docs`（页面）<br>`GET /api/docs-json`（机器可读） | 需要自动生成客户端 / 补全 / 调试台。**生产环境（`NODE_ENV=production`）已关闭 Swagger**，这两个端点只在开发环境可用 |
 | **REST** | `http://<host>:3080/api/*` | 一切。API Key 即 Bearer token |
 
 三者信息同源：清单里的每条操作都带 `p`（路径）、`risk`（风险）、`q`（注意事项）、
@@ -31,7 +31,7 @@ API Key **本身就是一枚 JWT**，不需要再换 token。
 
 1. 用管理员账号登录 `POST /api/auth/login {phone, password}`
 2. 建一个服务账号：`POST /api/team/service-accounts {name, roleKey}`
-3. 签发 Key：`POST /api/agent/api-keys {name, serviceAccountId, expiresInDays}`
+3. 签发 Key：`POST /api/agent/keys {name, serviceAccountId, ttlDays}`（`ttlDays` 可选，1–365，默认 90）
 4. 之后所有请求带 `Authorization: Bearer <key>`
 
 **不要用真人账号的 token 跑自动化**——审计日志会把操作记到那个人头上，且权限是全的。
@@ -135,7 +135,7 @@ POST /api/agent/snapshots {label}          → 拿 snapshotId
 接入完成后跑一遍这三件事，就能确认是通的：
 
 ```bash
-# 1) 认证 + 拿到清单（应看到 18 组、138 条）
+# 1) 认证 + 拿到清单（应看到 18 组、150 条、23 个破坏性操作）
 curl -s "$API/api/agent/manifest?index=1" -H "Authorization: Bearer $KEY"
 
 # 2) 权限感知（换一把只读 Key 再跑，结果应明显变少）

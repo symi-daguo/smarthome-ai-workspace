@@ -36,7 +36,7 @@ interface Fixture {
   alwaysDim: boolean;
   order: number;
   /**
-   * 电气回路归属（2026-10-14 对齐参考站）：决定这盏灯由哪个开关/空开控制。
+   * 电气回路归属（2026-10-14 定稿）：决定这盏灯由哪个开关/空开控制。
    * 空串＝未归组。这是门店报价与施工图的真实需求——
    * 「客厅有 12 盏灯」不能报一个数，得说清「客厅分 3 个回路，每路不超过多少盏」。
    */
@@ -184,9 +184,9 @@ export function LightingStudio(): ReactNode {
   const [sceneId, setSceneId] = useState('');
   const [scenes, setScenes] = useState<SceneRow[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  // —— 电气回路（2026-10-14 对齐参考站「灯具回路连线」）——
+  // —— 电气回路（2026-10-14 定稿「灯具回路连线」）——
   const [circuits, setCircuits] = useState<Circuit[]>([]);
-  /** 正在往当前回路里连续加灯（参考站的交互：连续选择灯具后确认） */
+  /** 正在往当前回路里连续加灯（连续选择灯具后确认） */
   const [circuitPick, setCircuitPick] = useState(false);
 
   const stageRef = useRef<HTMLDivElement>(null);
@@ -295,7 +295,7 @@ export function LightingStudio(): ReactNode {
   const [circuitPickIds, setCircuitPickIds] = useState<string[]>([]);
   const selectedFixtureIds = circuitPickIds;
 
-  /** 回路编辑模式下点画布上的灯 = 连续加灯（参考站的交互：连续选择灯具后确认） */
+  /** 回路编辑模式下点画布上的灯 = 连续加灯（连续选择灯具后确认） */
   const pickForCircuit = (id: string): void => {
     if (!circuitPick) return;
     setCircuitPickIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -753,8 +753,8 @@ export function LightingStudio(): ReactNode {
 
               {/* 电气回路：一条回路 = 一组由同一开关控制的灯具。
                   这是报价与施工图的真实需求——「客厅 12 盏灯」不能报一个数，
-                  得说清分几个回路、每路多少盏。参考站在此基础上还画回路连线，
-                  我方先保证数据正确可导出，连线可视化留待后续（见 audit §6.4）。 */}
+                  得说清分几个回路、每路多少盏。此处还画回路连线，
+                  先保证数据正确可导出，连线可视化留待后续（见 audit §6.4）。 */}
               <Card
                 size="small"
                 style={{

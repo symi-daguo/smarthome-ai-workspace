@@ -3,13 +3,13 @@ import { z } from 'zod';
 /**
  * 接单「边聊边记」结构化采集（2026-10-13 补齐）
  *
- * 背景：参考站接待表单是逐项手工采集的大表单，其中「客户想体验哪些场景」10 个开关、
+ * 背景：接待表单是逐项手工采集的大表单，其中「客户想体验哪些场景」10 个开关、
  * 「系统范围」9 类系统 × (是否需要 / 应用区域 / 具体配置) 三态、预算上下限与包含范围
- * 是下游「智能方案」与「智能报价」能拿到结构化输入的前提。此前我方只做了 8 个自由文本字段，
+ * 是下游「智能方案」与「智能报价」能拿到结构化输入的前提。此前只做了 8 个自由文本字段，
  * 这部分全部缺失，导致方案页与报价页只能靠一段 needs 自由文本兜底。
  */
 
-/** 装修阶段：与参考站 6 项下拉一一对应 */
+/** 装修阶段：6 项下拉 */
 export const RENO_STAGES = ['undecided', 'designing', 'waterBefore', 'waterDuring', 'roughDone', 'living'] as const;
 export type RenoStage = (typeof RENO_STAGES)[number];
 
@@ -22,7 +22,7 @@ export const RENO_STAGE_LABELS: Record<RenoStage, string> = {
   living: '已经入住',
 };
 
-/** 客户想体验的场景：参考站 10 个 */
+/** 客户想体验的场景：10 个 */
 export const SCENE_KEYS = [
   'party', 'movie', 'home', 'away', 'sleep',
   'nightUp', 'dinner', 'read', 'work', 'morning',
@@ -42,7 +42,7 @@ export const SCENE_LABELS: Record<SceneKey, string> = {
   morning: '晨起模式',
 };
 
-/** 系统范围：参考站 9 类系统 */
+/** 系统范围：9 类系统 */
 export const SYSTEM_KEYS = [
   'lighting', 'switch', 'curtain', 'wifi', 'automation',
   'security', 'hvac', 'voice', 'media',

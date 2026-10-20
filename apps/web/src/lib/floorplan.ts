@@ -1,20 +1,20 @@
 /**
- * 户型图上传规则（对齐参考站 `app.js:557-713`）。
+ * 户型图上传规则。
  *
  * 为什么单独抽成纯函数：上限、去重、体积、楼层名四条规则要同时作用于
  * 「选文件」和「提交」两处，散在组件里迟早只改一处；而且这些规则**每个都要
  * 单独报错给用户看**，混在一个 if 里会变成「添加失败」这种没法排查的话。
  *
- * 与参考站一致：户型图**不压缩**（压缩会毁掉墙线与尺寸标注），
+ * 户型图**不压缩**（压缩会毁掉墙线与尺寸标注），
  * 超限直接拒并说明怎么处理，不偷偷降质。
  */
 
-/** 上限 3 张（参考站 PLAN_FLOORPLAN_MAX_FILES） */
+/** 上限 3 张 */
 export const FLOORPLAN_MAX = 3;
-/** 单文件 20MB / 总体积 35MB（参考站同口径） */
+/** 单文件 20MB / 总体积 35MB */
 export const FILE_MAX = 20 * 1024 * 1024;
 export const TOTAL_MAX = 35 * 1024 * 1024;
-/** 默认可选楼层，越界回退「第N层」（参考站 app:623-624） */
+/** 默认可选楼层，越界回退「第N层」 */
 export const FLOOR_NAMES = ['一层', '二层', '三层', '四层', '五层', '六层', '七层', '八层'];
 
 export interface FloorplanSlot {
@@ -29,7 +29,7 @@ export function defaultFloor(index: number): string {
   return FLOOR_NAMES[index] ?? `第${index + 1}层`;
 }
 
-/** 文件唯一键：参考站用 name|size|lastModified|type 去重，这里只保留提交给服务端需要的部分 */
+/** 文件唯一键：用 name|size|lastModified|type 去重，这里只保留提交给服务端需要的部分 */
 function fileKey(f: { name: string; size: number; lastModified?: number; type?: string }): string {
   return `${f.name}|${f.size}|${f.lastModified ?? 0}|${f.type ?? ''}`;
 }

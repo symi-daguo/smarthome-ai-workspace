@@ -56,7 +56,7 @@ interface LedgerEntry {
 
 /**
  * 套餐标签：取值必须与 prisma/schema.prisma 的 Plan 枚举一致（BASIC / STANDARD / ENTERPRISE）。
- * 之前这里比的是 'lifetime'，而枚举里从来没有这个值（且大小写也不匹配），导致「永久会员」标签恒不显示。
+ * 之前这里比的是 'lifetime'，而枚举里从来没有这个值（且大小写也不匹配），导致旧套餐标签恒不显示。
  * 将来真要加 LIFETIME 套餐，在这里补一行即可，不要在前端另造取值。
  */
 const PLAN_META: Record<string, { label: string; color: string }> = {

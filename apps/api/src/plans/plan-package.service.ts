@@ -8,7 +8,7 @@ import { MediaService } from '../media/media.service.js';
 import { PlansService } from './plans.service.js';
 
 /**
- * 交付三件套打包（参考站 `app.js:3453` / `app.js:3791` `POST /package`）。
+ * 交付三件套打包（`POST /package`）。
  *
  * 为什么要搬到服务端：**浏览器 blob 下载的文件名由宿主决定**，
  * 实测一律落成 `.com.minimax.agent.cn.XXXX`，客户拿到的是一串随机名，
@@ -21,7 +21,7 @@ import { PlansService } from './plans.service.js';
  * - 图片包由**服务端从 media 取**：原图都在 uploads 卷里，再让前端传一遍纯属浪费。
  * - 打包完成后给的是**签名直链**：不落 token 到数据库，stateless。
  *
- * 两个必须有的闸门（对应参考站的校对门与链接失效）：
+ * 两个必须有的闸门（校对门与链接失效）：
  * 1. 打包前必须已逐页校对，否则 409 —— 免校对直接发给客户是最贵的错
  * 2. 下载时版本对不上就 410 —— 客户手里的旧链接不能悄悄指向新版本，那等于篡改已发出的交付物
  */

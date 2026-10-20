@@ -999,7 +999,7 @@ async function main(): Promise<void> {
   const orderId = orderCreate.body.id;
 
   // ---------- 接单「边聊边记」结构化采集（2026-10-13 补齐） ----------
-  // 回归背景：此前只有 8 个自由文本字段，参考站表单里的体验场景、系统范围三态矩阵、
+  // 回归背景：此前只有 8 个自由文本字段，体验场景、系统范围三态矩阵、
   // 预算上下限、装修阶段下拉、生活需求细分全部缺失，而 smoke 一条断言都没写，
   // 所以 222/222 全绿也照样放过了。这些断言就是为了让缺口再次消失时必失败。
   const orderFull = await request<{
@@ -1910,7 +1910,7 @@ async function main(): Promise<void> {
       style: 'A',
       edition: 'standard',
       pageCount: 9,
-      pages: [{ type: 'scene', heading: '待校对标题', subtitle: '', body: '正文', bullets: ['要点'], narration: '' }],
+      pages: [{ type: 'scene', heading: '待核标题', subtitle: '', body: '正文', bullets: ['要点'], narration: '' }],
       versionNo: 1,
     },
   });
@@ -2038,7 +2038,7 @@ async function main(): Promise<void> {
     pkgRes.status === 201 && typeof pkgJson?.token === 'string' && typeof pkgJson?.fileName === 'string',
   );
   check(
-    '交付包含 PPTX 与完整讲稿两项（参考站的三件套）',
+    '交付包含 PPTX 与完整讲稿两项',
     (pkgJson?.contents ?? []).some((c) => c.endsWith('.pptx')) && (pkgJson?.contents ?? []).some((c) => c.endsWith('.md')),
   );
   if (pkgJson?.token) {
@@ -2165,7 +2165,7 @@ async function main(): Promise<void> {
     const tooMany = await request(base, `/api/plans/${vplan.id}/videos`, {
       ...authA, method: 'PATCH', body: JSON.stringify({ videoAssetIds: [notVideo.id, notVideo.id, notVideo.id] }),
     });
-    check('超过 2 条被拒（400，与参考站同上限）', tooMany.status === 400);
+    check('超过 2 条被拒（400）', tooMany.status === 400);
 
     // 合法绑定 + 公开流可取
     const vid = await prisma.mediaAsset.create({
@@ -2192,7 +2192,7 @@ async function main(): Promise<void> {
   }
 
   // ---------- 提交幂等（批次 10）：抢占语义 + 失败可重试 ----------
-  // 我方此前只在方案/生图/生视频三处有幂等，产品 AI 批量、灯光问诊、接单接待、
+  // 此前只在方案/生图/生视频三处有幂等，产品 AI 批量、灯光问诊、接单接待、
   // 跟进建议这几处没有 —— 用户弱网重试会重复扣额度。
   {
     const idem = app.get(IdempotencyService);
@@ -2242,9 +2242,9 @@ async function main(): Promise<void> {
   }
 
   // ---------- 交付前预检闸门（批次 6 的 preflight 部分） ----------
-  // 判定规则在服务端、前端只读结论（与参考站同边界）。
+  // 判定规则在服务端、前端只读结论。
   // 核心风险是**误报**：把「无需确认」「不再需要核实」这类结论判成待办，
-  // 会让门店反复改明明没问题的页面。参考站在这里就漏了「不再」。
+  // 会让门店反复改明明没问题的页面。常见写法在这里就漏了「不再」。
   {
     const preflightSeed = await prisma.planProject.create({
       data: {
@@ -2464,7 +2464,7 @@ async function main(): Promise<void> {
   check('幂等键在库中唯一（重放没有产生第二条产物）', stillOne === 1);
 
   // ---------- 生成调用的有限重试（0.2.11）----------
-  // 参考站户型图渲染模块用「重试上限 6 次」表达同一量级的思路：
+  // 渲染类长耗时任务用「重试上限 6 次」表达同一量级的思路：
   // 生图链路长、失败率高，不该一次抖动就让用户白等白扣。
   {
     const retryable = (e: unknown): boolean => defaultIsRetryable(e);
@@ -2900,7 +2900,7 @@ async function main(): Promise<void> {
     check('租户管理员模板含成员管理权限（否则没人能建账号）', (adminTpl?.permissions ?? []).includes('tenant:member:manage'));
 
     // 角色模板层：销售顾问这条业务线必须能走完，财务不必。
-    // 依据：参考站首页把「生方案」与「生图」「生视频」并列为一级按钮（hc-tool），
+    // 依据：首页把「生方案」与「生图」「生视频」并列为一级按钮，
     // 定位语「从内容获客到方案成交，全流程 AI 提效」—— 出方案是销售岗每天要用的动作。
     // 少了 content:read/generate，销售这条线就断在「能报价，却做不出方案给客户看」。
     const salesTpl = tpl.body.find((t) => t.key === 'sales');

@@ -1,8 +1,8 @@
 /**
  * 问题上下文收集器
  *
- * 对标参考站 fault-report.js 的上下文机制（featureFromElement / rememberAction /
- * rememberRequest / appVersion / context）：用户报错时自动附上「在哪个功能、
+ * 上下文机制（功能定位 / 操作记录 / 请求记录 / 版本号）：
+ * 用户报错时自动附上「在哪个功能、
  * 刚做了什么、最近哪个请求失败、什么版本」，排查效率数量级提升——
  * 用户不该负责复述操作路径。
  *

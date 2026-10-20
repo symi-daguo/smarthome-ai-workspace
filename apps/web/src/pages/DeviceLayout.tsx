@@ -152,7 +152,7 @@ export function DeviceLayout(): ReactNode {
   const [sigThreshold, setSigThreshold] = useState(0.18);
   const [showGrid, setShowGrid] = useState(false);
   const [showRings, setShowRings] = useState(false);
-  /** 热力叠加透明度（对齐参考站「热力透明度」滑块）；值越低越能看清底图 */
+  /** 热力叠加透明度；值越低越能看清底图 */
   const [heatAlpha, setHeatAlpha] = useState(0.62);
   const [guideOpen, setGuideOpen] = useState(false);
   const [powers, setPowers] = useState<Record<string, number>>({});
@@ -298,8 +298,7 @@ export function DeviceLayout(): ReactNode {
   }, [mode, imgSrc]);
 
   /**
-   * 热力图工作台状态持久化（参考站信号热力图模块有「已恢复上次保存的墙体、设备和参数」，
-   * 我方此前缺，刷新页面 = 几分钟的画墙与布点全部白做）。
+   * 热力图工作台状态持久化（此前缺，刷新页面 = 几分钟的画墙与布点全部白做）。
    *
    * 只存**编辑中的草稿**（墙、设备坐标与功率、尺寸、衰减参数），
    * 不存底图二进制 —— 底图来自用户上传的文件，刷新后重新选即可，
@@ -530,7 +529,7 @@ export function DeviceLayout(): ReactNode {
   /** 导出带墙体与摘要的热力图 PNG */
   const exportWifiPng = useCallback(async () => {
     if (!imgSrc) return;
-    // 保存/导出前的三道校验（参考站信号热力图模块同款话术）：
+    // 保存/导出前的三道校验：
     // 画墙与放网关都是分钟级工作，条件不满足还导出会得到一张空图，
     // 用户只会以为是工具坏了，不会想到是前置条件没满足。
     if (!wifiSources.length) {
@@ -771,7 +770,7 @@ export function DeviceLayout(): ReactNode {
                 <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>覆盖率统计</Text>
                 {stats ? (
                   <div style={{ fontSize: 12, lineHeight: 1.8 }}>
-                    {/* 三档分布（对齐参考站）：只看总覆盖率看不出布点是否均匀 */}
+                    {/* 三档分布：只看总覆盖率看不出布点是否均匀 */}
                     <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
                       {([
                         ['信号好', stats.tierGood, '#52c41a'],
@@ -855,8 +854,8 @@ export function DeviceLayout(): ReactNode {
         </div>
       </div>
 
-      {/* WiFi 热力图 5 步使用引导（对齐参考站）。我方第 2 步多一个「自动识别 + 人工补画」的
-          往返动作——参考站只说「确认墙体」，但实际识别会漏墙，必须允许补画，否则用户会
+      {/* WiFi 热力图 5 步使用引导。第 2 步多一个「自动识别 + 人工补画」的
+          往返动作——识别会漏墙，必须允许补画，否则用户会
           拿着错的墙体去算覆盖率。引导里如实写出来，不粉饰成一步到位。 */}
       <Modal title="WiFi 覆盖模拟 · 首次使用流程" open={guideOpen} onCancel={() => setGuideOpen(false)} footer={<Button type="primary" onClick={() => setGuideOpen(false)}>知道了</Button>}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>

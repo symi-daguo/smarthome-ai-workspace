@@ -1,8 +1,8 @@
 /**
  * 品牌与开源合规闸门。
  *
- * 背景：项目最早是照着一款同类商业产品做功能对标（clean-room：只学功能与交互模式，
- * 不取对方的代码 / 素材 / 文案 / 商标）。公开发布前必须能**证明**这件事，
+ * 背景：项目最早参考过一款商业产品的功能形态（clean-room：只学功能与交互模式，
+ * 不取第三方的代码 / 素材 / 文案 / 商标）。公开发布前必须能**证明**这件事，
  * 而且要能持续证明 —— 所以把「有没有漏进第三方品牌痕迹」做成机器闸门，
  * 而不是靠人记得检查。
  *
@@ -14,7 +14,7 @@
  *      出现新域名必须人工确认后加白名单。新域名 = 一次显式审查，不是障碍。
  *
  * **只扫 git 已跟踪的文件**（`git ls-files`），不扫工作区 ——
- * 工作区里可能留着已被 .gitignore 排除的本地材料（逆向过程记录），
+ * 工作区里可能留着已被 .gitignore 排除的本地材料（过程记录），
  * 扫工作区会误判；干净克隆（= CI 与别人克隆下来）才是交付物。
  *
  * 用法：node scripts/check-brand.mjs
@@ -52,11 +52,12 @@ const ALLOWED_DOMAINS = new Set([
 ]);
 
 /**
- * 允许出现「公司名模式」的文件。
- * 只有这两个：闸门自身要写出这些模式，合规文档要解释这些模式。
- * 除它们之外，任何文件出现公司名模式都算问题。
+ * 允许出现这些模式字面量的文件。
+ * 只有闸门自身：模式必须写在这里才能生效。
+ * 除它之外，任何文件出现商标标记 / 公司名 / 本机路径 / 过程自述措辞都算问题 ——
+ * 连合规文档本身也不例外，它要解释这些概念时用别的说法。
  */
-const PATTERN_EXEMPT = new Set(['scripts/check-brand.mjs', 'COMPLIANCE.md']);
+const PATTERN_EXEMPT = new Set(['scripts/check-brand.mjs']);
 
 // 注册商标符号：必须紧跟在名字后面才算「商标标记」，
 // 单独出现在正文里（例如合规文档里解释这个符号）不算。
@@ -69,6 +70,12 @@ const COMPANY_EN = /\b(?:Inc|Corp|Ltd)\.\s/g;
 // 而 AGENTS.md / CHANGELOG 里为了说明「别这么写」而出现的 `file:///Volumes/...`
 // 与 `file:///Volumes/<本机用户名>/...` 是反例，不该被当成坏链接。
 const LOCAL_FILE_URL = /file:\/\/\/(?:Volumes|Users)\/[A-Za-z0-9._-]+\//g;
+
+// 公开仓库里不该出现的「过程自述」与「参照措辞」。
+// 公开文档要讲清楚**产品是什么、怎么用**，不是讲我们怎么来的 ——
+// 那种叙述既暴露内部分析过程，也让读者误以为代码是搬来的。
+// 模式里的英文缩写用词边界：README 里含该缩写但不是独立单词，不会误判。
+const PROCESS_NARRATION = /\bREA\b|逆向|反编译|参考站|对标站|对标(?!题)|目标系统|目标站|原系统|同类产品/g;
 
 let problems = 0;
 const report = (file, msg) => {
@@ -125,6 +132,11 @@ for (const rel of files) {
 
     const local = text.match(LOCAL_FILE_URL);
     if (local) report(rel, `出现本机绝对路径链接「${local[0]}」（GitHub 上点不开，还公开本机目录结构）`);
+
+    const narration = text.match(PROCESS_NARRATION);
+    if (narration) {
+      report(rel, `出现过程自述 / 参照措辞「${narration[0]}」（公开文档只讲产品本身，不讲实现过程）`);
+    }
   }
 
   for (const m of text.matchAll(/https?:\/\/([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g)) {

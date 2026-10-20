@@ -75,8 +75,8 @@ export class LightingService {
  * `GET /api/lighting/diagnose/modes` 拿这份定义来渲染，问答时才不会出现
  * "界面显示的选项和后端理解的选项对不上"。
  *
- * 文案照抄参考站 `lighting-master.js` 的 MODES（2026-10-16 REA 复核）：
- * 门店的提问路径本来就是这样，改了会让用户认不出这是不是他们熟悉的那个工具。
+ * 文案按门店真实动线定稿（2026-10-16）：
+ * 提问路径沿用门店口口相传的说法，改了会让用户认不出这是不是他们熟悉的那个工具。
  */
 export const DIAGNOSIS_MODES = [
   {

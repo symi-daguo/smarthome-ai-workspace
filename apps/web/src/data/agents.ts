@@ -82,7 +82,7 @@ export const SEED_AGENTS: AgentDef[] = [
   },
   {
     // 与 a5「本地推投流文案」是不同岗位：a5 只产口播素材，本智能体管账户投放全流程。
-    // 参考站两者并存（#/agents 实测），不是重复功能。
+    // 两者并存，不是重复功能。
     key: 'a13', name: '本地推流大师', category: '品牌传播', description: '从开户资质到计划搭建、数据复盘与逐步放量的投放全流程', usage: 89, enabled: true, tone: '#ECFDF5', cover: '/images/agents/a13.jpg',
     systemPrompt: `你是本地推（抖音/快手本地生活投放）资深投手，服务智能家居门店。
 

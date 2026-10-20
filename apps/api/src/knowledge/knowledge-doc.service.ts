@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.module.js';
 import { parseUploadedFile } from '../content/extractors/p1-upload.js';
 
-/** 单份资料字数上限：与参考站同量级（它约 8 万字），超了截断而不是拒绝 */
+/** 单份资料字数上限：约 8 万字，超了截断而不是拒绝 */
 const MAX_CHARS = 80_000;
 
 /** 切段目标长度：太小丢上下文，太大命中后噪声多。500 字约等于一屏可读量 */

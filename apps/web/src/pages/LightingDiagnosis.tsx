@@ -31,7 +31,7 @@ const LEVEL_META: Record<Diagnosis['issues'][number]['level'], { color: string; 
  * 智能灯光问诊（G-16）
  *
  * 任务与选项来自 `GET /api/lighting/diagnose/modes`——定义只在后端存一份，
- * 前端只负责渲染，不自己抄一份选项（抄了就迟早对不上）。
+ * 前端只负责渲染，不自己另存一份选项（另存就迟早对不上）。
  *
  * 设计依据：replica/audit-2026-10-13.md §7.26（记录了对照实现与任务/选项的来源）
  */

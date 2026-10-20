@@ -51,7 +51,7 @@ export class PlansController {
   ) {}
 
   /**
-   * 交付前预检（参考站 preflight-content）：逐页报出内部待办语句。
+   * 交付前预检：逐页报出内部待办语句。
    * 只读、不改数据、不扣额度 —— 它是给人和 Agent 的「交付前体检」，
    * 真正的拦截门在 review（未校对不许打包）与 plan-package 服务里。
    */
@@ -220,7 +220,7 @@ export class PlansController {
   }
 
   /**
-   * 交付三件套打包（参考站 `POST /package`）。
+   * 交付三件套打包（`POST /package`）。
    * 只收前端生成好的 PPTX 与讲稿：图片包由服务端从 media 取，不必再传一遍原图。
    */
   @RequirePermissions('content:generate')

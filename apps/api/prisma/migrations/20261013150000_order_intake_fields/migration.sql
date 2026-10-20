@@ -1,5 +1,5 @@
 -- 接单「边聊边记」结构化采集字段补齐（2026-10-13）
--- 补齐参考站接待表单中我方缺失的部分：装修阶段、房屋补充、生活需求细分、
+-- 补齐接待表单中缺失的部分：装修阶段、房屋补充、生活需求细分、
 -- 体验场景、系统范围矩阵、预算上下限与包含范围。
 ALTER TABLE "OrderRequest"
   ADD COLUMN "renoStage" TEXT NOT NULL DEFAULT 'undecided',

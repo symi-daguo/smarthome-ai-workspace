@@ -2,15 +2,15 @@ import { INTAKE_SCENE_OPTIONS } from '../data/imageScenes.js';
 /**
  * 接单「边聊边记」结构化采集的枚举定义（2026-10-13）
  *
- * ⚠️ 与后端 `apps/api/src/orders/orders.schemas.ts` 的 RENO_STAGES / SCENE_KEYS /
+ * 与后端 `apps/api/src/orders/orders.schemas.ts` 的 RENO_STAGES / SCENE_KEYS /
  * SYSTEM_KEYS **必须逐项对齐**：后端是 zod 枚举 + 白名单过滤，写库前会拒绝字典外的值。
  * 改一处必须同时改另一处，并由 smoke 的「字典外 key 被拒」断言守住。
  *
- * 为什么要有这些：参考站接待表单里这 10 个场景与 9 类系统的三态是「智能方案」与
- * 「智能报价」能拿到结构化输入的前提。此前我方只有自由文本，方案与报价只能猜。
+ * 为什么要有这些：接待表单里这 10 个场景与 9 类系统的三态是「智能方案」与
+ * 「智能报价」能拿到结构化输入的前提。此前只有自由文本，方案与报价只能猜。
  */
 
-/** 装修阶段：6 项，对齐参考站下拉 */
+/** 装修阶段：6 项 */
 export const RENO_STAGES = [
   { value: 'undecided', label: '尚未开始' },
   { value: 'designing', label: '设计中' },

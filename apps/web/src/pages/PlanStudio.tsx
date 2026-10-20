@@ -41,7 +41,7 @@ import { PlanSlide, PAGE_BULLET_LIMIT } from '../components/PlanSlide';
 
 const { Text, Title } = Typography;
 
-/** 「补充需求与服务资料」9 项，顺序与参考站 P2_SALES_FIELDS 一致 */
+/** 「补充需求与服务资料」9 项 */
 const SALES_FIELDS: { name: string; label: string; placeholder: string; extra?: string }[] = [
   { name: 'priorityNeeds', label: '最看重的需求（按重要度排序）', placeholder: '例如：先把起夜照明做掉，客厅会客后面再说；只填客户明确提过的' },
   { name: 'excludedItems', label: '明确不做的项目', placeholder: '例如：暂不做窗帘联动、不新增摄像头' },
@@ -279,7 +279,7 @@ const [editing, setEditing] = useState<{
   const [exporting, setExporting] = useState(false);
   /** 打包三件套：要先跑一遍 canvas 预裁剪 + 点位合成，比单纯写 PPTX 慢，别共用一个 loading */
   const [packaging, setPackaging] = useState(false);
-  /** 审稿页「完整文案」折叠区（参考站 A3：整篇视图与逐页视图并存） */
+  /** 审稿页「完整文案」折叠区（整篇视图与逐页视图并存） */
   const [deckTextOpen, setDeckTextOpen] = useState(false);
   /** 交付前预检结果（服务端判定，只读不扣额度）。null=还没查 */
   const [preflight, setPreflight] = useState<{
@@ -502,7 +502,7 @@ const [editing, setEditing] = useState<{
           highlights: values.highlights ?? '',
           keySpaces: values.keySpaces ?? '',
           needs: values.needs ?? '',
-          // 户型图：主图 + 额外图 + 楼层（对齐参考站第 1 步素材区）
+          // 户型图：主图 + 额外图 + 楼层
           floorplanAssetId: fpSlots[0]?.assetId || null,
           extraFloorplanAssetIds: fpSlots.slice(1).map((x) => x.assetId).filter(Boolean),
           floorplanFloors: fpSlots.map((x) => x.floor),
@@ -691,8 +691,8 @@ const [editing, setEditing] = useState<{
   /**
    * 交付前的一道门：没校对过就别把方案发出去。
    *
-   * 参考站把这条门放在「生成下载文件」与「分享链接」两个动作上
-   * （逆向原文见 audit §7.21）。这里同样只拦**交付动作**，
+   * 这条门放在「生成下载文件」与「分享链接」两个动作上
+   * （原始记录见内部档案）。这里同样只拦**交付动作**，
    * 不拦已发出链接的访问——那种做法等于让老客户手里的链接突然失效。
    */
   const requireReview = (action: () => void): void => {
@@ -832,7 +832,7 @@ const [editing, setEditing] = useState<{
     renderedFloorplanUrl: plan?.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
     layoutPoints: plan?.layoutPoints ?? null,
   };
-  // 页数档位：默认基数 / 12 页（参考站同档位），自定义另开输入
+  // 页数档位：默认基数 / 12 页，自定义另开输入
   const pageChoices = useMemo(() => [CORE_MODULES, CORE_MODULES + 3], []);
   /**
    * 素材计数：户型图张数 + 效果图折算页数（按空间分组，不是图片张数）。
@@ -1061,7 +1061,7 @@ const [editing, setEditing] = useState<{
               <Input.TextArea rows={3} placeholder="请说明家里有几口人、装修到哪一步、预算范围、想重点做的空间与最想实现的生活场景。" />
             </Form.Item>
 
-            {/* 户型图素材（对齐参考站第 1 步 p2Floorplan 区）：
+            {/* 户型图素材：
                 最多 3 张、可分次追加、重复自动忽略、单文件 20MB / 总量 35MB、每张标楼层。
                 第 1 张为主图，第 3 步的布点与精装修生成都用主图。 */}
             <div style={{ marginTop: 18 }}>
@@ -1108,7 +1108,7 @@ const [editing, setEditing] = useState<{
               ) : null}
             </div>
 
-            {/* 装修效果图（对齐参考站 p2RenderImages 区）：
+            {/* 装修效果图：
                 上限 5 张；每张要填实际空间并确认；同一空间只能有一张代表图
                 （主视觉唯一来源）；用途区分「生成场景对比」与「按当前状态原样呈现」。 */}
             <div style={{ marginTop: 18 }}>
@@ -1196,7 +1196,7 @@ const [editing, setEditing] = useState<{
               ) : null}
             </div>
 
-            {/* 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）。
+            {/* 「补充需求与服务资料」9 项。
                 默认折叠：九项全不填是常态，铺开占掉半屏反而挤掉真正要填的资料。 */}
             <details style={{ marginTop: 4 }}>
               <summary style={{ cursor: 'pointer', fontSize: 13, color: token.colorTextSecondary, userSelect: 'none' }}>
@@ -1433,7 +1433,7 @@ const [editing, setEditing] = useState<{
       {/* 步骤 2：逐页审稿（幻灯片缩略图 + 文字卡片） */}
       {step === 1 && plan ? (
         <>
-          {/* 页数摘要状态条（参考站 A2 / app:3380-3384）：
+          {/* 页数摘要状态条：
               审稿页最该看清的就是「这份方案够不够页、会不会交付时缩水」。
               第 1 步的核算提示管的是生成前，这里管的是交付前，两处都必要。 */}
           <div
@@ -1462,8 +1462,8 @@ const [editing, setEditing] = useState<{
               上限 {PAGE_COUNT_MAX} 页
             </Text>
             <div style={{ flex: 1 }} />
-            {/* 完整文案与逐页视图并存（参考站 A3）：门店审稿时需要通读一遍看前后是否连贯，
-                逐页卡片看不出这一点。只读而非可编辑 —— 我方按单页 PATCH 且每次 bump 版本号，
+            {/* 完整文案与逐页视图并存：门店审稿时需要通读一遍看前后是否连贯，
+                逐页卡片看不出这一点。只读而非可编辑 —— 按单页 PATCH 且每次 bump 版本号，
                 整篇保存会绕过这道版本控制，两份内容很容易互相覆盖。 */}
             <Button size="small" icon={<FileTextOutlined />} onClick={() => setDeckTextOpen((v) => !v)}>
               {deckTextOpen ? '收起完整文案' : '查看完整文案'}
@@ -1626,7 +1626,7 @@ const [editing, setEditing] = useState<{
                 <Tag color="warning" icon={<ExclamationCircleOutlined />}>本版尚未校对，导出与分享时会提示确认</Tag>
               )}
             </div>
-            {/* 交付前预检（参考站 preflight-content）：逐页点名「还有内部语句」。
+            {/* 交付前预检：逐页点名「还有内部语句」。
                 不静默净化 —— 静默处理会让人以为系统吃了内容；也不硬拦 ——
                 门店有权决定改还是删，位置必须先报出来。 */}
             <div style={{ marginTop: 16, textAlign: 'left' }}>

@@ -73,7 +73,7 @@ export function PlanShareView(): ReactNode {
   const videoCount = Math.min(plan.videoAssetIds?.length ?? 0, 2);
   const videoTitles = plan.videoTitles ?? [];
 
-  // 有户型图素材时补一页「户型与设备点位」：参考站同样把户型图算成独立页。
+  // 有户型图素材时补一页「户型与设备点位」：户型图算成独立页。
   // 点位清单续页也要补，否则分享页比交付 PPT 少页 —— 客户在手机上看到的
   // 和收到手的对不上，会以为漏发内容。
   // 页序走 planPages.deliverPages：PPTX / 讲稿 / 分享页共用同一份，

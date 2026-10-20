@@ -37,7 +37,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (payload.tv !== user.tokenVersion) throw new UnauthorizedException('TOKEN_REVOKED');
 
     // 带 ak 说明是机器凭证：查一次吊销状态。没吊销就按普通用户走，RBAC 照常生效
-    // 带 ak 说明是机器凭证。⚠️ 这里**不能**试图从 validate 的第二个参数取请求 ——
+    // 带 ak 说明是机器凭证。**不能**试图从 validate 的第二个参数取请求 ——
     // passport-jwt 传的是 done 回调而不是 ExecutionContext，拿它当 ctx 用会直接抛错。
     // 需要跨租户校验时，由 TenantGuard 拿 request.user.apiKeyTenantId 比对。
     if (payload.ak && !(await this.agent.verifyApiKey(payload.ak))) {

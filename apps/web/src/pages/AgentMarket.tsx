@@ -27,7 +27,7 @@ interface CreateForm {
 /**
  * 收藏（「常用」）的存储键按账号分。
  * 多账号共用浏览器很常见，不分键就会出现「我在这台机器上把别人的常用改了」。
- * 与参考站同款语义：只存本机、换设备不同步，所以界面上要如实说明。
+ * 语义：只存本机、换设备不同步，所以界面上要如实说明。
  */
 const savedKey = (accountId: string): string => `agent_saved_v1:${accountId}`;
 

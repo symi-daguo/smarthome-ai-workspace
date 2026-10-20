@@ -1,52 +1,50 @@
-# 增强型智能家居 AI SaaS 平台规划文档
+# 智能家居 AI 工作台 —— 架构与实现说明
 
-- 版本：0.1.0（规划稿）
-- 日期：2026-09-24
-- 状态：已确认，进入实施（技术决策见第 11 章，开发计划见第 12 章）
-- 适用：基于目标系统（已线上运行）采集调研后的增强型重构规划
+- 适用版本：1.0.0
+- 更新日期：2026-10-20
+- 定位：面向智能家居行业的多租户 AI 工作台，MIT 开源，容器化与桌面端双形态交付
+- 配套文档：[README.md](./README.md)（快速开始）、[桌面打包方案.md](./桌面打包方案.md)（桌面端）、
+  [运维手册.md](./运维手册.md)、[Agent接入指南.md](./Agent接入指南.md)、
+  [CHANGELOG.md](./CHANGELOG.md)、[COMPLIANCE.md](./COMPLIANCE.md)
 
 ---
 
 ## 1. 项目概述
 
-### 1.1 背景
+### 1.1 背景与定位
 
-目标系统是一套面向智能家居行业的 AI 内容生成 SaaS：覆盖智能方案生成、平面图渲染、灯光场景、生图、生视频、文案、知识库、接单与报价等垂直场景。本次通过浏览器完整采集了其功能模块、交互流程、UI 设计规范、API 地图及计费体系，并完成了开源生态与 2026 年技术栈的联网调研。
+智能家居行业里，方案设计、平面图渲染、灯光场景、生图、生视频、文案、知识库、
+接单与报价是同一条业务线上的连续动作，但行业里的工具往往把每一段拆成独立系统：
+设计在一个工具里、出图在另一个工具里、报价在第三个工具里，门店每换一段就要重新
+传一遍资料。
+
+本项目把它们收进同一个多租户工作台：数据一次录入，贯穿方案、渲染、报价与交付；
+AI 能力（生图、生视频、方案、文案、问诊）统一由部署者自己配置模型接口，
+不内置任何厂商额度，也不设付费墙。
 
 ### 1.2 目标
 
-1. 能力对齐：完整覆盖目标系统已验证的全部功能，体验不低于原系统。
-2. 架构增强：多租户隔离、RBAC 权限、真正的 agent 工具调用（MCP 协议）、品牌知识库（双层 RAG）、全球大模型接入层。
-3. 商用合规：规避开源组件的多租户 SaaS 许可证风险。
-4. 体验升级：React 19 + Ant Design 6 组件化重构、响应式、暗色模式、i18n（默认中文，预留英文）。
-5. 技术锁定：采用 2026 年最新稳定版技术栈，遵循"不重复造轮子"原则。
+1. **业务闭环**：接单 → 需求确认 → 方案 → 报价 → 成单，主线在同一套数据模型内完成。
+2. **多租户与权限**：共享库行级隔离，权限点按 `域:动作` 命名 + 角色绑定，
+   跨租户访问由测试用例守住。
+3. **可自部署**：不依赖任何 SaaS 后端即可跑起来；容器与桌面端两种交付形态，
+   依赖全内置。
+4. **AI 可换**：模型接口由部署者配置（OpenAI 兼容 / MiniMax / ComfyUI 等），
+   换模型不改业务代码。
+5. **不设付费墙**：不设会员分级、不设套餐、不做充值解锁。
+   额度只用于「看得见」与「超产熔断」，耗尽只暂停 AI 调用，不锁任何功能。
 
 ### 1.3 范围界定（YAGNI）
 
-本文档只规划当前需求必需的能力。需求不明确、未来可能用到的功能一律不实现；不为假设的未来需求做抽象。
+只实现当前业务必需的能力。需求不明确、未来可能用到的功能一律不实现；
+不为假设的未来需求做抽象。已被明确排除的方向记录在
+[第 9 章](#9-风险登记与已知边界)。
 
 ---
 
-## 2. 对标能力面（功能对齐依据）
+## 2. 功能范围
 
-> **方法与口径**：本项目的功能面来自对一款同类垂直产品的**黑盒功能实测**（逐页走查、
-> 记录业务语义与交互流程），再按「需求即规格」的方式自行设计实现。
-> 对方的代码、界面素材、成段文案与品牌标识一律不取用（见 [COMPLIANCE.md](./COMPLIANCE.md)）。
-> 本章记录的是**能力清单与我们的设计取舍**，不是实现稿。
-
-### 2.1 对标系统的形态观察（及其反面）
-
-| 观察到的形态 | 我们的做法 |
-|---|---|
-| 原生 JS 模块化 SPA，无组件化 | React 19 + Ant Design 6 组件化，TypeScript 全量类型 |
-| hash 路由，路由表集中在一处 | React Router 6，路由与权限声明同源（见 5.2） |
-| Bearer Token + 浏览器本地存储 | 同样的 Bearer，但 JWT 存服务端、密钥轮换与失效可控 |
-| 幂等靠客户端 `clientRequestId` + 本地哈希去重 | 幂等键**落库**、按租户查，服务端强制去重（弱网重试不重复扣额度） |
-| 所谓「意图路由」实为正则关键词匹配 | 真正的工具调用：Agent 能力清单 + 权限声明 + 破坏性操作二次确认（见第 9 章） |
-| 前端按功能分包、按日发版 | 单仓 monorepo，版本三处一致由 smoke 断言守 |
-| 单体自部署 | 多租户 + RBAC + 审计留痕（见第 5 章） |
-
-### 2.2 功能模块矩阵（我们的实现口径）
+### 2.1 功能模块矩阵
 
 | 模块 | 核心能力 |
 |---|---|
@@ -55,18 +53,19 @@
 | AI 智能体 | 会话、异步任务轮询、自定义智能体管理 |
 | AI 生图 | 同步 / 异步生成、任务历史、提示词反推、局部重绘 |
 | AI 生视频 | 生成、任务轮询、提示词检查与反推、历史 |
-| 智能方案生成 | 全屋智能方案，多套视觉风格库 |
+| 智能方案生成 | 全屋智能方案，9 页骨架 / 9 种页型，风格预设 |
 | 智能百宝箱 | 平面图渲染、灯光场景、WiFi 热力图、AI 画布 |
 | 知识库 | 上传、启用/停用、删除、检索联动 |
 | 我的资料 | 账号资产与分类管理 |
 | 素材库 | UGC 投稿与浏览（开源版不设分成） |
 
-### 2.3 能力域覆盖
+### 2.2 API 分域
 
-本项目的 API 是**按自有业务模型重新设计**的（见第 5 章），端点分域如下：
+API 按自有业务模型设计，端点分域如下（完整表清单见
+[第 5 章](#5-数据模型)）：
 
 - 账号与鉴权：注册 / 登录 / 刷新 / 改密 / 个人资料
-- 智能体：会话、任务轮询、自定义管理、技能包导出
+- 智能体：会话、任务轮询、自定义管理、机器接入能力清单
 - 生图与生视频：生成、任务、提示词、历史、素材
 - 方案：项目、页面、风格、模板、审核、交付包
 - 知识库：文档、检索、外部知识源
@@ -74,63 +73,114 @@
 - 内容运营：文案改写与多平台发布（自建渠道，不代投第三方平台账号）
 - 任务中心：跨页面、跨刷新的统一任务来源
 
-### 2.4 界面结构：沿用行业惯例，视觉语言自有
+### 2.3 界面结构
 
-对标系统的**信息架构**（左侧导航 + 分组 + 历史内嵌 + 居中输入卡 + 右下任务球 + 额度胶囊）
-是这一品类的通用做法，我们沿用这套结构；但**视觉语言完全自有**：
+这一品类的**信息架构**（左侧导航 + 分组 + 历史内嵌 + 居中输入卡 + 右下任务球 +
+额度胶囊）是通用做法，本项目沿用这套结构；但**视觉语言完全自有**：
 
-- 主色靛蓝 `#4F46E5`，渐变 `#4F46E5 → #6D3BEF`（更沉更冷）
+- 主色靛蓝 `#4F46E5`，渐变 `#4F46E5 → #6D3BEF`
 - 点缀色青绿 `#0FB5A5`，两级冷调卡片阴影
 - 正文墨色 `#1C1B2E`，转角 12
-- 全站颜色一律走 AntD 语义 token，不写死浅色值
 
-> 早期版本曾沿用过对标系统的品牌紫与渐变，视觉上难以区分，**已在 0.1.52 全部替换**
-> （见 CHANGELOG「Style（界面风格独立化）」）。当前仓库里不含对方的任何色值。
+全站颜色一律走 AntD 语义 token，不写死浅色值。
 
-### 2.5 计费：不设付费墙，额度只用来「看得见」
+### 2.4 计费口径：不设付费墙
 
-对标系统是**按档位订阅 + 额度付费**的商业模型。我们明确不做：
-
-| 我们的口径 | 说明 |
+| 口径 | 说明 |
 |---|---|
 | 无充值 / 无订阅 / 无套餐 | 不存在「付费解锁」语义 |
 | 额度单价由部署者配置 | 通过环境变量按自己的模型成本设，不预设任何商业定价 |
 | 额度只做可视化与超产熔断 | 额度耗尽只暂停 AI 调用，**不锁**方案、报价、订单、图纸、素材等任何功能 |
 | 角色分级走 RBAC | 与付费无关 |
 
-### 2.6 能力对齐清单（迭代依据）
+### 2.5 角色与权限
 
-按「布局层 / 功能页 / 计费层」三组跟踪，状态随版本更新：
-
-- 布局层：白色侧栏 + 分组标题 + 新建对话按钮 / 历史对话内嵌侧栏 /
-  首页居中输入卡与快捷卡 / 额度胶囊 + 使用指引 / 任务球（红点实时联动）
-- 功能页：智能体市场 / 生图向导 / 生视频（首尾帧 + 参数）/ 方案向导 + 风格卡 /
-  百宝箱工具卡 / 知识库 UI / 我的资料 / 接单向导 / 登录页 / 短视频工作台
-- 计费层：整数 token → **金额制（两位小数）+ 单价表 + 邀请码首充返点**
-
-各条目的交付状态与验收记录见 [CHANGELOG.md](./CHANGELOG.md) 与
-各次提交的说明；完整采集记录属本地过程材料，不随本仓库公开。
-
+权限模型：权限点按 `域:动作` 命名（如 `quote:read`、`platform:billing:manage`）
++ 角色绑定，运行时用 `@casl/ability` 判定，读写分离。
+内置 11 个角色模板覆盖门店真实岗位（超级管理员、租户管理员、销售顾问、设计师、
+施工交付、财务、采购仓管、市场运营、客服售后、运营、只读成员），并支持自定义角色。
+核心表：`tenants / users / roles / permissions / role_permissions / memberships`。
 
 ---
 
-## 3. 核心优势、不足与技术局限性分析
+## 3. 架构设计
 
-### 3.1 核心优势
+### 3.1 总体架构（五层）
 
-1. 垂直场景闭环完整：方案设计 → 渲染出图 → 文案 → 视频 → 发布，全链路覆盖智能家居行业。
-2. 工程细节稳健：客户端幂等提交（`clientRequestId` + SHA-256）、异步任务轮询，弱网与重复点击体验好。
-3. 迭代速度快：按功能分包、按日发版，单点更新不影响全局。
-4. 商业模式成熟：三档会员 + 按量计费双轨，静态授权（永久版）与订阅（年/月）结合。
+```
+接入层      Web（React 19 SPA） / 桌面端（Electron 内嵌 WebView）
+网关层      鉴权（JWT）、租户解析、限流、审计
+业务层      NestJS 12 模块化单体：
+            auth / tenants / rbac / team / billing / content / agents /
+            agent / knowledge / orders / plans / layout / lighting /
+            canvas / media / feedback / admin
+能力层      模型网关（OpenAI 兼容 / MiniMax / ComfyUI）
+数据层      PostgreSQL 18（容器镜像含 pgvector 扩展）
+```
 
-### 3.2 不足与技术局限
+模块化单体（modular monolith）起步，模块边界按未来可拆微服务设计；
+单体内清晰的模块边界是零成本收益，过早拆微服务才是过度设计。
 
-1. 架构不可维护：原生 JS 无组件化，路由集中在单文件，页面级 JS 达 59–93KB，无类型系统，无测试设施。
-2. "AI 智能体"是伪 agent：`intent()` 为正则关键词路由，无工具调用协议、无任务规划、无 MCP 支持，无法访问外部工具。
-3. 无多租户与 RBAC：单租户假设；管理端仅 `/api/admin/points` 点数接口，无角色权限体系。
-4. 知识库浅层：仅上传/开关/删除，无向量化、无检索、无 RAG，知识无法被生成流程利用。
-5. 模型接入写死：无统一模型网关，无法全球多模型路由、降级与成本管控。
-6. 体验局限：固定桌面视口（约 1887px）、无响应式、无暗色模式、无 i18n、任务球仅展示单任务。
+### 3.2 多租户隔离
+
+- 共享数据库、按 `tenant_id` 行级隔离。隔离在应用层强制：
+  `TenantGuard` 解析 JWT 中的 `activeTenantId`，Service 层查询显式带 `tenantId` 条件。
+- 请求链路：网关解析租户 → JWT 注入 tenantId → Service 层逐查询追加 tenantId 条件。
+- 数据库层 RLS 兜底**尚未落地**（`apps/api/prisma/migrations/` 无任何
+  `ROW LEVEL SECURITY` 语句），列为待交付项。
+- 资源隔离：产物文件落在 `uploads/`（桌面端为 `api-uploads`）统一目录，
+  未按租户前缀隔离，列为待交付项。
+- 跨租户访问必须返回 404，由冒烟测试用例守住。
+
+### 3.3 RBAC 权限模型
+
+| 角色 | 范围 | 权限概要 |
+|---|---|---|
+| tenant_admin | 租户 | 成员管理、角色分配、模型配置、租户内全部业务 |
+| designer | 租户 | 方案/渲染/生图/视频等生产功能 |
+| operator | 租户 | 接单、报价、发布、客服等运营功能 |
+| viewer | 租户 | 只读浏览素材与方案 |
+
+角色粒度从「笼统的 manage」拆成读写二元（`域:read` / `域:write`），
+平台级操作另走 `platform:*` 独立权限点。
+
+### 3.4 Agent 接入与工具调用
+
+工具调用闭环：
+
+1. **工具注册**：工具定义入库（name、描述、JSON Schema 入参、所需权限、计费点），
+   形成工具目录。
+2. **协议**：采用 MCP（Model Context Protocol）作为工具标准协议，
+   服务端实现 MCP client，模型侧用 function calling。
+3. **机器接入**：`GET /api/agent/manifest` 自描述端点对外暴露能力清单，
+   接入方按清单声明身份与权限即可调用（见
+   [Agent接入指南.md](./Agent接入指南.md)）。
+4. **执行链路**：用户输入 → LLM 规划 → 工具调用（权限校验 + 计费预扣）→
+   结果回填 → 流式返回，全程审计入 `agent_runs` / `tool_calls`。
+5. **长任务**：采用异步轮询模式（job 表 + SSE 双通道）。
+6. **破坏性操作二次确认**，避免模型误调用直接改数据。
+
+### 3.5 知识库
+
+- 平台层：产品白皮书、风格预设定义、行业话术模板，全租户共享。
+- 租户层：品牌资料、历史优秀方案、客户画像，严格租户隔离。
+- 实现：内置召回走**中文二元组（bigram）关键词匹配** —— 不需要分词器、
+  不需要 embedding API，门店伙伴不用额外配 key 就能用；打分按「覆盖率 + 命中数」，
+  低召回风险由 `limit` 截断兜住。
+- 两条召回通路并存：内置资料库（二元组）与外部引擎（WeKnora / Obsidian，
+  经 REST 实时检索），配置指向外部引擎时走外部召回。
+- 向量检索暂不启用：`pgvector` 扩展在容器镜像里已就位，等资料量到百万字级、
+  检索质量成为瓶颈时再启用，届时不需要换数据库。
+- 检索按租户与密级做 ACL 过滤，每次检索写审计日志。
+
+### 3.6 模型接入层
+
+- 统一代理：OpenAI 兼容协议、MiniMax、ComfyUI 等，配置在
+  「系统管理 → 模型配置」，按任务类型配置路由。
+- 治理能力：多窗口额度、调用日志与成本入库供对账。
+- 可靠性：超时重试、失败转移、指数退避带抖动。
+  退避与重试上限集中在 `apps/api/src/common/retry.ts`，可重试与立刻失败
+  的错误分类明确分开 —— 4xx 重试多少次都一样，只会白让用户等。
 
 ---
 
@@ -140,328 +190,288 @@
 
 | 项目 | 许可证 | 多租户 SaaS 商用风险 | 结论 |
 |---|---|---|---|
-| Dify | 修改版 Apache 2.0 | 禁止基于源码运营多租户 SaaS、禁止去除品牌 | 不引入源码；仅评估作为独立外部服务的授权合规性 |
-| FastGPT | 自有许可证 | 禁止同类多租户 SaaS、禁止改 LOGO | 排除 |
+| Dify | 修改版 Apache 2.0 | 禁止基于源码运营多租户 SaaS、禁止去除品牌 | 不引入源码 |
+| FastGPT | 自有许可证 | 禁止多租户 SaaS、禁止改 LOGO | 排除 |
 | RAGFlow | Apache 2.0 | 允许 | 知识库 RAG 二期候选 |
 | AnythingLLM | MIT | 允许 | 备选 |
 | Langflow | MIT | 允许 | 可视化编排备选 |
-| LiteLLM | MIT（core） | 允许 | 采用：全球模型网关 |
-| ThingsBoard | Apache 2.0 | 允许（白标为 CE 付费功能） | 采用：IoT 多租户平台 |
+| LiteLLM | MIT（core） | 允许 | 评估后未采用（见 4.3） |
+| ThingsBoard | Apache 2.0 | 允许（白标为 CE 付费功能） | 评估后未采用（见 4.3） |
 | ComfyUI | GPL-3.0 | 独立进程部署、不链接其代码分发，风险可控 | 采用：多模态渲染后端 |
-| Wan2.2（通义万相） | Apache 2.0 | 允许 | 采用：视频生成模型 |
-| Qwen-Image-2.1 | Apache 2.0 | 允许 | 采用：图像生成模型 |
+| pgvector | PostgreSQL 许可 | 允许 | 评估后未采用：扩展随镜像就位，留作向量检索的预留路径 |
 
-结论：无单一开源系统能完整覆盖目标系统全部场景且许可证安全。采用"自研业务主框架 + 开源能力组件"的组合路线，对 agent 运行时坚持自研轻量编排，规避 Dify/FastGPT 的许可证陷阱。
+结论：无单一开源系统能完整覆盖这些场景且许可证安全。采用
+「自研业务主框架 + 开源能力组件」的组合路线，Agent 运行时坚持自研轻量编排。
 
-### 4.2 选型决策
+### 4.2 选型结论
 
 | 能力域 | 选型 | 理由 |
 |---|---|---|
 | 业务主框架 | NestJS 12（自研） | ESM、装饰器、模块化、生态成熟 |
 | Agent 运行时 | 自研 agent loop + MCP 协议 | 规避许可证风险，可控可测 |
-| 模型网关 | LiteLLM | 虚拟 key、多窗口预算、Guardrails、全模型统一接口 |
-| IoT 设备 | ThingsBoard CE | 原生多租户、规则引擎、数字孪生、白标（付费） |
-| 多模态渲染 | ComfyUI + Wan2.2 / Qwen-Image-2.1 | 工作流模板 JSON 化，模型可换 |
-| 知识库 | MVP 用 PostgreSQL pgvector；数据规模上来后迁 RAGFlow | 阶梯 3 优先标准库/数据库能力，不过度引入 |
-| 队列 | 前端本地任务队列（`components/TaskBall.tsx`） | **尚未引入服务端队列**：BullMQ/Redis 未安装（`apps/**` 无任何 redis 客户端依赖），当前异步任务状态仅存于前端。后端 `generation_tasks` 表与红点跨页持久化待补 |
+| 数据访问 | Prisma 7 + PostgreSQL 18 | 类型安全、迁移可追溯；单库承载事务数据，扩展位（pgvector）随镜像就位 |
+| 多模态渲染 | ComfyUI（独立进程） | 工作流模板 JSON 化，模型可换 |
+| 知识库 | PostgreSQL + 二元组关键词召回 | 阶梯 3 优先标准库/数据库能力；零配置、零额外 key，向量检索留作预留 |
+| 前端 | React 19 + AntD 6 + Vite 8 | 组件化、主题变量可控、构建快 |
+| 桌面端 | Electron 44 | 与 Web 端共用同一套构建产物，依赖可内置 |
+
+### 4.3 评估后未采用
+
+| 项目 | 未采用原因 |
+|---|---|
+| LiteLLM | 需要额外常驻进程与独立部署运维；当前模型量级用 OpenAI 兼容协议直连足够，治理能力可在应用层实现 |
+| ThingsBoard CE | 完整 IoT 平台对当前业务是过度设计，设备点位用自有 `FloorplanLayout` 模型承载 |
+| Redis / BullMQ | 异步任务状态已落在 `generation_tasks` 表，跨页面、跨刷新、跨设备都能读回，无需额外中间件 |
+| MinIO | 产物落在 `uploads` 卷即可，独立对象存储留给多实例部署时再引入 |
+
+> 选型不是一次性的决定。上面这张表记录的是**当前不采用的理由**，
+> 条件变化时（多实例部署、亿级向量、需要独立消息队列）应当重新评估。
 
 ---
 
-## 5. 增强型架构设计
+## 5. 数据模型
 
-### 5.1 总体架构（五层）
+33 张业务表，按域划分（完整定义见
+[`apps/api/prisma/schema.prisma`](./apps/api/prisma/schema.prisma)）：
 
-```
-接入层      Web（React 19 SPA） / 未来小程序
-网关层      鉴权（JWT）、租户解析（子域名 / X-Tenant-Id）、限流、审计
-业务层      NestJS 12 模块化单体：
-            auth / tenant / rbac / billing / content / agent /
-            knowledge / iot / ops
-能力层      LiteLLM 网关、ComfyUI 集群、ThingsBoard、
-            BullMQ+Redis 队列、对象存储（S3/MinIO）
-数据层      PostgreSQL 18（含 pgvector）、Redis、对象存储
-```
+| 域 | 表 |
+|---|---|
+| 租户与权限 | `tenants, users, roles, permissions, role_permissions, memberships` |
+| 计费与用量 | `token_ledger, model_settings, model_profiles, api_keys` |
+| 审计与幂等 | `audit_logs, idempotency_records, change_snapshots` |
+| 内容提取 | `extraction_jobs, extracted_documents, extracted_fields, extraction_deficiencies, review_confirmations` |
+| 智能体 | `custom_agents, image_conversations, image_turns, generation_jobs` |
+| 方案 | `plan_projects, media_assets, knowledge_docs, material_submissions` |
+| 商品与报价 | `products, category_defs, order_requests, order_notes, floorplan_layouts` |
+| 灯光与反馈 | `lighting_scenes, feedback_tickets` |
 
-模块化单体（modular monolith）起步，模块边界按未来可拆微服务设计；不与 YAGNI 冲突——单体内清晰的模块边界是零成本收益，过早拆微服务才是过度设计。
+几条贯穿全库的约定：
 
-### 5.2 多租户隔离
-
-- 共享数据库、按 `tenant_id` 行级隔离。**当前实现隔离在应用层**：`TenantGuard` 解析 JWT 中的 `activeTenantId` + Service 层查询显式带 `tenantId` 条件；数据库层 RLS 兜底**尚未落地**（`prisma/migrations/**` 无任何 `ROW LEVEL SECURITY` 语句），列为待交付项。
-- 请求链路：Gateway 解析租户 → JWT 注入 tenantId → Service 层逐查询追加 tenantId 条件。
-- 资源隔离：产物文件按 `uploads/` 统一目录存放（未按租户前缀隔离）；BullMQ 队列前缀、LiteLLM team/key 级预算均未接入。
-- 企业版预留独立 schema 升级路径，MVP 不实现。
-
-### 5.3 RBAC 权限模型（五角色）
-
-| 角色 | 范围 | 权限概要 |
-|---|---|---|
-| super_admin | 平台 | 租户管理、计费配置、系统配置、全量审计 |
-| tenant_admin | 租户 | 成员管理、角色分配、订阅计费、租户内全部业务 |
-| designer | 租户 | 方案/渲染/生图/视频等生产功能 |
-| operator | 租户 | 接单、报价、发布、客服等运营功能 |
-| viewer | 租户 | 只读浏览素材与方案 |
-
-权限模型：`resource:action` 权限点 + 角色绑定，运行时用 `@casl/ability` 判定。MVP 固定 5 个内置角色，不支持自定义角色（YAGNI）。核心表：`tenants / users / roles / permissions / role_permissions / memberships`。
-
-### 5.4 Agent 工具调用体系（MCP）
-
-修复目标系统"伪 agent"缺陷，建立真正的工具调用闭环：
-
-1. 工具注册：工具定义入库（name、描述、JSON Schema 入参、所需权限、计费点），形成工具目录。
-2. 协议：采用 MCP（Model Context Protocol）作为工具标准协议，服务端实现 MCP client，模型侧用 function calling。
-3. 内置工具（MVP）：生成方案、渲染平面图、生成图片、生成视频、改写文案、查询报价、发布订单、查询设备状态（ThingsBoard API）、检索知识库。
-4. 执行链路：用户输入 → LLM 规划 → 工具调用（权限校验 + 计费预扣）→ 结果回填 → 流式（SSE）返回，全程审计入 `agent_runs` / `tool_calls` 表。
-5. 长任务：复用目标系统验证过的异步轮询模式（job 表 + SSE 双通道）。
-
-### 5.5 品牌知识库（双层 RAG）
-
-- 平台层：产品白皮书、11 套风格库定义、行业话术模板，全租户共享。
-- 租户层：品牌资料、历史优秀方案、客户画像，严格租户隔离。
-- 实现：MVP 阶段用 PostgreSQL + pgvector（数据库内向量存储，不引入额外组件）；检索时按租户与密级做 ACL 过滤；规模上来后再评估迁移 RAGFlow。
-- 嵌入与重排通过 LiteLLM 走统一模型，成本计入租户。
-
-### 5.6 全球大模型接入层
-
-- LiteLLM 统一代理：OpenAI、Anthropic、Google、DeepSeek、通义千问、智谱等全球主流模型；按任务类型配置路由（如文案走快模型、方案走强模型）。
-- 治理能力：虚拟 key + 多窗口预算（日/月）、Guardrails 内容安全、pass-through 端点默认开启鉴权。
-- 可靠性：超时重试、模型降级链、失败转移，调用日志与成本入库供对账。
+1. **幂等键落库**：`idempotency_records` 以 `(tenantId, key)` 唯一约束抢占，
+   并发下第二个请求当场失败，而不是「先查后插」双双插入。
+   抢占成功但执行报错必须 `release()`，否则用户第一次失败后就再也提交不了。
+2. **审计带 requestId**：`audit_logs` 每条记录带 `requestId` / `actorKind` /
+   `payloadDigest`，一次动作的多个副作用可以串联追溯。
+3. **备份可恢复**：备份清单覆盖全部业务表，恢复走同一套模型，
+   否则「备份」只是个安慰。
 
 ---
 
-## 6. UI/UX 优化方案
+## 6. UI/UX 方案
 
-延续目标系统已验证的交互心智，替换底层实现：
-
-1. 组件化重构：React 19.3 + Ant Design 6.6（CSS Variables 主题），彻底告别 59–93KB 页面脚本。
-2. 保留并升级核心布局：左侧导航 + 会话历史 + 居中欢迎区；任务球升级为"全局任务中心"（多任务列表、ESC/Home 行为保持一致）。
-3. 主题：主色延续品牌紫；AntD 6 的 CSS Variables 支持运行时切换，零成本实现暗色模式。
-4. 响应式：桌面优先，补齐平板（1024px）与窄屏适配，修复原系统固定 1887px 视口问题。
-5. i18n：默认中文，预留英文切换（面向后续海外上架），文案全部走字典，不硬编码。
-6. 无障碍：WCAG 2.1 AA，对比度、焦点可见、键盘可达。
-7. 一致性：设计 token（颜色/字号/间距/圆角）统一收口到 AntD 6 主题变量，11 套风格库转为可配置的主题预设数据。
-8. 空态/错态/加载态全套规范化，删除确认沿用统一 Dialog（延续原系统"删除有确认"的良好实践）。
+1. **组件化**：React 19.3 + Ant Design 6.6（CSS Variables 主题）。
+2. **布局**：左侧导航 + 会话历史 + 居中欢迎区；任务球升级为「全局任务中心」
+   （多任务列表，ESC/Home 行为保持一致）。
+3. **主题**：主色靛蓝；AntD 6 的 CSS Variables 支持运行时切换，零成本实现暗色模式。
+4. **响应式**：桌面优先，补齐平板（1024px）与窄屏适配，不做固定视口。
+5. **i18n**：默认中文，文案集中管理，不散落在组件里。
+6. **无障碍**：对比度、焦点可见、键盘可达。
+7. **一致性**：设计 token（颜色/字号/间距/圆角）统一收口到主题变量，
+   风格库转为可配置的主题预设数据。
+8. **空态/错态/加载态**全套规范化，删除确认沿用统一 Dialog。
 
 ---
 
-## 7. 2026 技术栈与实施方案
+## 7. 技术栈与工程实施
 
 ### 7.1 版本锁定表
 
 | 组件 | 锁定版本 | 说明 |
 |---|---|---|
-| Node.js | 24.19.0 LTS | 本机运行版本即最新 LTS，满足 NestJS 12 要求（20.19+/22.12+） |
-| TypeScript | 5.9.3 | TS 7.x 为原生编译器，生态兼容性未成熟，暂不采用 |
-| NestJS | 12.1.2 | ESM-only 包，Standard Schema = Zod |
-| React | 19.3.0 | |
-| Ant Design | 6.6.5 | 需 React ≥ 18，CSS Variables 主题 |
+| Node.js | 24.19.0+ | 当前 LTS 主线，满足 NestJS 12 要求 |
+| pnpm | 11+ | workspace 锁文件可复现安装 |
+| TypeScript | 5.9.x（桌面端 6.0.x） | TS 7.x 为原生编译器，生态兼容性未成熟，暂不采用 |
+| NestJS | 12.1.3 | ESM-only 包，Standard Schema = Zod |
+| Prisma | 7.10.1 | 8.x 仍为 RC，不采用；7.10.1 为最新稳定版 |
+| Zod | 4.6.x | 请求校验（Standard Schema） |
+| PostgreSQL | 18.6 | 容器镜像自带 pgvector 扩展（向量检索的预留路径，当前 schema 未使用向量列） |
+| React | 19.3.1 | |
+| Ant Design | 6.6.6 | CSS Variables 主题 |
 | Vite | 8.3.4 | 前端构建 |
-| Prisma | 7.10.0 | 8.x 仍为 RC（8.0.0-rc.15），不采用；7.10.0 为最新稳定版 |
-| PostgreSQL | 18.6 | 8 月安全更新修复 28 个 CVE，含 pgvector |
-| Redis | 8.x | 队列与缓存 |
-| LiteLLM | 1.84.x | 模型网关 |
-| ThingsBoard | 4.x CE | IoT 平台 |
-| ComfyUI | 最新稳定版 | 多模态渲染（服务端进程） |
-| BullMQ | 5.x | 任务队列 |
-| Zod | 4.x | 请求校验（Standard Schema） |
+| Electron | 44.9.0 | 桌面端壳层 |
+| electron-builder | 26.17.0 | dmg/zip 打包与签名 |
 
-### 7.2 Monorepo 目录结构
+依赖一律用当前最新稳定版，升级前联网核对 registry 的 `dist-tags`，
+跨大版本升级必须实跑全量门禁。审计用
+`pnpm audit --registry=https://registry.npmjs.org`（走国内镜像时该端点不存在）。
+
+### 7.2 目录结构
 
 ```
 apps/
-  web/                # React 19 + AntD 6 SPA
   api/                # NestJS 12 模块化单体
-    src/modules/
-      auth/ tenant/ rbac/ billing/ content/
-      agent/ knowledge/ iot/ ops/
-packages/
-  shared/             # 前后端共享类型与 Zod schema
-  ui-tokens/          # 主题与风格库预设数据
-docker/
-  docker-compose.yml  # postgres / redis / litellm / minio / thingsboard / comfyui
+    src/              # admin agent agents auth billing canvas common content
+                      # feedback health knowledge layout lighting llm media
+                      # orders plans prisma rbac seed team tenants
+    prisma/           # schema.prisma + migrations/
+    test/             # smoke.ts（456 条断言的端到端冒烟）
+  web/                # React 19 + AntD 6 SPA
+    src/              # components data layout lib pages theme
+  desktop/            # Electron 桌面端
+    src/              # 主进程、内嵌 PostgreSQL、本地 API 拉起
+    scripts/          # 打包、裁剪、签名闸门、公证
+docker/               # Dockerfile 与 compose profile
+scripts/              # check-docs.mjs / check-brand.mjs 等工程闸门
 ```
 
-### 7.3 核心数据模型（表清单）
+### 7.3 质量与测试策略
 
-租户与权限：`tenants, users, roles, permissions, role_permissions, memberships`
-计费：`subscriptions, points_ledger, invoices, model_usage_costs`
-Agent：`agents, tools, conversations, messages, agent_runs, tool_calls`
-知识库：`knowledge_bases, documents, document_chunks(pgvector)`
-业务：`projects, quote_templates, quotes, products, render_jobs, media_assets, publish_orders, fault_reports, support_tickets`
-采集后新增（对应 §2.6）：`generation_tasks`（任务球异步队列）、`ip_profiles`（短视频工作台 IP 档案：传记+4×4）、`referrals`（邀请码首充返点）
-审计：`audit_logs`
+- 非平凡逻辑必须有可运行检查：计费扣减、租户隔离（跨租户访问必须 404）、
+  幂等提交、权限判定。
+- **关键路径冒烟测试**：登录 → 生成 → 扣费 → 产物落库。
+  冒烟脚本共 456 条断言，编译产物在 `apps/api/dist/test/smoke.js`。
+- 每个版本发布前全量验证，不追求覆盖率数字。
+- **五条工程闸门**（`pnpm typecheck && pnpm build && pnpm smoke &&
+  pnpm check:docs && pnpm check:brand`）必须全绿才允许提交：
+  类型检查、构建、冒烟、Markdown 渲染检查、品牌与合规检查。
+  后两道是本仓库特有的：前者查相对链接失效、表格列数不齐、代码块未闭合、
+  标题跳级；后者查第三方商标痕迹、公司名、本机绝对路径链接、未登记的外链域名。
 
-### 7.4 分期路线图（SemVer）
+### 7.4 交付形态
 
-| 版本 | 范围 | 周期目标 |
+| 形态 | 面向谁 | 怎么用 |
 |---|---|---|
-| 0.1.0 | MVP：认证 + 多租户 + RBAC；LiteLLM 接入；AI 生图；文案改写；方案生成（迁移 11 风格库）；知识库上传 + pgvector 检索；点数计费 | 对齐目标系统核心生产链路 |
-| 0.2.0 | Agent 工具调用（MCP）；AI 生视频（ComfyUI + Wan2.2）；素材库；任务中心 | 智能体能力落地 |
-| 0.3.0 | ThingsBoard IoT；接单工作流；报价系统；客服工单 | 全业务闭环 |
-| 0.4.0 | 运营后台（租户/计费/审计）；暗色模式；i18n 英文 | 商用运营就绪 |
-| 1.0.0 | 全功能对齐 + 压测 + 安全审计 + 合规上架 | 对外承诺 API 稳定 |
+| Docker 容器 | 云服务器部署 | `docker compose up -d` |
+| 源码自跑 | 开发者 | `pnpm install && pnpm dev` |
+| macOS 桌面应用 | 门店 / 个人 | 下载 dmg，双击即用 |
 
-#### 0.1.x 已交付明细（迭代溯源）
-
-| 版本 | 日期 | 关键增量 |
-|---|---|---|
-| 0.1.0–0.1.34 | 09-25→10-12 | MVP 全链路、3 套资料 CRUD、Agent 显式人设、token 计费、产品主数据、风格库、ChatStore、模型配置命名方案、跨租户鉴权、9 页方案 7 类页型、点位编辑、风格反推 prompt 等（详见 CHANGELOG.md） |
-| 0.1.35 | 10-12 | MyAssets CRUD（重命名/删除）+ ContentExtract 任务/文档删除；smoke +11 |
-| 0.1.36 | 10-12 | 全链路端到端 Agent 验证（生图/生视频/9 页方案）；账本对账 SUM=95797 |
-| 0.1.37 | 10-12 | PPT 底部间距修复（13 处 Frame/PointCard/Footer/NeedsSlide）；PlanStudio 上传平面图入口拓宽（工具栏始终可见）；精装修效果图端到端（renderedFloorplan_asset_id + renderFloorplan 端点 + PublicPlansController 免登录文件流）；smoke +1 → 120 条 |
-| 0.1.38 | 10-12 | 文档解析依赖 patch/minor 跟进（jsdom 30.1.2 / mammoth 1.13.0 / pdfjs-dist 6.4.299） |
-| **0.1.39** | **10-12** | **全站审查修复**：smoke 幂等（命名方案用例跨轮失败）、套餐标签改为对齐 Prisma `Plan` 枚举（"永久会员" 恒不显示）、模型配置菜单变量更名 `canManageModels`；文档与代码对齐（品类 39、备份 22 表、百宝箱 19 卡、目录树、env 清单、版本表、BullMQ/RLS 如实标注未落地）；smoke **120/120 且可重复运行** |
-| **0.1.40** | **10-12** | **补齐复刻缺口**：智能灯光场景编排（灯具编排 + 手工时间轴 + 出片）、生图 4 类业务子工作流（毛坯房/视频封面/节假日海报/平面图转彩平图）、问题反馈（提交 + 处理进度跟踪）、定制智能体落库、会员与额度页；修未知路由空白页与反馈状态机静默吞流转；反馈权限改 `cs:manage` 并开给全部角色；新增 `CustomAgent`/`FeedbackTicket`/`LightingScene` 三表与迁移；smoke **150/150** |
-| **0.1.41** | **10-12** | **百宝箱预览图与板块语义错配修复**：19 张工具卡改为按工具逐一生成的语义匹配图（明亮色调对齐参考站），`ToolDef.img` 改必填从机制上杜绝复发；卡版式对齐参考站 |
-| **0.1.42** | **10-12** | **构建可靠性**：registry 改为 `ARG NPM_REGISTRY` 构建参数（默认官方源，国内传镜像源，不硬编码不连累 CI）；补网络退避重试 + BuildKit pnpm store 缓存；启用 `minimumReleaseAge: 1440` 供应链防护并删除失效豁免；smoke **150/150** |
-| **0.1.43** | **10-13** | **REA 逆向核对后补齐**：工作台智能意图识别（可忽略的建议式，不劫持对话）、生图适配视频与背景参数、参考图从我的资料库选；**清理假控件**（生图模型下拉选了不生效、三个禁用装饰下拉）与**零引用服务**（redis/minio/litellm + LITELLM 配置）；**界面风格独立化**（靛蓝主色 + 自有阴影转角，不再与对标站同色）；smoke **150/150** |
-| **0.1.44** | **10-13** | **AI 画布（对话式生图）**：REA 逆向画布模块后实现多轮对话线/变体追加不覆盖/分支树切换/异步作业轮询/来源可追溯/历史恢复编辑；**修全库备份漏 6 张表**（定制智能体/问题反馈/灯光场景/画布三表，恢复后会数据消失）并加 smoke 护栏；smoke **201/201** |
-| **0.1.45** | **10-13** | **REA 全量对照基线**（14 脚本/701KB 导出精读，产出 replica/full-parity-matrix.md）；**问题反馈自动上下文采集**；**任务中心服务端化**（跨页面/跨刷新/跨设备）；**智能报价变体选择 + 逐项单价覆盖 + Excel 导出**；补 **LICENSE/NOTICE**（开源发布前置）；smoke **206/206** |
-| **0.1.46** | **10-13** | **补齐对照清单剩余项**：WiFi 墙体识别（Otsu+距离变换+连通域，纯前端）+ 墙阻信号衰减 + 覆盖率统计；智能方案全屏阅读器（键盘/动画/降级）+ 预算校验与档位预设；智能报价房间分组拖拽 + 户型图房间标注；生视频音轨设置（编译进提示词 + 能力诚实提示）；素材库投稿全链路；smoke **210/210** |
-
-### 7.5 质量与测试策略
-
-- 非平凡逻辑必须有可运行检查：agent 循环、计费扣减、租户隔离（跨租户访问必须返回 404 的测试用例）、RLS 兜底。
-- 关键路径冒烟测试：登录 → 生成 → 扣费 → 产物落库。
-- 每个迭代版本发布前全量验证，不追求覆盖率数字。
+桌面端把 **内嵌 PostgreSQL + 本地 API + 前端**打成一个应用，依赖全内置，
+不需要装 Docker、不需要配数据库。体积构成、取舍与公证流程见
+[桌面打包方案.md](./桌面打包方案.md)。
 
 ---
 
 ## 8. 安全与合规
 
-1. 输入校验：所有外部输入 Zod 校验；输出按上下文转义，防 XSS/注入。
-2. 密钥管理：模型 API key、对象存储密钥全部走环境变量/密钥管理，严禁入库、入日志、入代码。
-3. 租户隔离：框架层强制 + RLS 兜底 + 跨租户测试用例。
-4. 内容合规：LiteLLM Guardrails + 生图生视频审核链路；生成内容留存备查。
-5. 许可证合规：已规避 Dify/FastGPT；ComfyUI 以独立进程部署不链接分发代码；新增依赖先查许可证（MIT/Apache-2.0/BSD 优先，GPL/AGPL 禁止引入）与已知漏洞（npm audit / 数据库组件 advisory）。
-6. 隐私合规：个人信息最小化收集、脱敏存储、加密传输，符合国内上架要求；海外上线前补 GDPR 评估。
-7. 部署：云服务器 + 域名对接（避免迁移导致客户不可用）；本地 EXE 预留 electron/tauri 打包路径，0.x 阶段仅验证服务端容器化部署。
+1. **输入校验**：所有外部输入 Zod 校验；输出按上下文转义，防 XSS/注入。
+2. **密钥管理**：模型 API Key、数据库口令全部走环境变量，严禁入库、入日志、入代码。
+   生产模式下弱默认口令直接**拒绝启动**。
+3. **租户隔离**：框架层强制 + 跨租户测试用例；RLS 兜底待交付。
+4. **内容合规**：生图生视频的配额与能力校验在服务端完成，前端只读结论。
+5. **许可证合规**：已规避 Dify/FastGPT；ComfyUI 以独立进程部署不链接分发代码；
+   新增依赖先查许可证（MIT/Apache-2.0/BSD 优先，GPL/AGPL 禁止引入）与已知漏洞。
+   当前 34 个生产依赖全部为宽松许可。
+6. **隐私合规**：个人信息最小化收集、脱敏存储、加密传输。
+7. **部署**：默认端口 web 5173 / api 3080；容器与桌面端均不写死环境相关的绝对路径。
+
+合规自查与证据见 [COMPLIANCE.md](./COMPLIANCE.md) 与
+[NOTICE.md](./NOTICE.md)。
 
 ---
 
-## 9. 风险登记
+## 9. 风险登记与已知边界
 
-| 风险 | 影响 | 缓解 |
+| 风险 / 边界 | 影响 | 缓解 |
 |---|---|---|
-| ComfyUI GPL 边界争议 | 法律风险 | 独立进程部署，不链接分发；法务复核后启用白标 |
-| 多模型成本失控 | 毛利侵蚀 | LiteLLM 多窗口预算 + 用量对账 + 缓存 + 降级链 |
-| 11 套风格库迁移失真 | 方案质量下降 | 风格先数据化为预设，迁移期双跑对比抽检 |
-| 原生 JS 功能遗漏 | 能力不对齐 | 以本文档 2.3 API 地图为验收清单逐项核对 |
-| pgvector 性能瓶颈 | 检索变慢 | 预设 RAGFlow 迁移路径，接口层先行抽象 |
+| ComfyUI GPL 边界争议 | 法律风险 | 独立进程部署，不链接分发 |
+| 多模型成本失控 | 费用超预期 | 额度熔断 + 用量对账 + 缓存 + 降级链 |
+| 风格库迁移失真 | 方案质量下降 | 风格先数据化为预设，迁移期双跑对比抽检 |
+| 数据库层 RLS 未落地 | 越权风险靠应用层 | 应用层强制 + 跨租户测试用例；RLS 列为待交付 |
+| 产物文件未按租户前缀隔离 | 多租户共享磁盘上的隔离弱于数据库 | 桌面端单机场景无影响；多实例部署前补齐 |
+| 内置召回是关键词匹配而非向量检索 | 资料量极大时召回质量可能下降 | 当前资料量级足够；外部引擎（WeKnora / Obsidian）可提供向量 + BM25 混合检索 |
+| macOS 单平台 | Windows/Linux 暂无安装包 | argon2 无 darwin-x64 预编译，构建脚本已预留平台矩阵 |
 
 ---
 
-## 10. 验收清单（与目标系统对齐）
+## 10. 验收清单
 
-以下为能力对齐的核对基线：
-
-- [ ] 9 大导航模块全部实现且交互一致
-- [ ] 约 90 个 API 端点等价覆盖（含异步轮询模型）
-- [ ] 幂等提交机制保留（clientRequestId 方案）
-- [ ] 会员三档 + 按量计费等价实现
-- [ ] 11 套风格库数据化迁移
-- [ ] 意图路由升级为 MCP 工具调用（回归用例：原 intent() 覆盖的语句全部可用自然语言完成）
-- [ ] 任务球 → 任务中心，交互兼容
-- [ ] 多租户 + 五角色 RBAC 全链路生效
-- [ ] 全球主流模型（≥5 家）可配置接入与切换
-- [ ] 知识库支持检索增强生成
-- [ ] 暗色模式 / 英文切换可用
+| 项 | 判据 |
+|---|---|
+| 多租户隔离 | 跨租户访问业务资源返回 404，有测试用例 |
+| 权限模型 | 非授权角色调用受限端点返回 403，有测试用例 |
+| 幂等提交 | 同一 `clientRequestId` 重复提交只产生一次扣费 |
+| 计费一致性 | 扣费按最终交付页数算，不按用户选的值算 |
+| 租户隔离覆盖备份 | 备份清单覆盖全部业务表，恢复后可读回 |
+| 模型能力校验 | 未配置 Key / 能力不支持 / 额度不足三类原因可区分 |
+| 交付件可复现 | 干净克隆 `pnpm install --frozen-lockfile` 成功，五条闸门全绿 |
+| 桌面端自证 | 打包产物能起库、迁移、种子、登录（`verify:runtime`） |
+| 签名自证 | 每个 Mach-O 都有 Developer ID 签名且 bundle 封印有效（`verify:signature`） |
 
 ---
 
-## 11. 技术决策确认（2026-09-24 锁定）
+## 11. 技术决策记录
 
 | # | 决策点 | 结论 | 影响 |
 |---|---|---|---|
 | 1 | 内容提取输入源 | 三源全做：用户上传资料、网页抓取、对话纪要抽取 | 管道接口先行，三个适配器分期交付 |
-| 2 | 部署形态 | 本地优先，单机 Docker Compose | 基础服务容器化；重服务（LiteLLM/ComfyUI）用 compose profile 按需启动 |
-| 3 | token 计费 | 统一 token 单位 + 独立充值 | 会员套餐按 1:1 折算 token 额度；TokenService 事务扣减 |
-| 4 | 插件系统 | MVP 仅内置技能/工具注册表（MCP 工具目录） | 第三方运行时留待 0.4.0 之后 |
+| 2 | 部署形态 | 本地优先，单机 Docker Compose + 桌面端 | 桌面端内嵌数据库与 API，依赖全内置 |
+| 3 | 计费单位 | 统一 token 单位，额度单价由部署者配置 | 不预设任何商业定价，额度只做可视化与熔断 |
+| 4 | 插件系统 | MVP 仅内置技能/工具注册表 | 第三方运行时留待后续 |
+| 5 | 队列 | 异步任务状态落 `generation_tasks` 表 | 不引入 Redis/BullMQ，减少常驻依赖 |
+| 6 | 共享契约 | 仅通过 HTTP API 传递 | 暂不引入 shared package（YAGNI） |
 
 ### 11.1 内容提取系统设计（三源管道）
 
 统一管道接口 `Extractor`：输入 → 标准化文本块 → 字段抽取 → 质量报告。
 
-- P1 上传资料解析：PDF（pdfjs-dist，Apache 2.0）、DOCX（mammoth，MIT）、XLSX（exceljs，MIT）、TXT/MD 原生解析；图片 OCR 在本期后半段以 tesseract.js（Apache 2.0）接入
-- P2 网页抓取：URL 校验 + robots.txt 遵守 + 频率限制；正文抽取基于 Readability 算法（@mozilla/readability + jsdom，MIT）
-- P3 对话纪要抽取：LiteLLM function calling + Zod schema 结构化输出
+- **P1 上传资料解析**：PDF（pdfjs-dist，Apache 2.0）、DOCX（mammoth，MIT）、
+  XLSX（exceljs，MIT）、TXT/MD 原生解析。
+- **P2 网页抓取**：URL 校验 + robots.txt 遵守 + 频率限制；
+  正文抽取基于 Readability 算法（@mozilla/readability + jsdom，MIT）。
+- **P3 对话纪要抽取**：模型 function calling + Zod schema 结构化输出。
 
 质量评估与缺失确认机制：
 
-- 完整性校验：按文档类型定义必需字段集（如产品资料：名称、型号、价格、规格、卖点），缺失产出 deficiency 列表
-- 质量评分：字段完整率（主权重）+ 抽取置信度（来源可引用性），归一化为 0-100 分
-- 主动确认：deficiency 生成待确认任务（ExtractionReview），前端引导用户补全，确认结果入库回流
-- 信任边界：外部文档内容一律视为不可信输入，解析与入库分离，LLM 抽取结果必须通过 Zod 校验后才可入库
+- **完整性校验**：按文档类型定义必需字段集，缺失产出 deficiency 列表。
+- **质量评分**：字段完整率（主权重）+ 抽取置信度，归一化为 0-100 分。
+- **主动确认**：deficiency 生成待确认任务，前端引导补全，确认结果入库回流。
+- **信任边界**：外部文档内容一律视为不可信输入，解析与入库分离，
+  LLM 抽取结果必须通过 Zod 校验后才可入库。
 
-数据模型：`extraction_jobs / extracted_documents / extracted_fields / extraction_deficiencies / review_confirmations`
-状态机：`pending → extracting → reviewing → confirmed / rejected`
+数据模型：`extraction_jobs / extracted_documents / extracted_fields /
+extraction_deficiencies / review_confirmations`。
+状态机：`pending → extracting → reviewing → confirmed / rejected`。
 
-### 11.2 token 计费模型
+### 11.2 计费模型
 
-- 统一计量单位 token：模型调用按 `model_pricing` 表（每千 token 单价）实时折算
-- 套餐额度：原三档会员点数数值 1:1 折算为 token 额度（入门 80,000 / 标准 1,600,000 / 企业 30,000,000）
-- TokenService：consume/grant 均为数据库事务内扣减，余额不足拒绝；全量写入 `token_ledger` 账本
-- 独立充值模块：充值订单 + 账本明细 + 消耗趋势；支付通道 0.2.0 接入，本期提供管理员发放入口
+- 统一计量单位 token：模型调用按配置的单价实时折算。
+- TokenService：consume/grant 均为数据库事务内扣减，余额不足拒绝；
+  全量写入 `token_ledger` 账本。
+- 额度发放：管理员在后台发放，或部署者用环境变量配置初始额度。
+  仓库内不含任何充值、订阅、套餐概念。
 
 ### 11.3 部署与端口规约
 
-- 前端 dev：5173（5174 被其他项目占用，禁止使用）；API：3080（禁止 3081 重复部署）
-- Docker Compose 基础服务：PostgreSQL 18 + pgvector、Redis 8；LiteLLM、MinIO 以 compose profile 按需启动，控制常驻内存
-- 内存预算：基础服务空闲约 500-800MB，叠加应用进程，保证本地 8GB 机器流畅运行
+- 前端 dev：5173；API：3080。两者均不与其他项目共用端口。
+- Docker Compose 基础服务：PostgreSQL 18 + pgvector。
+- 内存预算：基础服务空闲约 500-800MB，叠加应用进程，保证 8GB 机器流畅运行。
 
 ---
 
-## 12. 开发计划与里程碑（0.1.0）
+## 12. 交付里程碑
 
-| Sprint | 范围 | 交付物 | 准出条件 |
-|---|---|---|---|
-| S1 基础骨架 | monorepo、docker-compose、Prisma schema、认证、租户、RBAC、token 账本、前端框架与主题 | 可注册/登录，token 事务扣减可用，亮暗主题自动跟随 | 构建通过 + 冒烟脚本全绿 |
-| S2 内容提取 | 三源管道 P1/P2/P3 + 质量评估 + 缺失确认前端流程 | 上传文档→解析→确认→入库闭环 | 完整性校验用例通过 |
-| S3 生成能力 | LiteLLM 接入、AI 生图（ComfyUI profile）、文案、方案生成（11 风格库迁移） | 与目标系统生成链路等价 | 端到端冒烟 |
-| S4 知识库与计费 | pgvector 检索、品牌知识库双层隔离、token 中心前端 | RAG 可用、token 中心上线 | 跨租户隔离测试通过 |
+| 阶段 | 范围 | 状态 |
+|---|---|---|
+| S1 基础骨架 | monorepo、docker-compose、Prisma schema、认证、租户、RBAC、token 账本、前端框架与主题 | 已交付 |
+| S2 内容提取 | 三源管道 P1/P2/P3 + 质量评估 + 缺失确认前端流程 | 已交付 |
+| S3 生成能力 | 模型接入、AI 生图/生视频、文案、方案生成 | 已交付 |
+| S4 知识库与计费 | 知识库内置召回 + 双层隔离、外部引擎联动、token 中心前端 | 已交付 |
+| S5 垂直场景 | 接单、报价、灯光场景、WiFi 热力图、平面图、方案交付三件套 | 已交付 |
+| S6 桌面端 | 内嵌 PostgreSQL + 本地 API + 前端，单机双击即用 | 已交付 |
 
 质量控制体系：
 
-- 每次提交前：类型检查 + 构建通过；冒烟脚本验证关键路径（health、注册登录、me、token 扣减）
-- 非平凡逻辑必须有测试：token 扣减事务、跨租户拦截、幂等提交
-- 修复 bug 先写复现用例再修；验证通过后才更新文档与版本号
+- 每次提交前跑完五条工程闸门（见 7.3）。
+- 非平凡逻辑必须有测试：token 扣减事务、跨租户拦截、幂等提交、权限判定。
+- 修 bug 先写复现用例再修；验证通过后才更新文档与版本号。
+- 版本号三处一致（根 / api / web），由冒烟脚本断言守住。
 
+---
 
-> **实施迭代记录**
->
-> - 0.1.0（2026-09-24）：MVP 骨架，按 §12 S1 范围交付
-> - 0.1.1（2026-09-24）：审计项修复 + Docker 部署验证 + pgvector 扩展启用，为 S4 准备
-> - 0.1.2（2026-09-24）：平台层 LLM 测试入口（直连 MiniMax，OpenAI 兼容），0.2.0 切 LiteLLM 网关
-> - 0.1.3（2026-09-27）：S2 内容提取三源管道（上传/网页/纪要）+ 质量评分 + 缺失确认入库闭环；冒烟 15/15
->   - 详情见 [CHANGELOG.md](./CHANGELOG.md)
-> - 0.1.4（2026-10-06）：目标站全量实测采集（13 页面/流程）落盘 `.ref-site/采集记录.md`；§2.4 UI 规范按实测修正、新增 §2.6 复刻差距清单（16 项）；前端复刻第一批交付（白色侧栏+历史内嵌+首页输入卡/5 快捷卡+任务球+¥ 额度胶囊+使用指引+登录协议，差距 ①–⑤⑭⑯），agent-browser 端到端验证通过
-> - 0.1.5（2026-10-06）：安装 replica-skill（MIT）按 recon→design→build→diff 重建复刻基线（`replica/` 目录：recon.md 15 屏清单+实测 token、features.csv 50 项矩阵、screens/ 13 页参考截图永久保留）；功能页 UI 层全部交付（智能体市场/生图/生视频/方案 4 步+11 风格/百宝箱 18 工具/知识库/我的资料/素材库/接单向导/短视频工作台/个人中心增强），品牌渐变修正为实测 #5B5BF0→#8E7BF6；后端新增 change-password；MiniMax 真实 key 实测连通（HTTP 201）；replica-diff 功能一致度 84.8/100（must 29/35，剩余 6 项为 S3/0.3.0 生成链路逻辑）
-> - 0.1.6（2026-10-06）：生成链路真实接通（MiniMax 代理+产物本地落盘 uploads 卷，MediaAsset 表）——工作台对话（按智能体人设注入 system prompt，¥0.03/次）、AI 生图（image-01，¥3/张）、AI 生视频（T2V-01-Director，¥15/条轮询下载）、素材购买（¥1 幂等）；界面图片 19 张全部本地化（public/images/，无外链）；宽屏响应式改造（去 1400 限制，逐页放宽）；二级功能真实化（百宝箱工具跳转、知识库删除、我的资料展示真实产物、立传接入访谈人设）；文件流 JwtQueryGuard（?token=，img/video 标签场景）；seed 补演示额度 ¥1000；冒烟 19/19；内部浏览器逐屏走查全部功能界面通过（生图/生视频/对话实测出图出片出回复）
-> - 0.1.7（2026-10-06）：智能方案生成真实链路（0.1.6 仅 UI 骨架，本轮补齐业务逻辑）——后端 plans 模块：MiniMax-M3 生成 8 页结构化方案（封面+空间+场景+预算，按页扣额，标准 ¥1/页、私宅 ¥1.6/页），PlanProject 表+shareToken；前端 4 步真实流转（生成→逐页审稿编辑版本递增→整册风格主题预览→分享链接交付）；客户分享页 /share/plan/:token 无需登录微信直开，11 套自有风格主题+打印存 PDF；合规约束内置 prompt（价格区间、禁未确认承诺）；修复 PATCH 400（index 误放 body）；冒烟 23/23；浏览器实测"东湖玖章 128㎡"方案全流程通过（-800 正确入账）
-> - 0.1.8（2026-10-07）：智能方案交付物升级为**真正的 PPT**（0.1.7 纯文本 HTML 分页不符合"交付客户方案 PPT"预期）——实地登录目标站走通全流程+下载真实 PPTX 解剖核对（目标站=9 页 16:9 每页整页 PNG 拍平）；后端 plans 升级 9 页标准模板（封面/品牌/空间动线/需求洞察/生态规划/场景×2/预算/交付）+每页 narration 讲解稿+keySpaces/needs/pageCount 字段+3 版本；前端 pptxgenjs@4.0.1（MIT）生成**原生可编辑 16:9 幻灯片**（每页 29 文本形状，比目标站拍平 PNG 更优，客户可编辑），讲解稿入 PPT 备注；PlanStudio 步骤3 左页列表+右幻灯片预览、步骤4 下载PPTX/讲稿/全屏播放/分享；分享页改 16:9 幻灯片画布；冒烟 24/24；浏览器实测生成→审稿→下载解剖→分享页全流程通过（-900 入账）
-> - 0.1.9（2026-10-07）：修复"PPT 入口不可发现"（用户找不到查看/修改位置，逐项比对目标站截图后确认短板）——侧栏"历史对话"混排方案记录（GET /api/plans，点击直达审稿，⋮ 删除），PlanStudio 支持 ?id= 深链；步骤 2 卡片加 16:9 幻灯片缩略图；PlanSlide 改 cqw 容器查询单位（缩略图/大图/分享页共用）；typecheck+冒烟 24/24+浏览器走查通过。诚实对比：交付能力（可编辑 PPTX/讲稿/分享）优于目标站，预算页视觉密度待 0.2.x
-> - 0.1.10（2026-10-07）：智能方案逐页"全面完胜"改造（用户要求消除持平/略逊项，指示联网调研复用成熟库不造轮子）——Context7/PptxGenJS 官方文档调研后复用已装 pptxgenjs@4.0.1 零新依赖：后端 PlanPage 加 quote 引言字段+预算/交付 bullets 结构化约束；预览加预算页横向条形图、交付页 6 阶段流程、全内页引言块；**PPTX 导出 addChart 原生可编辑 clustered 条形图 + chevron 流程形状**（对方整页 PNG 拍平的死穴，形成代差）；实测"光谷国际 140㎡"逐页走查+下载解剖验证（c:barChart 真实数值可编辑、6 chevron、9 notesSlides）；修复预算 8 条溢出/阶段名残留"｜"/悬空冒号/同页切换方案不刷新；9/9 页判定全胜；typecheck+build+冒烟 24/24
-> - 0.1.11（2026-10-07）：智能方案幻灯片**全面视觉重设计**（用户批评"无配图、无卡片层次感"，要求按专门 PPT skill 学习落地）——加载 jingmei-ppt skill（foundations/editorial-gallery/pptxgenjs-implementation 三份参考）按"设计系统分层+图片是内容+轮廓变化+垂直节奏"方法论重构，零新增依赖：planThemes 加页型→本地实景图映射+阴影 token+暗图提亮取景函数；PlanSlide 8 类页型独立 composition（每页实景配图+阴影卡+引言块，沉浸图页与分析卡页交替）；planPptx 同构（每页 addImage+shadow 对象，保留原生可编辑 addChart 条形图）；逐页浏览器核对修复品牌/生态/交付卡空带（垂直居中+幽灵序号水印）与 c4 死黑配图（needs→c5、卧室场景→c3）；PPTX 解剖验证 8 页含图（md5 与源图一致）+slide8 图表+各页阴影；分享页同步；typecheck+build+冒烟 24/24。vs 目标站：对方整页 PNG 拍平，我们每页实景配图+阴影层次+全原生可编辑，9/9 双胜
-> - 0.1.12（2026-10-07）：修复用户实测发现的 **PPTX 导出图片拉伸变形**（根因：pptxgenjs 浏览器版 sizing:cover 不读原图 intrinsic 尺寸、srcRect 恒 0 等效直接拉伸；此前仅 unzip 结构验证、未做视觉渲染是漏检教训）——planPptx 新增 coverCrop() canvas 按各页图框比例预裁剪（center/焦点），解剖验证 8 页嵌入图宽高比=放置框；LibreOffice headless 逐页渲染核对第 1/2 页内容均在画框内（python-pptx 全形状边界审计 0 越界）；暗图提亮层 transparency 语义修正（0=不透明，20 会刷白→62）；暗金主题 C 双端抽查通过；**jingmei-ppt skill 更新**沉淀"浏览器版 sizing 失效必须 canvas 预裁剪+宽高比解剖验证"与"死黑像素不可提亮救回、换图或焦点裁剪"两条硬经验；typecheck+build+冒烟 24/24。待办：平面图上传+产品图标点位匹配（新功能模块，需先拆解）、逐板块补齐不完整项
-> - 0.1.13（2026-10-07）：**设备点位布置完整闭环**（补齐百宝箱核心 stub 工具，用户确认数据源=新建 Product 表+种子、范围=编辑器+方案集成）——数据层 Prisma 新增 `Product`（20 条米家生态种子，9 品类含参考价区间）与 `FloorplanLayout`（图纸+归一化 0-1 点位 JSON），`PlanProject` 加 floorplanAssetId/layoutPoints；后端 `/api/products`、`POST /api/media/uploads`（multipart 落盘 uploads 卷）、`/api/layouts` CRUD+summary、`PATCH /api/plans/:id/floorplan` 挂接、公开分享页 `GET :token/floorplan` 免鉴权文件流；前端 `DeviceLayout` 编辑器（原生 pointer 拖拽零新依赖）+`pointOverlay.ts` 共享合成（预览/PNG/PPTX 同一份像素）；方案空间动线页（web+分享页+PPTX 白底竖框 contain 不拉伸）检测到挂接即换"客户户型·设备点位图"，步骤 3 出现布点入口。修复 LayoutModule 未进 @Module imports 导致 /api/products 404（nest build 无报错，靠路由日志排查——教训：新模块必须验证路由注册）。curl 全链路+浏览器+LibreOffice 渲染验证，冒烟 +4 用例 28/28
-> - 0.1.14（2026-10-07）：**百宝箱剩余可补齐 stub 真实化**（复用 0.1.13 数据与合成管线，零新增依赖）——`compositeHeatmap()` WiFi 信号热力图（网关点位 additive 径向光斑 红强绿弱+图例）、`compositeLightPlan()` 灯光点位效果图（暖光晕+标签）；`DeviceLayout` 三模式（`?mode=` 直达，产品库按模式过滤）；`QuoteStudio`（`/quote`）智能报价（选品配单+区间算价+CSV 导出含合规说明，纯前端不建表 YAGNI）；百宝箱 wifi-heat/light-plan/quote 三工具从 stub 变真实路由。修复合成图 `toDataURL('image/jpeg')` 写成 `.png` 的扩展名 bug。诚实边界：彩平图/区域效果图受 MiniMax image-01 `subject_reference` 仅支持人像参考的模型限制，保留跳 AI 生图页不造假。浏览器实测三工具+导出文件解剖验证通过，冒烟 28/28
-> - 0.1.15（2026-10-07）：**开源就绪整改**（用户要求去品牌商标、去自定定价、全站宽屏响应式、限流/高并发/部署审查、文档体现全部功能）——① 品牌脱敏：侧栏第三方品牌名→"智能家居 AI 工作台"、智能体旧具名→"智居助手"、素材库具名→"演示门店"、接单页与短视频页去第三方品牌字样统一"智居 AI 工作台"、源码注释"复刻目标站/与目标站对齐"中性化；参考站截图目录（`.ref-site/`、`replica/screens/`）与采集记录（含测试凭据）整体 `git rm --cached` 移出跟踪并入 `.gitignore`（本地留存）；`replica/recon.md` 域名/品牌/手机号/备案号通用化。② 收费去自定定价：扣费额度全改 env 驱动（`BILLING_*_TOKENS`，`.env.example` 附开源自配说明），前端移除写死价格（¥0.03/¥3/¥1/套餐价/单价 chip），统一"按额度计费/单价由部署者配置/按部署者定价"，产品硬件参考价保留。③ 工作台重设计：内容区 960px 锁死→流式 `clamp(720px,86%,1380px)`+断点递进，品牌光晕背景，快捷卡 `auto-fit minmax(230px,1fr)` 宽屏 5 列铺满+图标色块+悬浮层次，chip 点击填入。④ 修复 antd 静态 message/Modal 脱离 App 上下文（实测偶发 `e.success is not a function`）：根节点包 `<App>`，11 页+MainLayout 静态方法全迁 `App.useApp()`。⑤ 安全/限流/部署审查：`trust proxy`（反代后按真实 IP 限流）、注册登录加严 `@Throttle 10/min`、生产默认密钥/密码拒绝启动+Swagger 关闭、compose `${VAR:?}` 强制注入、额度事务原子无超扣竞态复核。⑥ README 重写（完整功能地图+开源自部署定位+模型计费配置+安全限流+路线图）。全站浏览器多分辨率实测（16 路由零品牌命中、message/modal 四类正常无报错、宽屏无溢出）+门禁 typecheck/build/冒烟 28/28
-> - 0.1.16（2026-10-08）：**全面完整性检查与补齐**（用户要求审计所有功能模块完成度、用 skill/插件补充开发并验证、更新文档、清理无效文件）——Explore 子代理只读审计定位 4 处真实缺口（其余 0.2.0/0.3.0 标记为计划内预留、后端无孤儿模块、TokenLedger userId 记账完整）：① AI 生视频首帧真实化（此前 `beforeUpload={()=>false}` 死功能+死链接）：首帧经 uploads 落盘、`/api/media/videos` 新增 `firstFrameAssetId`（校验前置避免白扣额，读本地文件转 base64 data URL 切 `I2V-01-Director`；WebSearch 核实 MiniMax v1 API 原生支持 first_frame_image、尾帧需 V2/H3 故诚实移除假控件）、"从我的资料选择"真实弹窗、比例参数从硬编码改真实传递；② 使用指引首次登录自动弹一次（localStorage 按用户 id）；③ 我的资料 onError 降级"原文件暂不可用"占位；④ 生图本次会话多图左右翻页；⑤ "我的智能体"真实化（localStorage 持久化自建+人设经 `ChatStore.send` 第三参注入 system prompt、会话续聊沿用人设）。修 3 个实测 bug：Popconfirm portal 事件冒泡误跳转（删除控件移出卡片）、validateFields rejection 未捕获、选填简介 undefined.trim()。清理：删 tokens.ts 三个零引用导出、删过时 S03-home 截图（旧 960px 版已失真，MCP 截图工具无法写工作区暂不重拍）、删空目录 design/；页面 title 与登录页脚统一"智能家居 AI 工作台"。冒烟 +2 用例=30/30，浏览器实测全链路+两轮 bug 复测 console 0 error
-> - 0.1.17（2026-10-08）：**模型配置中心**（用户要求"模型测试界面应是模型配置界面，指导完整配置大模型参数，国内外最新大模型+本地模型+ComfyUI 都支持接入，界面要完整"）——① 对话 `LlmService` 从 MiniMax 直连重构为 OpenAI 兼容 provider 抽象（`LLM_BASE_URL/KEY/MODEL`，未设回退 `MiniMax_*` 向后兼容），一套抽象覆盖 DeepSeek/通义千问/智谱/Kimi/OpenAI/MiniMax 云端 + Ollama/LM Studio/vLLM 本地（WebSearch 核实各 provider 最新 base_url/模型名）。② 生图 `IMAGE_PROVIDER=minimax|openai|comfyui` 三路由，新建 `image-provider.ts`：MiniMax image-01 / OpenAI images(gpt-image-1) / 本地 ComfyUI（按官方 Server API `POST /prompt→轮询 /history→/view`，非 txt2img；节点 id 由 `COMFYUI_*_NODE` 配置），内置 `comfyui-workflow.json` SD1.5 模板+compose 只读挂载开箱可用。③ `GET /api/admin/model-config`（super_admin，Key 固定短掩码不回传明文/长度）+`POST test-chat` 连通探测。④ 前端 `ModelConfig` 页替换旧 `ModelTest`：三能力概览卡+连通测试+云端/本地/ComfyUI 三 Tab 引导表格（Base URL/推荐模型/获取 Key 外链/安装启动）+.env 示例一键复制，路由 `/model-config`。修 2 实测 bug：compose 传 `VAR=` 空串使 `config.get(key,default)` 返回空破坏请求（加 `env()` 规范化空串回退默认）、脱敏 Key 121 圆点撑爆 Tag 致横向溢出（改 `••••`+末四位+网格 `minmax(0,1fr)`，三档视口复测无溢出）；删孤儿 `LlmController`/`ModelTest.tsx`。冒烟 +1=31/31，curl+浏览器实测全绿，README 模型章节重写
-> - 0.1.18（2026-10-08）：**模型配置在线可编辑**（用户批评 0.1.17 页面"全是固定不可修改、逻辑有问题，右侧超出屏幕"，要求本地/在线模型均可编辑+引导+持久化）——① Prisma 新增 `ModelSetting`（chat/image/video 三条 JSON 行），配置优先级 **DB 在线保存 > .env 部署默认**；新建 `ModelConfigService` 统一解析层，`LlmService`/`MediaService` 生成链路改运行时读取，**保存即生效无需重启**。② API 扩展：`PUT /admin/model-config/{scope}`（Zod 校验；apiKey 留空=保持原 Key、其余空串=清除回退 env）、`DELETE /:scope` 恢复 .env 默认、`POST test-image/test-video` 连通探测（comfyui=/system_stats、openai=/models、minimax=ping）。③ 前端重构为三张可编辑卡片（Base URL/API Key Password 输入仅回显末四位/模型/ComfyUI 地址+工作流+四节点映射），每卡「保存/连通测试/恢复默认」；接入指南表格加「选用」一键预填；页面改纵向卡片流式布局修复右侧溢出。④ Key 只进不出（冒烟断言响应不含明文）。冒烟 +7=38/38，浏览器实测 1440/1920/768 三档无溢出、编辑→保存→刷新持久化→恢复默认全流程通过，console 0 error
-> - 0.1.19（2026-10-08）：**生视频 provider 可选 + ComfyUI 配置常驻**（用户批评生视频"直接指向 MiniMax 不可自选"、"ComfyUI 配置在哪里"，要求每个配置核对正确）——① `VIDEO_PROVIDER=minimax|openai` 双路由：新建 `video-provider.ts`（WebSearch 核实 OpenAI Sora 2 videos API `POST /videos→轮询 GET /videos/{id}→GET /videos/{id}/content`，seconds/size 由时长/画质/比例映射），`generateVideo` 按 provider 分发，死代码 `saveRemote` 移除。② 前端生视频卡加 Provider 单选（MiniMax Director/OpenAI Sora）、标题动态显示当前 provider、模型可填（sora-2），连通测试按 provider 探测（openai 走 GET /videos，401/403 判 Key 无效）。③ ComfyUI 配置从"切到 comfyui 才显示"提升为**独立常驻卡片**（地址/工作流/四节点+专属 `test-comfy` 探测 /system_stats），生图卡选 ComfyUI 时出引导提示指向该卡。④ 概览 API 三能力加 `providerKey` 机器键供表单绑定；compose 透传 VIDEO_*。冒烟 +2=40/40，curl 真实 key 验证 test-video/test-image 通过、test-comfy 诚实报未运行，浏览器实测 provider 切换→保存→恢复全流程+三档无溢出+console 0 error
-> - 0.1.20（2026-10-08）：**缓存根治 + 默认最高权限 + 个人设置 + 数据备份与磁盘治理**（用户报告 /model-config SyntaxError+ERR_ABORTED、侧栏个人卡需真实化、开源免费使用默认最高权限、数据可备份、限流/磁盘/日志长期稳定、docker 升级不丢数据）——① 根因：发版后浏览器缓存旧 index.html 引用失效 hash chunk，SPA fallback 把 HTML 当 JS 返回→nginx 对 index.html/SPA 回退加 no-store（hash 资源仍 immutable），实测 console 0 error。② 权限匹配开源定位：tenant_admin 补 `platform:billing:manage`（注册即建租户=默认完整配置能力，各人填自己的 key/本地模型），前端按权限动态匹配，viewer 仍 403（RBAC 隔离保留）。③ 侧栏个人卡真实化：头像可点+自定义底色、设置弹完整「个人设置」弹窗（昵称/头像色 ColorPicker/主题三选/修改密码/备份/存储治理，`PATCH /api/auth/profile`+`User.avatarColor` 迁移）、退出 Popconfirm。④ 备份：`GET /api/admin/backup` 全库 18 表 JSON 下载+uploads/backups 留底。⑤ 磁盘：`GET /api/admin/storage` 占用统计（UPLOAD_QUOTA_MB 默认 4096）+`POST storage/cleanup` 清理 30 天前未引用产物（行+文件）；compose json-file 日志轮转 10m×3；限流 env 可配（RATE_LIMIT_GLOBAL 默认 300、RATE_LIMIT_AUTH 10）。冒烟 +6=46/46（含 viewer 403 回归改造），浏览器实测设置弹窗全流程+新注册用户默认可用模型配置+三档无溢出+console 0 error
-> - 0.1.21（2026-10-08）：**开始接单板块完整开发**（用户指出该板块"还没有任何开发"，要求联网 GitHub 找匹配方案、对接 agent 协助、补齐不遗漏）——联网调研 Twenty CRM/NextCRM/Headless CRM 的 lead pipeline 模式（同为 NestJS/Prisma/TS 栈），复用自有栈自建不引入框架。① 数据层 OrderRequest（客户/房屋/需求/预算/生态/状态机/挂接 planId/失单原因）+ OrderNote（跟进），migration add_order_requests。② 后端 orders 模块：CRUD + 状态机 TRANSITIONS（new→qualified→proposed→quoted→won，任意非终态可 lost、lost 可重新激活，非法跳跃 400）+ AI intake（粘贴客户原始描述→LlmService.chatObject 抽取结构化字段+推荐品类→按品类查 Product 库取真实候选，解析成功才扣额）+ AI 跟进建议（按状态+需求+最近跟进给下一步话术）。③ 权限 order:manage（tenant_admin/operator 具备）租户隔离，新表纳入备份清单。④ 前端 OrderStudio 从纯 UI 壳重写为真实工作台：左侧接待列表按状态分组、右侧步骤条向导、新接待弹窗 AI 解析建档、跟进 Timeline、AI 建议、方案挂接 Select 复用 /api/plans、失单/重新激活。冒烟 +10=56/56
-> - 0.1.22（2026-10-08）：**外部知识库联动（WeKnora / Obsidian）**（用户要求知识库兼容客户本机部署的 Obsidian 或微信开源 WeKnora，性能足够即拉最新仓库自部署，每个板块支持 agent 接口联动、权限合理、操作留痕）——联网学习两引擎接口协议（WeKnora：Tencent/WeKnora，Go，X-API-Key 认证，POST /knowledge-search + GET /knowledge-bases；Obsidian：Local REST API with MCP 插件，Bearer 认证，POST /search/simple + GET /vault/{path}），采用纯 HTTP 适配器接入不引入框架（与 ComfyUI 同模式）。① `knowledge-adapter.ts` 双适配器统一返回 KnowledgeChunk[]，ping 连通探测，formatKnowledgeContext 拼注入上下文（≤5 段/段 1600 字）。② ModelSetting 加 knowledge scope（provider/baseUrl/apiKey/kbIds/enabled），DB>.env、Key 短掩码、保存即生效、恢复默认；compose 加 extra_hosts host.docker.internal:host-gateway 让容器访问宿主机引擎。③ LlmService 加 RagContext，chat/chatObject/chatJson 传入即自动检索注入 system prompt，已接入对话/接单 intake/方案生成三链路，检索失败降级无知识库模式不阻塞主链路。④ /api/knowledge/external（GET/PUT/DELETE/test/search）要求 knowledge:manage 权限租户隔离，每次检索含降级写 AuditLog（action=knowledge.search）。⑤ 前端知识库页加「外部知识库联动」卡（provider 单选+地址+Key+库 id+保存/连通测试/检索演示/恢复默认+启用开关+两引擎部署指引）。修实测反馈：provider 不使用时可保存关闭+恢复默认、检索空提示区分未启用与无命中。协议级 mock 验证双适配器 curl 端到端通过；冒烟 +6=62/62；浏览器实测配置→连通→检索命中→持久化→恢复默认全流程+三档无溢出+console 0 error
-> - 0.1.23（2026-10-08）：**产品图标库 + 户型图美化**（用户指出产品图标库未开发致 PPT 空间动线页只有圆点无图标、缺"平面图上传→美化→按产品布图标"链路）——① `product-icons.ts` 9 品类内联 SVG（24x24，零依赖），`categoryIconSvg()` React 渲染 + `categoryIconDataUrl()` canvas 绘制。② `compositePoints` 圆底从首字改白色品类图标（按品类去重预加载），`compositeLightPlan`/`compositeHeatmap` 同步；因预览/PNG/PPTX/分享四端共用合成函数，图标全端一致。③ DeviceLayout 画布 DOM 点位 + 产品库列表按钮渲染品类图标。④ `enhanceFloorplan()` canvas 确定性增强（白底+2% 截断对比拉伸+S 曲线），新增「美化图纸」按钮重新入库替换底图、归一化点位不变；刻意不用 AI 重绘（会篡改墙体尺寸，危险），AI 彩平示意稿走「AI 生图」板块（诚实边界）。⑤ README 新增「知识库联动优势与场景」小节。冒烟 62/62（纯前端渲染层），浏览器实测产品库 20 按钮带 9 类图标、布点圆底+白色图标（DOM 验证 path fill=#fff 无首字）、美化替换底图点位保留、导出 PNG 正常、三档无溢出、console 0 error
-> - 0.1.24（2026-10-09）：**产品中心独立板块 + 产品图=点位图标 + 设置入口统一**（用户登录参考站实地审查后指出：底部「设置」重复造轮子应进个人中心；图标库无独立界面，要求对齐参考站呈现与联动）——参考站审查结论：无独立图标库页，产品中心=公共库/我的库双 tab 列表，产品图即点位图标，"复制到我的库"联动报价/点位/方案选品。① 数据层：`Product` 加 `tenantId`（null=公共库）/`brand`/`model`/`unit`/`imageUrl`，`name` 去全局 unique 改应用层查重（migration `product_tenant_fields`），seed 改 findFirst+update/create 幂等。② 后端：`GET /api/products` 合并公共+我的；新增 `POST /products/mine`、`PATCH/DELETE /products/:id`（findFirst {id,tenantId} 租户隔离，公共库不可改删）、`POST /products/:id/copy-to-mine`。③ 前端新页 `ProductCenter.tsx`（/products + 百宝箱卡直达）：双 tab 计数、搜索分类筛选、新增/编辑 Modal 含产品图上传（/api/media/uploads）、复制到我的库、报价/点位联动入口。④ 点位联动：布点携带产品图存为点位 `iconUrl`，`compositePoints` 有图圆裁产品照片（白底 cover）、无图回退品类 SVG，DeviceLayout DOM 同步，四端共用全端一致。⑤ 设置入口统一：侧栏「设置」/顶栏「个人设置」→跳 /tokens，「资料与偏好」+「数据备份与存储治理」两卡迁入 TokenCenter，删 `ProfileSettings.tsx`。修复部署回归：api 容器旧镜像 seed 用 `product.upsert` 撞已删唯一约束致重启循环→`docker compose build api web` 重建。冒烟 +10=72/72（CRUD/查重/复制/租户隔离/合并列表），浏览器实测四项全 PASS：双 tab 复制+1、新增弹窗、设置跳 /tokens、昵称保存、点位分组渲染、三档无溢出、console 0 error
-> - 0.1.25（2026-10-09）：**全站流式布局无留白 + 产品中心补齐（侧栏入口/每产品换图/agent 批量处理）**（用户两次批评宽屏响应式：各页卡片忽宽忽窄、拉宽后卡片左右大片留白，要求"4K 也拉满、每个板块统一、不可留白"；并指出产品中心侧栏无入口、每个产品都要能换成自己上传的图、支持 agent 统一处理）——① 布局根因：各页顶层容器混用 maxWidth 1080/1180/1280/全宽，统一 1380 居中仍留白。`pageContainerStyle` 去一切封顶（width:100%），MainLayout 统一 padding；ProductCenter/TokenCenter/ModelConfig/OrderStudio/MyAssets/QuoteStudio/AgentMarket/TreasureBox/DeviceLayout/ContentExtract 逐页放开；Dashboard 内容区 100%；ImageStudio/VideoStudio 双列改 `flex:1 1 46%/54%`（原右列锁死 460/420）；PlanStudio 步骤条去 1080；保留表单等合理窄元素限宽但父卡铺满；PlanShareView 分享页 960 居中不动。② 产品中心：侧栏「AI 能力」加入口+selectedKey；公共库行「传图」按钮（后端 `updateProduct` 放宽——公共库仅可改 imageUrl、改文案 400，其余仍租户隔离）；`media.service.resolveReadable` 让被启用产品引用的图跨租户可读（文件流端点改用）；`POST /api/products/ai-process` agent 批量处理（chatJson 一次补全缺失品牌/型号/布置提示仅写回我的库行 + 生图 provider 逐个出白底主图，≤20、单个失败不阻塞、key 未配降级仅文案、AuditLog=product.ai-process），前端勾选计数+确认弹窗+结果提示。③ 存储治理：cleanup 引用集纳入产品主图防误删。④ Fixed：generateImage 扣费前校验 key（原扣后校验，批量失败白扣）。冒烟 +6=78/78（公共库换图/ai-process 校验/跨租户读取 404→200），浏览器实测四档视口（768/1440/1920/2560）：/order 双栏合计 2232 铺满、10 页主卡片占内容区约 97% 无居中留白、全档无横向溢出、console 0 error
-> - 0.1.26（2026-10-09）：**传图根因修复 + 图片压缩 + lucide 图标库 + 品类字典/自定义分类 + 品牌管理 + 知识库产品联动**（用户批评：图片传图不成功；要求完整可商用智能家居图标库、上传图尺寸不对要压缩、产品库分类覆盖市面全品类+支持自定义、品牌管理、产品中心内容格式不符合要求、要与知识库产品对应、支持 agent 处理和管理、数据持久化）——① 传图根因：nginx 未设 `client_max_body_size`（默认 1m，手机照片直接 413）→ `/api/` 加 12m；`api()` 封装无条件 `response.json()`，DELETE 空 body 抛 SyntaxError（分类删除报错根因）→ 先 text() 空体返回 undefined；curl 实测经 nginx 传 1.25MB PNG 201。② 压缩：`compress.ts` canvas 原生（最长边>1024 或 >800KB 等比缩放，PNG 保透明/其余 JPEG q0.85），产品图+户型图上传前统一处理，实测缩略图 naturalWidth=1024。③ 图标库：自绘 9 类 path 换 lucide（ISC 免费商用）24 物体样式线条图标，按需显式导入（避免全量 2129 图标打包），stroke 进 canvas 四端一致。④ 品类字典：新表 `CategoryDef`（migration category_def，预置 24 类 tenantId=null + 租户自定义；category-defs.ts 单一事实源），Product.category enum→自由字符串+service 白名单（未知 400 CATEGORY_INVALID），旧 security 归并 camera（seed 迁移+前端 LEGACY 兜底）；端点 GET /categories、POST /categories/mine（同名幂等）、DELETE /categories/:id（预置不可删、在用 400）；前端 categoryStore 字典单例+预置兜底，分类筛选/表单/徽章/点位分组全中文化，「分类管理」弹窗增删自定义分类（图标/颜色可选）；备份清单纳入 categoryDef。⑤ 品牌：列表品牌筛选（distinct）+弹窗 AutoComplete（选已有/输新品牌）。⑥ 知识库联动：`product-sync.ts` 纯函数，内容提取 product 文档两条确认路径（人工 confirm/自动确认）按 name+租户查重同步我的库（价格解析 ¥/区间/千分位、24 类中文关键词品类推断兜底 appliance、卖点进布置提示），失败降级 warn 不阻塞。⑦ ai-process 带品类字典提示词，LLM 返回字典内 key 自动归位分类。冒烟 +10=88/88（字典 24 类/自定义 CRUD/幂等/在用删除 400/预置不可删/知识库同步/品类推断），浏览器实测 8 项全 PASS（含删除修复复验、1.25MB 传图成功、lucide stroke 图标、24 中文分类、768/2560 无溢出、console 0 error）
-> - 0.1.27（2026-10-09）：**产品图方形裁切 + 全站导航文案统一**（用户批评：产品图不是正方形？比例不对不裁切？；要求各板块文字统一——AI 能力→AI 超能力、智能方案生成→智能方案、我的资料→我的资料库、优秀视频素材库→视频素材库、资源与账户并入系统管理含个人中心+模型配置；并要求核对每页内容前后端数据库匹配、无错误日志、内存正常后提交）——① `compress.ts` 加 `square` 选项：产品图 `square:true` 等比 cover 后中心裁切 1024x1024（短边对齐、小图不放大），户型图保持原比例（裁切会破坏户型）；实测 2400x1600 源图产品图→1024x1024、户型图→1024x683。② MainLayout 分组重构三组「AI 超能力/智能百宝箱/系统管理」，模型配置按 platform:billing:manage 权限动态加入（个人中心人人可见）；MyAssets/MaterialLibrary 标题、ImageStudio/VideoStudio「我的资料」引用、README 全部同步。③ Fixed：/works 视频缩略 `<video preload="metadata">` 消除预加载取消的 net::ERR_ABORTED 日志。门禁 88/88（纯前端），浏览器实测 5 项全 PASS（侧栏文案/页面标题/方形裁切/户型保比例/5 路由 console 0 error——用户看到的 2 条 TypeError 实为 trae-preview 注入脚本 `<anonymous>` 栈帧，与应用无关），docker stats 内存 api 139MB/web 10MB/db 50MB/redis 12MB 正常，api 日志 0 error/warn、web 0 次 4xx/5xx
-> - 0.1.28（2026-10-09）：**全局返回能力 + 个人中心布局标准化**（用户批评：素材库「查看素材」点击后无法返回，任何可点击的菜单界面都要支持返回；个人中心布局杂乱全挤左侧；要求每页布局有执行标准、审查每一页、确保板块开发完整后提交）——① MainLayout 顶栏加全局「← 返回」按钮（非工作台页一律显示，navigate(-1)，直达无历史回工作台），覆盖 15 个功能页。② MaterialLibrary「查看素材」从 window.open 跳独立图片页（离开应用无法返回）改为应用内 Modal 大图预览+「返回素材库」按钮，URL 不变。③ 确立全站布局执行标准：顶层 width:100% 流式（0.1.25）、功能页一律 PageHeader（标题+描述+右上操作区）、多卡片页 Row gutter=[16,16]+Col xs=24 lg=12 双栏网格卡片 height:100% 等高、表格/账本类全宽收尾、二级视图必须应用内可返回。④ TokenCenter 重排：账号卡全宽→行1 资料与偏好+我的额度→行2 邀请好友+数据备份与存储治理→行3 修改登录密码+账号安全（退出）→账本明细全宽；1920 实测左右各 781px 等宽、768 单列堆叠。门禁 88/88（纯前端），浏览器实测 5 项全 PASS：返回按钮回退生效、素材预览可返回、/tokens 双栏等宽、15 页逐页布局审查（标题正常/铺满 rightGap=0/间距 16 统一/无横向溢出）、真实 Chrome console 0 error。板块完整性：features.csv 中 partial 项（任务球后端持久化、我的智能体后端表、邀请返点结算、素材投稿链路、在线支付通道、短视频 IP 档案深度逻辑）均为路线图计划内预留（0.2.0/0.3.0），核心业务板块全部真实交付
-> - 0.1.30（2026-10-09）：**工作台输入区与真实能力对齐**（用户要求：div chip 按钮都要跟真实功能关联好，右侧发送位置要能选择模型，工作台每个功能都要正确可用匹配真实数据和交互）——① 新 `apps/web/src/lib/configStore.tsx` 共享激活模型上下文，一次性拉取 `model-config` + `model-config/profiles`，向全应用暴露 `profileName/chatBaseUrl/chatModel/chatKeyConfigured/imageProvider/videoProvider/refresh`。② `apps/web/src/store/ChatStore.tsx` send() 不再硬编码 `'MiniMax-M3'`，改用 `useActiveConfig().config.chatModel || 'MiniMax-M3'`，与命名方案激活/切换实时联动。③ `apps/web/src/pages/Dashboard.tsx` Sender `header` 区显示「当前模型 · 方案 · 模型名」药丸按钮 + Dropdown（当前项 disabled + 「去配置/切换方案」跳 `/model-config`），同列右侧合并「添加附件」`Upload beforeUpload`（4MB + 类型白名单 image/text/pdf/json/zip，错误 AntApp 弹 message.error）。④ Sender `footer` 区 4 个 div chip 真实可点击：`role="button"` + `tabIndex=0` + Enter/Space 键覆盖 a11y；「上传附件 → /content」「图生图 → /image」「生视频 → /video」「生方案 → /plan」。⑤ 附件缩略带自动渲染（图片 28px 缩略图可点 Modal 大图预览 + 「返回编辑」，其它 PaperClip 图标），× 单个删除；提交时附件摘要追加到 prompt。⑥ 能力状态条 6 个标签全部改为 `div role="button"` + keydown(Enter/Space) 跳实际能力页（AI 智能体对话/空间效果图/演示短视频/9 页方案 PPT/设备点位图/智能报价）。⑦ TS 语法修复：regex `\/` 后紧跟 `/` 歧义（`^text\//|^application`）改写为 `^text\/|^application` 避免 TS lexer 误判 regex 结束。门禁 96/96、curl：`/` 200 text/html、`/assets/index-*.js` 200、`/api/admin/model-config/profiles` 200、`/api/admin/model-config` 304、`/api/plans` 304；运行：api 日志 0 error、内存 api 170MB / web 12MB / db 50MB / redis 12MB 正常
-> - 0.1.33（2026-10-12）：**AI 智能体/生图/生视频点击即匹配完整提示词（复刻交互闭环）**——对照 recon S05/S06/F03 重做：生图 17 场景 chip 点击即把 40-80 字完整画面描述（〔场景：〕标记）写进 textarea 可见可删可改（≤3，取消精确移除），5 案例卡写整段提示词（原仅半句占位）；参考图从假拦截改真实上传+新端点 POST /api/media/images/reverse-prompt 视觉模型反推 120-260 字（空间/风格/色调/构图/材质/灯光）回填，这是纯文生图 provider 下同风格出图的标准做法，非视觉模型 503 诚实报错；生视频场景 5→8 条完整分镜 hint+3 视频案例卡，串「生图→首帧→I2V-01 出片」F03；12 个种子智能体配 starterPrompt 真实门店首条任务，点卡片带入工作台输入框，自建体生成开场任务；skillpack 补反推端点。门禁 smoke **108/108**（+2），浏览器逐点击实测 chip 多选/取消/案例/智能体卡片三闭环，console 0 JS error，api 0 error，api127/web14/db32/redis76MB
-> - 0.1.34（2026-10-12）：**AI 智能体显式人设：点击=调用该角色**——用户确认"智能体点击应该是调用这个功能的角色"。0.1.33 给 12 个种子智能体配了 starterPrompt，但 role 人设仍由 ChatStore `systemPromptFor(agent)` 按名字 `include('朋友圈'|'脚本'|'直播'...)` 模糊匹配，6 个名字不带关键词的角色（直播逐字稿/开头优化/vlog/第一视角/活动策划/GEO）启用后会落到通用兜底"你是「X」智能体"不专业。本版让智能体"自带人设"。① `apps/web/src/data/agents.ts`：每个 AgentDef 新增 `systemPrompt` 字段，12 个角色各 80-140 字中文明确服务谁/输出格式/口吻（如直播逐字稿=按开场/套餐/互动/逼单四段可直接照读、朋友圈=200 字内有现场感+九宫格与定位+不用违规极限词）。② `apps/web/src/pages/AgentMarket.tsx`：`openAgent` 用 `navigate('/', { state: { agent, systemPrompt, prompt } })` 同时携带 systemPrompt 与 starterPrompt；自建智能体走同 state 通道。④ `apps/web/src/store/ChatStore.tsx`：`effPrompt ?? systemPromptFor(effAgent)`——有显式人设走显式，没传（旧的持久化会话）才回退名字猜测，向后兼容。⑤ 仓库卫生：`apps/aisaas/.gitignore` 补 `replica/diffs/` 防止后续差异图误入索引（clone-screens/diffs 是 0.1.15 历史遗留，本版不清理历史索引避免改写提交记录）。版本同步：根/apps/api/apps/web 三个 package.json 升 0.1.34，CHANGELOG.md 新增段。门禁：typecheck ✓ / build ✓ / smoke **108/108**；浏览器实测朋友圈文案卡片→跳工作台→输入框已带"今天交工了一套 128㎡ 的三室两厅全屋智能..."完整首条任务+智能体名显示在输入框上方
-> - 0.1.35（2026-10-12）：**我的资料 CRUD 补齐：最基本的备份/修改/删除能力**——用户审查指出"新建/上传的资料要支持备份/修改/删除"。按马尾辫 7 级阶梯核查：Product/Category/Layout/Plan/Order 都有完整 Post/Patch/Delete + 前端按钮；`MediaAsset`（图片/视频）后端**只有 POST + GET 完全没有 PATCH/DELETE**，前端 MyAssets 也没有重命名/删除按钮；ContentExtract 两个表均无删除列。① 后端 MediaService 加 `renameAsset` + `deleteAsset`（本租户 findFirst、跨租户 404、复用 storage/cleanup 的公共产品图引用保护逻辑 400 ASSET_REFUSED_BY_PRODUCT、删除异步 unlink 本地文件 try/catch 文件不在照常删行）；MediaController 加 PATCH/DELETE /api/media/assets/:id；schema 加 renameAssetSchema（trim+min 1+max 100）。② ContentService.removeDocument 同时支持 documentId 与 jobId 两种入参（jobs 用 jobId、docs 用 documentId）共用 DELETE。③ 前端 MyAssets 每张图/视频卡片加 Dropdown"更多操作"含重命名/删除：实测 antd v6 Dropdown item 内嵌 Popconfirm 会被外层 outside-click 关掉，改用 antd Modal 二次确认更稳。④ 前端 ContentExtract 两个表的操作列加 antd Popconfirm 删除按钮。⑤ 路径 bug：原 `@Controller('content/extractions')` 下 `Delete('documents/:id')` 实际为 `/api/content/extractions/documents/:id`，原 smoke 只测过 list 没测过 delete，本版补齐 DELETE 断言覆盖。⑥ smoke +11 断言：PATCH 200/空标题 400/跨租户 404/引用保护 400/解引用后 200/DELETE 跨租户 404/DELETE 200/已删再删 404 + content DELETE jobId 200/204/列表不见/重复删 404。版本同步根/apps/api/apps/web 升 0.1.35。门禁 typecheck ✓ / build ✓ / smoke **119/119**；浏览器实测 MyAssets 上传→"更多操作"→"重命名" Modal 改"big-photo-重命名后"→保存→列表更新；"删除" Modal 二次确认→确定→列表去卡；运行 api 133MB / web 9.78MB / db 32MB / redis 14MB 正常，api 日志 0 error/warn
-> - 0.1.32（2026-10-12）：**全站马尾辫审查：token 安全/iOS PWA/部署一致性/版本同步**（用户要求用最新马尾辫 skill+MCP+iOS skill 审查，先联网核对版本再开发，逐板块核对功能/权限/多租户/agent/日志内存，不造轮子，学习先记 md，不新建多余 md）——环境诚实边界：无 laya mcp 与 iOS 原生 skill，实际用 Sequential Thinking/Context7/web_research MCP 辅助；项目多端为 PWA（iOS Safari 添加到主屏幕）无原生 iOS 工程。联网核对 npm registry：react 19.3.0/antd 6.6.5/nest 12.1.2/prisma 7.10(8.0 仅 RC 不追)/vite 8.3.4/lucide 1.55.0/@ant-design/x 2.9 同步，TS 7 大版本不追。① tokenVersion：User 加 tokenVersion+migration 20261012030000，JWT 带 tv，jwt.strategy 每请求比对 DB，改密自增→旧 token 401 TOKEN_REVOKED 且 refresh 也拒，前端改密后自动登出；图片 ?token= 链接同步失效。② iOS PWA：viewport-fit=cover+apple-mobile-web-app-capable/status-bar-style/title+mobile-web-app-capable，manifest 补 scope/orientation/maskable，styles.css 仅 standalone 应用 safe-area-inset 顶栏/侧栏/底部。③ ComfyUI 模板 git mv 根目录→apps/api/（原 Dockerfile 未 COPY 致容器内 ENOENT），media.service 多候选路径解析兼容容器 CWD=/repo 与本地 dev CWD=apps/api，非法 JSON 明确报错，前端文案同步。④ skillpack 补 GET /api/tenants/current/tokens 额度自查端点。⑤ git rm .codex-review/（含本机绝对路径的陈旧笔记）。⑥ 依赖升 nest 12.1.2/vite 8.3.4/lucide 1.55.0。审查通过项：argon2+防枚举、生产 fail-fast、Swagger 生产关闭、CORS/trust proxy、300+10/min 限流、CASL RBAC 实时加载、TenantGuard 成员校验、业务表删除租户前置校验、17 路由 57 API 全对应、无死码；ModelSetting/ModelProfile 全局表为 0.1.19 自部署既定架构（SaaS 化 0.2.0 演进项）。门禁 smoke **106/106**（+5 tokenVersion 断言），浏览器实测 PWA meta/manifest/11 列表头/ComfyUI 文案/console 0 JS 错误，容器内模板就位，api 0 error，内存 api230/web18/db91/redis76MB 正常
-> - 0.1.31（2026-10-10）：**产品中心标准主数据 + 智能报价标准口径**（用户指出产品中心表格不是标准完整表格，价格定价不会、多级返利未体现、产品无 SN 码/编码，按标准 ERP/PIM 口径补齐）——① Prisma Product 新增 `sku`/`barcode`/`snRule`/`spec`/`warranty`+三级价格 `priceRetail`/`priceProject`/`priceDealer`+三级返利 `rebateL1`/`rebateL2`/`rebateDesigner`共 11 字段；migration `20261010030000_product_master_data` 已部署；`@@index([sku])`。② zod 返点 0-100、价格 0-10,000,000 整数上界；非法返点 400 拒绝；字段长度统一约束。③ service 透传全部新字段，写入 priceRetail+priceProject 时自动同步旧 `priceMin=工程`、`priceMax=指导` 保留点位清单兼容。④ 内容提取 syncProductFromDocument 价格同步：单值→retail、区间 min→project/max→retail；spec 入库。⑤ seed 21 款补全：店内码 21 前缀（EAN 保留段，非真实品牌码）、自有 SN 前缀（`SJ-GW-`/`SJ-LK-` 等）、24-60 月质保、经销≈工程×0.9、按价位档三级返利 8-12%。⑥ `apps/web/src/pages/ProductCenter.tsx` 11 列固定宽表 scroll x=1680（产品含 SKU/分类/品牌·型号/商品条码/SN 码规则/规格参数/质保/指导价·工程价·经销价/多级返利蓝·geekblue·紫/布置提示/操作），编辑 Modal 4 段分组 720px 双列 + 保存前 dealer≤project≤retail 校验。⑦ `apps/web/src/pages/QuoteStudio.tsx` 切换官方指导价/工程价计价口径 Segmented；表格含 SKU/条码/SN/规格/单位/成本·对外单价/小计·毛利；底部 6 卡 auto-fit 含三级返利测算；CSV 列含全字段。⑧ skillpack 同步 `POST /api/products/mine` 与 `PATCH /api/products/:id` 新字段。⑨ BiographyStudio 用 pageContainerStyle 统一流式，三种专访方式三卡 auto-fit 1fr 240+，主选区 primary 描边/背景，IP 档案按 agent 真实读取 ChatStore。门禁：typecheck ✓ / build ✓ / **smoke 101/101**（+4 用例验证标准主数据落库与价格返利校验），端到端 API 实测产品 21 行公共库带三价三返，POST 写入 11 字段全数持久化；运行：api 0 error，内存 api 128MB / web 8.7MB / db 87MB / redis 76MB 正常
-> - 0.1.29（2026-10-09）：**多套命名模型方案 + Agent 技能包 + JWT 刷新 + PWA**（用户要求：模型配置支持创建多个名称保存、不同需求用不同模型；审查项目使用 2026 最新稳定技术栈、无重复造轮子、本地大模型与 ComfyUI 联动完整、agent 联动提供完整技能包在界面可复制、token 可更新避免过期丢数据）——① 新表 `ModelProfile`（migration model_profile）：把当前对话/生图/ComfyUI/生视频/知识库各 scope 的配置整体快照为命名方案（如「文案快省」「出图高质量」），一键「切换使用」即时写回 ModelSetting 生效（运行时链路零改动，零回归风险）；同名覆盖更新；当前使用方案不可删；激活/非激活互斥；备份清单纳入。② `GET /api/admin/model-config/agent-skillpack` Agent 技能包：返回完整 Markdown（API 端点清单 + JWT 登录/刷新/认证 + 计费/权限/限流规则 + 典型工作流提示词 + 当前生效 provider 摘要），**绝不回传明文 Key**；模型配置页「Agent 集成技能包」卡一键复制即可粘贴给 Claude/GPT/Trae/Cursor 等外部智能体。③ `POST /api/auth/refresh` JWT 刷新端点：携带旧 token 换新 token（延长有效期）；前端 AuthContext 6h 巡检 exp、<2 天自动续期；「个人中心 / 账号安全」卡新增手动「刷新登录令牌」按钮。④ PWA 多端应用：manifest.webmanifest + icon.svg（SVG 矢量，零二进制依赖）、theme-color #5B5BF0、display standalone；nginx 补 `types { application/manifest+json webmanifest; }` MIME；`index.html` 接入 manifest/icon/app-touch-icon/meta theme-color。⑤ 增量审计：本次未重写任何已有方案/接口/组件，全部新增（"零重复造轮子"硬约束已验证）。技术栈版本：antd 6.6.5 / react 19.3 / nestjs 12 / prisma 7.10 / lucide 1.53.0（ISC）均为 2026 年内最新稳定版。门禁 96/96（+8：方案保存/列表/激活/删激活保护/技能包不含明文/JWT 刷新/新 token 鉴权/方案 active 状态），端到端 curl 验收：list/save/activate/delete-active-400/delete-inactive-200/JWT refresh/PWA manifest 200+application/manifest+json/icon 200+image/svg+xml；运行：api 日志 0 error、内存 api 168MB / web 12MB / db 50MB / redis 12MB 正常
+## 版本沿革
+
+0.x 是开发迭代期，功能持续追加与修正。为免公开仓库变成过程日志，
+下面按阶段聚合；每版一行主题见 [CHANGELOG.md](./CHANGELOG.md)，
+完整过程记录留在内部档案仓库。
+
+| 阶段 | 日期 | 主题 |
+|---|---|---|
+| 0.1.0 – 0.1.4 | 09-24 → 10-06 | MVP 骨架、三源内容提取、生成链路接通 |
+| 0.1.5 – 0.1.19 | 10-06 → 10-08 | 设备点位闭环、模型配置在线可编辑、生视频 provider 可选 |
+| 0.1.20 – 0.1.34 | 10-08 → 10-12 | 缓存与磁盘治理、接单板块、外部知识库联动、智能体显式人设 |
+| 0.1.35 – 0.1.46 | 10-12 → 10-13 | 资料 CRUD、AI 画布、WiFi 墙体识别与信号衰减、全屏阅读器 |
+| 0.1.47 – 0.1.58 | 10-13 → 10-15 | 局部重绘、团队成员与岗位角色模板、Agent 机器接入、头像上传 |
+| 0.1.59 – 0.1.77 | 10-15 → 10-16 | 权限粒度细分、额度与计费口径统一、交付前校对门禁、客户版文案净化 |
+| 0.1.78 – 0.1.89 | 10-16 → 10-17 | 版本号单一事实源、方案页数素材驱动核算、交付三件套服务端打包 |
+| 0.2.x | 10-18 → 10-20 | 额度措辞去商业化、WiFi 热力图状态持久化、两套交付模版、桌面端 |
+| 1.0.0 | 10-20 | macOS 桌面应用（内嵌 PostgreSQL + 本地 API + 前端）、CI、文档与合规闸门 |

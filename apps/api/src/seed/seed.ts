@@ -32,7 +32,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
       'tenant:billing:view',
       'tenant:token:grant',
       // 开源自部署：每个部署者都要配置自己的 API Key/本地模型，
-      // 模型配置中心默认对租户管理员开放（会员机制保留，权限不锁死）
+      // 模型配置中心默认对租户管理员开放（额度机制保留，权限不锁死）
       'platform:billing:manage',
       'platform:audit:view',
       'quote:read', 'quote:write',
@@ -52,7 +52,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     name: '销售顾问',
     scope: 'TENANT',
     // content:read/generate 是**接待客户做方案**这一步本身，不是「设计师的活」：
-    // 参考站把「生方案」放在首页主入口，与「生图」「生视频」并列成一级按钮
+    // 「生方案」放在首页主入口，与「生图」「生视频」并列成一级按钮
     // （首页 placeholder 原话「给 140㎡ 为一套三居室做全屋智能方案」，
     //  定位语「从内容获客到方案成交，全流程 AI 提效」）——
     // 方案生成是服务商获客到成交链路上的高频动作，销售岗每天都要用。
@@ -212,7 +212,7 @@ export async function main(deps: SeedDeps): Promise<void> {
     { name: '空调伴侣', category: 'appliance', iconKey: 'wind', priceMin: 89, priceMax: 149, perRoom: '每台壁挂空调 1 个', sku: 'AP-1101', sn: 'SJ-AC-', spec: '16A 红外+电量 · 1.5P 内挂机适配', warranty: 24 },
     { name: '地暖/新风控制器', category: 'hvac', iconKey: 'air-vent', priceMin: 239, priceMax: 399, perRoom: '分集水器/新风机位', sku: 'HV-1201', sn: 'SJ-FH-', spec: '周定时 8 时段 · 外置温控探头', warranty: 24 },
     { name: 'WiFi 面板 AP', category: 'network', iconKey: 'cable', priceMin: 239, priceMax: 399, perRoom: '每 60-80㎡ 1 个（Mesh 组网）', sku: 'NW-1301', sn: 'SJ-AP-', spec: 'WiFi6 AX3000 · 86 型 PoE · 双频 160MHz', warranty: 36 },
-    // 吸顶 / 路由器 / 室外三类 AP：参考站 WiFi 热力图按这四类分别布点，
+    // 吸顶 / 路由器 / 室外三类 AP：WiFi 热力图按这四类分别布点，
     // 只有面板 AP 会让「吸顶覆盖 vs 面板覆盖 vs 室外桥接」三种布点策略无法在界面上表达。
     { name: 'WiFi 吸顶 AP', category: 'network', iconKey: 'wifi', priceMin: 299, priceMax: 499, perRoom: '客厅/走廊顶装 1 个', sku: 'NW-1302', sn: 'SJ-AP-', spec: 'WiFi6 AX3000 · 吸顶明装 · 全向覆盖 · PoE 供电', warranty: 36 },
     { name: 'WiFi 路由器', category: 'network', iconKey: 'router', priceMin: 399, priceMax: 799, perRoom: '全屋 1 台（入户弱电箱）', sku: 'NW-1303', sn: 'SJ-RT-', spec: 'WiFi6 AX5400 · 全屋 Mesh 主路由 · 4 口千兆', warranty: 24 },

@@ -16,11 +16,15 @@ apps/desktop/runtime/
 apps/desktop/release/
 apps/desktop/build/icon.icns
 apps/desktop/build/icon.png
-# 目标站参考截图与采集素材（含第三方品牌 UI，仅本地留存，不入库）
+# 参考截图与采集素材（含第三方品牌 UI，仅本地留存，不入库）
 .ref-site/
-# 逆向/对标记录整体不入库：
-#   这些文档天然含第三方品牌名与对标站信息，开源仓库里放它们既不合规也没价值。
+# 过程记录整体不入库：
+#   这些文档天然含第三方品牌名与他人产品信息，开源仓库里放它们既不合规也没价值。
 #   需要查阅时本地仍在（git rm --cached 只移出跟踪，不删工作区文件）。
 replica/
+# 内部开发用的 agent skill（内部工作流方法论）。与产品交付无关，
+# 留在仓库里会让读者误以为本项目是照着某个产品做的，故不入库；
+# 本地仍可用（git rm --cached 只移出跟踪，不删工作区文件）。
+.claude/skills/
 # playwright-cli 自动化产出的快照/截图/console 日志（本地调试用）
 .playwright-cli/

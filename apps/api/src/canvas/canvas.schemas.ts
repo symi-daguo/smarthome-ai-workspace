@@ -21,7 +21,7 @@ export const createTurnSchema = z.object({
   prompt: z.string().trim().min(4).max(2000),
   /** 本轮基于哪一轮派生（分支树父）；不传则为对话线首轮 */
   parentId: z.string().uuid().optional(),
-  /** 参考图资产（仅本租户 kind=image）；我方生图暂不支持图生图，仅作上下文记录 */
+  /** 参考图资产（仅本租户 kind=image）；当前生图暂不支持图生图，仅作上下文记录 */
   refAssetId: z.string().uuid().optional(),
   size: canvasSizeSchema.default('1536x1024'),
   fitVideo: z.boolean().optional(),

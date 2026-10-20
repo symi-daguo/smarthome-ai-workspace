@@ -83,7 +83,7 @@ export function ImageStudio(): ReactNode {
   /** 自由生图的场景集合（以〔场景：…〕标记直接写 textarea）；毛坯房模式的场景存在 draft 里 */
   const [activeScenes, setActiveScenes] = useState<Set<string>>(new Set());
   const [size, setSize] = useState('1536x1024');
-  /** 适配视频：出图统一 16:9 且保持原图构图，可直接当视频首帧（参考站同款语义） */
+  /** 适配视频：出图统一 16:9 且保持原图构图，可直接当视频首帧 */
   const [fitVideo, setFitVideo] = useState(false);
   /** 背景意图：transparent / white 会写进提示词约束 */
   const [background, setBackground] = useState<'auto' | 'transparent' | 'white'>('auto');

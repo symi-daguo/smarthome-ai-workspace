@@ -85,7 +85,7 @@ const THEME_ITEMS: { key: ThemeMode; label: string }[] = [
   { key: 'dark', label: '深色模式' },
 ];
 
-/** 顶栏额度/会员卡片的显示开关（0.1.54）。默认不显示 */
+/** 顶栏额度卡片的显示开关（0.1.54）。默认不显示 */
 const SHOW_BILLING_KEY = 'show_billing';
 export const SHOW_BILLING_EVENT = 'billing-visibility-changed';
 /** 供设置页调用：写 localStorage 并广播（同标签页 storage 事件不触发） */

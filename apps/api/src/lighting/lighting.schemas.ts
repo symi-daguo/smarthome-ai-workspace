@@ -21,8 +21,9 @@ export type UpdateSceneDto = z.infer<typeof updateSceneSchema>;
 /**
  * 灯光问诊：五项任务 + 每项 3 道选择题的答案。
  *
- * 任务与问题照参考站 `lighting-master.js` 的 MODES 定义（2026-10-16 REA 复核），
- * 选项文案也照抄——门店的提问路径是一样的，改了会让用户"这不是我知道的那个工具"。
+ * 任务与问题按门店真实动线定稿（2026-10-16），
+ * 选项文案沿用门店口口相传的说法——提问路径本来就是这样，
+ * 改了会让用户"这不是我知道的那个工具"。
  */
 export const diagnoseSchema = z.object({
   modeId: z.string().min(1).max(40),

@@ -10,7 +10,7 @@ export const createPlanSchema = z.object({
   highlights: z.string().max(500).optional().default(''),
   keySpaces: z.string().max(300).optional().default(''),
   needs: z.string().max(2000).optional().default(''),
-  // 「补充需求与服务资料」9 项：选填，全部走 max(2000) 与参考站一致
+  // 「补充需求与服务资料」9 项：选填，全部走 max(2000)
   priorityNeeds: z.string().max(2000).optional().default(''),
   excludedItems: z.string().max(2000).optional().default(''),
   renovationStage: z.string().max(2000).optional().default(''),
@@ -30,7 +30,7 @@ export const createPlanSchema = z.object({
   clientRequestId: z.string().max(64).optional(),
   // 户型平面图（MediaAsset id）与设备点位（来自点位布局编辑器，空间动线页配图用）
   floorplanAssetId: z.string().uuid().optional().nullable(),
-  // 第 2、3 张户型图：创建方案时一并提交（对齐参考站第 1 步素材区）
+  // 第 2、3 张户型图：创建方案时一并提交
   extraFloorplanAssetIds: z.array(z.string().uuid()).max(8).optional().default([]),
   // 每张图的楼层名，长度与「主图 + 额外图」一致
   floorplanFloors: z.array(z.string().max(20)).max(8).optional().default([]),
@@ -124,7 +124,7 @@ export type UpdatePlanTemplatesDto = z.infer<typeof updatePlanTemplatesSchema>;
 
 /** 给方案挂接户型图与设备点位（点位布局编辑器 → 方案空间动线页） */
 
-/** 绑定场景视频：最多 2 条（参考站同口径），每条须为 uuid */
+/** 绑定场景视频：最多 2 条，每条须为 uuid */
 export const bindVideosSchema = z.object({
   videoAssetIds: z.array(z.string().uuid('视频资产 id 不合法')).max(2, '最多绑定 2 条场景视频').default([]),
 });

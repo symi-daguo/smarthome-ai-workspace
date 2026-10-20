@@ -67,7 +67,7 @@ export interface CoverageStats {
   weakAreaM2: number;
   threshold: number;
   /**
-   * 三档信号占比（0-1，2026-10-14 对齐参考站的「信号好 / 一般 / 弱」）。
+   * 三档信号占比（0-1，2026-10-14 定稿「信号好 / 一般 / 弱」）。
    * 与 ratio 的区别：ratio 是二值「达标/不达标」，tiers 是三档分布，
    * 能看出「勉强能用」与「完全没信号」各占多少——只报一个总覆盖率看不出布点是否均匀。
    * 分档线取阈值的固定比例而非绝对值，这样拖动阈值滑块时两者的关系保持稳定。
@@ -79,7 +79,7 @@ export interface CoverageStats {
 
 /* ============================ 通用 ============================ */
 
-/** 线性插值（参考站 mix 语义） */
+/** 线性插值 */
 export function mix(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }

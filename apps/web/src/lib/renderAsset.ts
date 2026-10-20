@@ -1,5 +1,5 @@
 /**
- * 装修效果图规则（对齐参考站 `app.js:751-850`）。
+ * 装修效果图规则。
  *
  * 三件事必须放在一起，否则界面和提交会各算各的：
  * 1. 上传约束：最多 5 张、超限报错、压缩口径
@@ -11,13 +11,13 @@
  * 效果图是展示图，可以缩。
  */
 
-/** 上限 5 张（参考站 PLAN_RENDER_MAX_FILES） */
+/** 上限 5 张 */
 export const RENDER_MAX = 5;
-/** 压缩阈值：>8MB 或最长边 >2048 才动手（参考站同口径） */
+/** 压缩阈值：>8MB 或最长边 >2048 才动手 */
 export const COMPRESS_BYTES = 8 * 1024 * 1024;
 export const COMPRESS_EDGE = 2048;
 
-/** 空间候选（参考站 datalist p2RoomOptions，共 11 项） */
+/** 空间候选（datalist，共 11 项） */
 export const ROOM_OPTIONS = [
   '玄关', '客厅', '餐厅', '厨房', '主卧', '次卧', '儿童房', '书房', '卫生间', '阳台', '全屋',
 ];
@@ -61,13 +61,13 @@ export function toggleRepresentative(list: RenderAsset[], index: number): Render
   });
 }
 
-/** 改空间名后重算代表图：同组只保留第一张（参考站 syncRenderRepresentatives） */
+/** 改空间名后重算代表图：同组只保留第一张 */
 export function onRoomChanged(list: RenderAsset[], index: number, room: string): RenderAsset[] {
   const next = list.map((a, i) => (i === index ? { ...a, room, roomConfirmed: false } : a));
   return ensureRepresentatives(next);
 }
 
-/** 每个非空空间组默认取第一张为代表图（参考站 syncRenderRepresentatives） */
+/** 每个非空空间组默认取第一张为代表图 */
 export function ensureRepresentatives(list: RenderAsset[]): RenderAsset[] {
   const seen = new Set<string>();
   return list.map((a) => {
@@ -80,7 +80,7 @@ export function ensureRepresentatives(list: RenderAsset[]): RenderAsset[] {
 }
 
 /**
- * 提交前校验（参考站 app:3661-3662）：
+ * 提交前校验：
  * 每张都必须有空间名且已确认，否则整批拒绝。
  * 返回可读报错，通过返回 null。
  */
@@ -95,7 +95,7 @@ export function checkRenderReady(list: RenderAsset[]): string | null {
   return null;
 }
 
-/** 空间分组 → 折算页数（参考站 app:3371：provided 模式 3 张合 1 页） */
+/** 空间分组 → 折算页数（provided 模式 3 张合 1 页） */
 export function renderPageCount(list: RenderAsset[]): number {
   const groups = new Map<string, RenderAsset[]>();
   for (const a of list) {

@@ -7,7 +7,7 @@ import type { CreateConversationDto, CreateTurnDto, UpdateConversationDto, Updat
 /**
  * AI 画布（对话式生图）：对话线 + 轮次树 + 异步生成作业。
  *
- * 三条不变量（与参考站语义一致，勿轻易改）：
+ * 三条不变量（勿轻易改）：
  * 1. 重新生成是「追加变体」不是覆盖：同一轮的 variants 只增不改，按 url 去重，已有项不重排编号。
  * 2. 分支是树不是线：每个轮次记 parentId，详情接口为每轮附带 children[]，前端自行构树与切换分支。
  * 3. 生图是异步作业：创建轮次只落库 pending 作业，HTTP 立即返回，出图在后台跑，前端轮询作业状态。
@@ -172,7 +172,7 @@ export class CanvasService implements OnModuleInit {
       if (!parent) throw new BadRequestException('PARENT_TURN_NOT_IN_CONVERSATION');
     }
 
-    // 参考图：本租户且必须是图片资产。我方生图暂不支持图生图，参考图仅作上下文记录到 params
+    // 参考图：本租户且必须是图片资产。当前生图暂不支持图生图，参考图仅作上下文记录到 params
     let refAsset: { id: string } | null = null;
     if (dto.refAssetId) {
       refAsset = await this.prisma.mediaAsset.findFirst({
@@ -325,7 +325,7 @@ export class CanvasService implements OnModuleInit {
 
   /**
    * 把结果 URL 追加进 assistant 轮的变体列表（出图完成后由 runJob 调用）。
-   * 去重规则照抄参考站：按 url 去重，同一张图不重复计数；已有项不重排编号，只补新项。
+   * 去重规则：按 url 去重，同一张图不重复计数；已有项不重排编号，只补新项。
    */
   async appendVariant(turnId: string, url: string): Promise<void> {
     const turn = await this.prisma.imageTurn.findUnique({ where: { id: turnId } });

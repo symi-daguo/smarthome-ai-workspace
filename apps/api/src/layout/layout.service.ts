@@ -20,7 +20,7 @@ export class LayoutService {
     private readonly idem: IdempotencyService,
   ) {}
 
-  /** 布点/报价选品数据源：公共库 + 本租户我的库（对齐参考站"我的产品库联动报价与点位"） */
+  /** 布点/报价选品数据源：公共库 + 本租户我的库 */
   products(tenantId?: string) {
     return this.prisma.product.findMany({
       where: { active: true, OR: [{ tenantId: null }, ...(tenantId ? [{ tenantId }] : [])] },
@@ -139,7 +139,7 @@ export class LayoutService {
     await this.prisma.product.delete({ where: { id } });
   }
 
-  /** 公共库产品复制到我的库（参考站"复制到我的库"联动规则） */
+  /** 公共库产品复制到我的库 */
   async copyProductToMine(tenantId: string, id: string) {
     const src = await this.prisma.product.findFirst({ where: { id, tenantId: null } });
     if (!src) throw new NotFoundException('PUBLIC_PRODUCT_NOT_FOUND');

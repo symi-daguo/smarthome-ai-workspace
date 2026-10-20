@@ -543,7 +543,7 @@ if (!NO_TRIM) {
       }
     }
   }
-  // ⚠️ 这里**不要**裁 @prisma/engines 的原生 schema-engine-<platform>：
+  // 这里**不要**裁 @prisma/engines 的原生 schema-engine-<platform>：
   // Prisma CLI 发现它缺失时会**自动去下载**（实测设了不可达代理仍能下载成功，说明它不走代理）。
   // 裁掉它等于把「首次启动必须联网下载 24MB」写进产品 —— 桌面端必须能完全离线跑，
   // 所以这个 24MB 必须留在包里。

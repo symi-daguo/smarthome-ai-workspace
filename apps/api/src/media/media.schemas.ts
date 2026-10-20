@@ -5,7 +5,7 @@ export const generateImageSchema = z.object({
   size: z.enum(['1536x1024', '1024x1536', '1024x1024']).default('1536x1024'),
   /**
    * 适配视频：出图统一按 16:9 视频画幅，并在提示词追加「保持原图构图不被裁切」。
-   * 参考站同款语义——原图保留，首帧与效果图使用同一构图，可直接拿去做视频首帧。
+   * 语义——原图保留，首帧与效果图使用同一构图，可直接拿去做视频首帧。
    */
   fitVideo: z.boolean().default(false),
   /** 背景意图：transparent / white 会写进提示词约束；auto 不干预 */

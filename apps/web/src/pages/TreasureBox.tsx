@@ -65,7 +65,7 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
 /**
  * 堆叠照片卡：三层错位叠放同一张语义图，整体居中。
  * 三层取景位置不同（background-position），避免「同一张图原样重复三次」的廉价感。
- * 角标压在图片右下角（对齐参考站），不挤占标题行。
+ * 角标压在图片右下角，不挤占标题行。
  */
 /**
  * 堆叠预览的三层。
@@ -180,7 +180,7 @@ export function TreasureBox(): ReactNode {
           <div
             style={{
               display: 'grid',
-              // 对齐参考站：宽屏每行 4 张，卡片留白更从容
+              // 宽屏每行 4 张，卡片留白更从容
               gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
               gap: 16,
             }}

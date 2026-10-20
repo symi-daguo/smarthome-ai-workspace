@@ -53,7 +53,7 @@ export function ThemeProvider({ children }: { children: ReactNode }): ReactNode 
         theme={{
           algorithm: resolved === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
           token: {
-            // 品牌主色：靛蓝系（比对标站的亮紫更沉更冷），明暗两套由算法自动派生
+            // 品牌主色：靛蓝系，明暗两套由算法自动派生
             colorPrimary: '#4F46E5',
             // 转角比常规 SaaS 更圆一档，配合自有阴影形成独立的视觉语言
             borderRadius: 12,

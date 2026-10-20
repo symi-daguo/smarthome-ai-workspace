@@ -29,7 +29,7 @@ import { AgentService } from '../agent/agent.service.js';
  * 模板升级时如何与用户自定义合并。这三件事在 Appwrite / Casdoor 里都需要额外代码，
  * 而 Appwrite 与 Cal.com 这类成熟项目**目前也都只提供固定档位**，说明这不是保守而是共识。
  *
- * ⚠️ **不能借鉴的项目**（许可证已逐个核实）：Zitadel、Plane、AppFlowy 是 AGPL-3.0；
+ * **不能借鉴的项目**（许可证已逐个核实）：Zitadel、Plane、AppFlowy 是 AGPL-3.0；
  * Directus 已从 GPL 改为 MSCL-1.0-GPL；NocoDB、Outline、Twenty 为非 OSI 的 Sustainable Use License。
  * 本项目规约禁止 GPL/AGPL，这些的**代码与文案一律不碰**，只借鉴 MIT/Apache/BSD 项目。
  */
@@ -75,7 +75,7 @@ export class TeamService {
   /**
    * 新建自定义角色。
    *
-   * ⚠️ **防提权**是这里唯一不能省的一步：没有它，任意「能管成员」的角色都能造一个
+   * **防提权**是这里唯一不能省的一步：没有它，任意「能管成员」的角色都能造一个
    * 含 platform:* 全权限的角色塞给自己，等于把权限体系整个击穿。
    * 规则：**只能授予自己已经拥有的权限** —— 你能给出去的，永远不会比你手上的多。
    */
@@ -321,7 +321,7 @@ export class TeamService {
 }
 
 /** 界面与下拉的展示顺序：从最高权限到最低。别按 key 字母排，读起来没有层次 */
-const TEMPLATE_ORDER = ['super_admin', 'tenant_admin', 'sales', 'designer', 'delivery', 'finance', 'purchase', 'marketing', 'service', 'viewer'];
+const TEMPLATE_ORDER = ['super_admin', 'tenant_admin', 'sales', 'designer', 'delivery', 'finance', 'purchase', 'marketing', 'service', 'operator', 'viewer'];
 
 /** 角色模板的人话说明。写在服务端而不是前端，是为了让 Agent 读清单时也能拿到 */
 const ROLE_TEMPLATE_COPY: Record<string, { summary: string; suitable: string }> = {

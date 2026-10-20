@@ -36,7 +36,7 @@
   **判断口径**：压在**界面容器**上（卡片 / 面板 / 页面底 / 提示框）的颜色一律走 token；
   压在**图片或画面之上**做标记的颜色（播放头、色温光晕、时间码胶囊）刻意写死并抽成具名常量 +
   注明理由，因为它们明暗两套主题下都要醒目——否则下次审查会被当成漏改项再扫一遍。
-  0.1.52 按此口径全站扫了 18 条路由，结论见 audit §6.5
+  按此口径全站扫过 18 条路由，结论已落到代码注释与本文这一段
 
 ### 工作台（首页）
 - 居中欢迎区 + 大输入卡（附件 / 图生图 / 生视频 / 生方案功能 chip）+ 5 张快捷卡（方案 / 海报 / 视频 / 文案仿写 / 找智能体）
@@ -52,7 +52,7 @@
   - **模型只读展示**「模型配置」页当前真实生效的模型，不提供选了不生效的下拉
 - **AI 画布**（`/canvas`）：像聊天一样连续出图——多轮对话、每轮可出多个变体（重新生成**追加**不覆盖）、
   基于任一历史图派生新分支（`‹ 分支 N/M ›` 随时切回）、每轮标注「基于哪张图」、历史轮次可拉回输入框继续改。
-  出图走后台异步作业 + 轮询，不长时间占连接。功能规格见 replica/ai-canvas-spec.md
+  出图走后台异步作业 + 轮询，不长时间占连接。
 - **WiFi 信号热力图**：上传户型图后**一键识别墙体**（Otsu 阈值 + 距离变换 + 连通域标记，
   纯前端确定性算法不调 AI），墙线可拖端点改方向、删除或手动补画；信号从设备四向扩散、
   **遇墙按系数衰减**，可设每墙衰减与有效信号阈值；填入图纸实际米数后得出比例尺，
@@ -138,7 +138,7 @@ echo "SEED_ADMIN_PASSWORD=$(openssl rand -base64 18)" >> .env
 
 ```bash
 cp .env.example .env          # 填入你的模型 key 与密钥（见下）
-docker compose up -d db # 或使用本机 postgres
+docker compose up -d db  # 或使用本机 postgres
 pnpm install
 pnpm db:migrate
 pnpm db:seed
@@ -239,9 +239,9 @@ source ~/.symi/notary.env && npm run notarize
 > **已签名的 app bundle 内部**写文件，破坏封印后 Apple 会直接拒收（本地验签却看不出来）。
 > 细节见《桌面打包方案.md》第十一节。
 
-> **要留出时间**：`.app` 压缩后 266MB，要整包传到 Apple 的云端。
-> 国内直连上行通常只有几百 KB/s，**单次上传约 25 分钟**，两次（app + dmg）就是近一小时，
-> 链路抖动还可能中断重传。跨境网络慢时可先设代理：`export HTTPS_PROXY=http://127.0.0.1:7890`。
+> **要留出时间**：`.app` 压缩后 234MB，要整包传到 Apple 的云端。
+> 国内直连上行通常只有几百 KB/s，**单次上传 25 分钟起步**，遇断流重传会更久，
+> 两次（app + dmg）就是一到两小时。跨境网络慢时可先设代理：`export HTTPS_PROXY=http://127.0.0.1:7890`。
 
 ### 桌面端的已知边界
 
@@ -275,9 +275,9 @@ NPM_REGISTRY=https://registry.npmmirror.com/ docker compose up -d --build
 
 ## 开源定位：不做付费墙，额度只用来「看得见」
 
-有些同类产品会把功能锁起来逼付费（测试账号只能试用 3 个智能体、点别的弹窗劝你充值）。
+有些产品会把功能锁起来逼付费（测试账号只能试用 3 个智能体、点别的弹窗劝你充值）。
 **本项目明确不做这一套**，理由很直接：开源项目一旦锁核心能力，采用者会直接转向，
-反而违背了「逆向开源给所有智能家居伙伴用」的初衷。
+反而违背了「开源给所有智能家居伙伴用」的初衷。
 
 所以这里的规则是：
 
@@ -345,9 +345,10 @@ pnpm audit --registry=https://registry.npmjs.org   # 必须显式指定官方 re
 （官方 dist-tags 最新仍是 1.1.3，2023-09-11 后无更新）——属**上游无修复**，
 已顶到现存最新版。该包只用于 argparse 的帮助文本格式化，不处理用户可控的格式串。
 
-许可证：766 个依赖中 MIT 604 / ISC 65 / Apache-2.0 51 / BSD 34，
-其余为 Unlicense(3) / BlueOak(2) / CC0(2) / MPL-2.0(2) / EPL-2.0(1) / Python-2.0(1)，
-**无 GPL-only / AGPL / SSPL / BUSL**。`jszip` 为 `(MIT OR GPL-3.0-or-later)` 双许可，取 MIT 侧。
+许可证：34 个**生产依赖**逐个核对 —— MIT 24 / Apache-2.0 7 / ISC 1 / BSD-2-Clause 1 /
+`(MIT OR GPL-3.0-or-later)` 1（`jszip`，双许可取 MIT 侧），
+**无 GPL-only / AGPL / SSPL / BUSL 实装**。计入开发依赖时全量约 800 个包，
+宽松许可占绝大多数，带 GPL 字样的只有上面那个双许可包。
 
 改完 `.env` 重启后端生效（`docker compose up -d api`）；页面上的在线配置则保存即生效。未配置模型 key 时，对话链路降级为离线说明、生图 / 生视频返回 503 提示，不阻塞其他功能。ComfyUI 接入需在「Workflow → Export (API)」导出工作流 JSON（或直接使用项目内置模板），**本机与云端实例都支持**：本机直连时地址填宿主机地址（容器部署须用 `host.docker.internal`，容器里的 `127.0.0.1` 指向容器自身）并留空 API Key；云端实例（RunPod / autodl 反代 / 自建网关）填云端地址与 API Key，认证头会自动带入 `/prompt`、`/history`、`/view` 三次请求。注意 ComfyUI 仅用于**生图**，生视频 provider 只有 `minimax` 与 `openai`。
 
@@ -402,8 +403,8 @@ pnpm audit --registry=https://registry.npmjs.org   # 必须显式指定官方 re
 - 生产环境（`NODE_ENV=production`）：默认 JWT 密钥 / 默认管理员密码启动直接拒绝；Swagger 文档关闭
 - 额度扣减在数据库事务内原子完成（`updateMany` 余额条件 + 账本写入），并发无超扣竞态
 - 文件流路径穿越防护、上传 MIME + 大小校验、多租户资源隔离、密钥仅经环境变量注入不入库
-- **数据备份**：个人设置「导出全库数据备份」→ `GET /api/admin/backup` 导出全部 28 表 JSON（同时在 `uploads/backups/` 留底）；产物文件在 `api-uploads` 卷、数据库在 `pgdata` 卷，迁移时连同两个 docker volume 一起备份即可完整恢复
-- **磁盘治理**：`docker-compose` 已配 json-file 日志轮转（10MB×3）防日志挤爆磁盘；产物配额 `UPLOAD_QUOTA_MB`（默认 4096），个人设置可查看占用并一键清理 30 天前且未被方案/布局引用的过期产物
+- **数据备份**：个人设置「导出全库数据备份」→ `GET /api/admin/backup` 导出全部 33 表 JSON（同时在 `uploads/backups/` 留底）；产物文件在 `api-uploads` 卷、数据库在 `pgdata` 卷，迁移时连同两个 docker volume 一起备份即可完整恢复
+- **磁盘治理**：`docker-compose` 已配日志轮转（`local` 驱动，10MB×2，三容器合计 ≤ 60MB）防日志挤爆磁盘；产物配额 `UPLOAD_QUOTA_MB`（默认 4096），个人设置可查看占用并一键清理 30 天前且未被方案/布局引用的过期产物
 - **升级不丢数据**：数据全在 `pgdata` / `api-uploads` 两个命名卷，`docker compose up -d --build` 重建镜像不影响卷；nginx 对 `index.html` 禁缓存（hash 资源 immutable），发版后浏览器不会加载到失效 chunk
 
 ## Agent 机器接入（不用看界面就能操作系统）
@@ -430,14 +431,16 @@ Key 本身是一枚用 `JWT_SECRET` 签名的 JWT，库里只留可吊销的记�
 
 **2）能力清单**：`GET /api/agent/manifest` 一次读懂全系统
 
-| 取法 | 用途 | 实测量级 |
+| 取法 | 用途 | 实测响应体 |
 |---|---|---|
-| `/api/agent/manifest` | 索引：分组 + 条数 + 破坏性操作数量 | **488 token** |
-| `/api/agent/manifest?group=quote` | 只取报价这一组 | ~300 token |
-| **`/api/agent/manifest?effective=1`** | **按调用者权限过滤，只列真正调得动的** | 视角色而定 |
-| `/api/agent/manifest?risk=1` | 只取破坏性操作全表 | ~800 token |
-| `/api/agent/manifest?full=1` | 全量 133 条路由 | ~3.4k token |
+| `/api/agent/manifest` | 索引：分组 + 条数 + 破坏性操作数量 | 约 2.8 KB |
+| `/api/agent/manifest?group=quote` | 只取报价这一组 | 约 2.8 KB |
+| **`/api/agent/manifest?effective=1`** | **按调用者权限过滤，只列真正调得动的** | 约 21 KB（视角色而定） |
+| `/api/agent/manifest?risk=1` | 只取破坏性操作全表 | 约 2.5 KB |
+| `/api/agent/manifest?full=1` | 全量 150 条操作 | 约 25 KB |
 
+> 响应体是 JSON，token 数取决于分词器，这里给字节数是为了可复现。
+> 全量 150 条操作、18 个分组，全部接口都在清单里。
 比让 Agent 读源码省一两个数量级的 token。**`effective=1` 是 Agent 的正确入口** ——
 不按权限过滤的话，一个只读 Key 读到的清单也会显示「可以删产品」，Agent 就会照着错的预期
 反复撞 403，既烧 token 又烧轮次。
@@ -470,7 +473,7 @@ curl -X POST .../api/agent/snapshots/{id}/restore -d '{"confirm":"<前8位>"}'
 **拦截器会先自动打一份 `auto` 快照再放行**，快照 id 记进对应审计行。
 同一份快照不允许反复还原 —— 否则会把后续的正确操作一起冲掉。
 
-> ⚠️ **能力边界，不要当万能后悔药**：快照只还原**数据库里的行**。
+> **能力边界，不要当万能后悔药**：快照只还原**数据库里的行**。
 > 已经扣掉的额度、已由外部 API 生成出来的图片/视频、已发出的通知**撤不回**。
 > 这句话在快照详情与 manifest 响应里都会显式返回，不做暗示性包装。
 >
@@ -480,7 +483,7 @@ curl -X POST .../api/agent/snapshots/{id}/restore -d '{"confirm":"<前8位>"}'
 
 侧栏「系统管理 → **团队与接入**」（`/team`）：人类成员、角色、机器账号与 API Key 都在这一页。
 
-**角色 = 权限模板，不逐项勾**。本项目有 15 个权限 action，让店长逐项勾既容易配错也没人配得下去，
+**角色 = 权限模板，不逐项勾**。本项目有 20 个权限 action，让店长逐项勾既容易配错也没人配得下去，
 所以预置了 11 个按智能家居门店岗位划分的模板（超级管理员 / 租户管理员 / 销售顾问 / 设计师 /
 施工交付 / 财务 / 采购仓管 / 市场运营 / 客服售后 / 运营 / 只读成员），点一下就能用。
 
@@ -491,7 +494,7 @@ curl -X POST .../api/agent/snapshots/{id}/restore -d '{"confirm":"<前8位>"}'
 **模板不够用就自己勾一个**。点「自定义角色」，权限按业务分组呈现（报价 / 内容 / 知识库 / 协作 /
 团队 / 平台），显示的是「报价与产品库」这类人话，不是 `platform:billing:manage` 权限串。
 
-> ⚠️ **防提权**：只能授予自己已经拥有的权限 —— 你能给出去的，永远不会比你手上的多。
+> **防提权**：只能授予自己已经拥有的权限 —— 你能给出去的，永远不会比你手上的多。
 > 界面把没有的权限直接置灰，服务端再挡一道 `PRIVILEGE_ESCALATION`。
 > 没有这道守卫，任意「能管成员」的角色都能造一个含 `platform:*` 全权限的角色塞给自己，
 > 权限体系整个击穿。
@@ -528,14 +531,14 @@ canvas 绘制与 PPTX 导出引用，保证单一来源。系统字体名在前�
 后面跟 OFL 开源中文兜底 —— 精简 Linux / Chromium OS 上没有系统中文字体时，
 点位图与热力图上的中文**不会变成豆腐块**。
 
-> ⚠️ **未采用**：Zitadel / Plane / AppFlowy（AGPL-3.0）、Directus（MSCL-1.0-GPL）、
+> **未采用**：Zitadel / Plane / AppFlowy（AGPL-3.0）、Directus（MSCL-1.0-GPL）、
 > NocoDB / Outline / Twenty（非 OSI 的 Sustainable Use License）。按 AGENTS.md 规约
 > 这些项目的代码与文案一律不碰，只借鉴 MIT / Apache-2.0 / BSD / ISC / OFL 项目。
 
 ### 这个仓库里有没有别人的东西？
 
-没有。本项目是 **clean-room 独立实现**：参考了一款同类商业产品的**功能与交互模式**
-（著作权保护「表达」，不保护「想法 / 方法 / 功能」），但没有取用对方的代码、界面素材、
+没有。本项目是 **clean-room 独立实现**：功能形态与交互模式参考行业通行做法
+（著作权保护「表达」，不保护「想法 / 方法 / 功能」），但没有取用第三方的代码、界面素材、
 成段文案、品牌标识与商标。
 
 完整证据（每条都附可复现的核查命令）、依赖许可证清单、残余风险边界，
@@ -564,7 +567,7 @@ canvas 绘制与 PPTX 导出引用，保证单一来源。系统字体名在前�
 | **Docker 镜像 + 构建缓存** | **39 GB，其中 34.8 GB 可回收** | **真实隐患**：每次发版都堆，且无清理入口 |
 
 ```bash
-pnpm docker:prune    # 清理 7 天前的悬空镜像与构建缓存
+pnpm docker:prune    # 清理悬空镜像与 24 小时前的构建缓存（保留一天回滚能力）
 ```
 
 刻意**不用** `docker system prune -a`：那会删掉所有未被容器使用的镜像，
@@ -588,31 +591,31 @@ apps/
   web/    React 19 SPA：theme / layouts / pages / components(幻灯片渲染、任务球、页头) /
           lib（api、合成、PPTX 生成）/ store（鉴权与会话）/ data（智能体与方案主题预置）
 docker-compose.yml
-replica/  功能对标基线（recon.md、features.csv、audit-*.md、full-parity-matrix.md）
 ```
 
-对标参考素材（含第三方品牌 UI）与比对截图（`replica/screens/`、`replica/diffs/`、`replica/clone-screens/`）仅本地留存、不入库（已在 `.gitignore`），遵循 clean-room 原则：只重建功能与交互模式，不取对方代码 / 素材 / 文案 / 商标。
+开发过程中的调研材料与对照素材（含第三方品牌 UI）仅本地留存、不入库，
+已在 `.gitignore` 中排除；遵循 clean-room 原则：只重建功能与交互模式，
+不取任何第三方代码 / 素材 / 文案 / 商标。
 
 ## 开发规范
 
 - 回复与注释使用中文，不使用 emoji
 - 决策阶梯：YAGNI → 复用 → 标准库 → 原生 → 已装依赖 → 一行 → 最少实现
-- 提交前必须：`pnpm typecheck && pnpm build && pnpm smoke` 全绿
+- 提交前必须：`pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs && pnpm check:brand` 全绿
 - 新增依赖需许可证检查（MIT / Apache-2.0 / BSD 优先，禁止 GPL / AGPL）
 
 ### 关于「完成」的判定口径
 
 `smoke` 只证明 **HTTP 契约**正确（校验、权限、幂等、落库、参数是否真正传到出图层），
-**证明不了界面**。本项目曾因此把「开始接单」标成完成，实际缺了 5 处结构化采集，
-而 222/222 全绿、typecheck 全过、数据层完全正确 —— 三道门禁全部看不出来。
+**证明不了界面**。契约层全绿、类型检查全过、数据层完全正确，
+仍可能漏掉界面上的结构化采集项 —— 自动化门禁看不出来。
 
 因此本仓库统一：
 
-- 功能矩阵里的 `✅` 只代表**已打开界面逐屏核对通过**；仅代码 / 契约层面确认的一律标 `🔸`
+- 「已完成」只代表**已打开界面逐屏核对通过**；仅代码 / 契约层面确认的另作标注
 - 改任何影响界面呈现的代码前**必须先截图取证**；截图不可信时以 DOM 的 inline style 为准
   （本机浏览器截图工具出现过复用同一帧缓存的情况，连续多帧字节完全相同）
-- 每轮迭代的逐板块核对结论落在 `replica/audit-2026-10-13.md`，
-  含**未验证项**与**验证方法的边界**，避免下一个人拿可疑证据下结论
+- 逐板块的核对结论要写明**未验证项**与**验证方法的边界**，避免下一个人拿可疑证据下结论
 
 ## 路线图（未交付，诚实标注）
 
@@ -635,7 +638,8 @@ replica/  功能对标基线（recon.md、features.csv、audit-*.md、full-parit
 - **邀请返点自动结算**（角色权限、共享额度已就绪，缺的是结算流程）
 - **IoT 联动 / 客服工单**
 - **运营后台、英文 i18n**
-- **多端打包本地安装**（Electron / Tauri 桌面壳复用现有 Web 产物，升级不影响 pgdata / api-uploads 卷数据）
+- **Windows / Linux 安装包**：Electron 桌面壳的打包配置已按跨平台写好，但本机没有对应环境，
+  没有实跑过；macOS arm64 已交付（见「桌面端」一节）
 
-**参考站有、本项目有意不做的**：会员 / 套餐 / 充值分级、素材市场的人民币分成。
+**本项目有意不做的**：会员 / 套餐 / 充值分级、素材市场的人民币分成。
 与「完全免费自部署」定位冲突，详见「开源定位」一节。

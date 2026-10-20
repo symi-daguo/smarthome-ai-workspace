@@ -1,19 +1,19 @@
 /**
- * 方案页数核算（对齐参考站 `app.js:3367-3434` 的素材驱动算法）。
+ * 方案页数核算（素材驱动算法）。
  *
  * 为什么要有：页数不是凭空选的固定档位，而是由**沟通模块 + 户型图 + 素材页**算出来的下限。
  * 用户只上传了 3 张户型图却选了 9 页，交付时少 2 页，等于门店交了一份残缺的方案给客户。
  *
- * 与参考站的两处刻意差异（不改数字，只改机制）：
- * 1. 沟通模块基数用我方骨架 9 页（`BASE_SKELETON`），不是参考站的 10 —— 我方 9 页版式已实测
- *    过零溢出与留白，照抄 10 会打乱已验证的页面。机制照搬，数字守住自己的设计。
+ * 两处刻意差异（不改数字，只改机制）：
+ * 1. 沟通模块基数用骨架 9 页（`BASE_SKELETON`）—— 9 页版式已实测过零溢出与留白，
+ *    改成 10 页会打乱已验证的页面。机制沿用行业通行做法，数字守住自己的设计。
  * 2. 扣费按**最终交付页数**算，不是按用户选的页数：选了 9 但下限是 11，就该扣 11 页的钱，
  *    否则客户拿到 11 页而门店只付了 9 页。
  */
 
 import type { PlanPage } from '../data/planThemes';
 
-/** 沟通模块基数：与我方后端 BASE_SKELETON 保持一致，改一处要同时改后端 */
+/** 沟通模块基数：与后端 BASE_SKELETON 保持一致，改一处要同时改后端 */
 export const CORE_MODULES = 9;
 
 export type Edition = 'standard' | 'presale' | 'private';
@@ -32,15 +32,15 @@ export interface PageCostInput extends MaterialCounts {
   edition: Edition;
 }
 
-/** 单页出图成本（元），与参考站 `app.js:3423` 同口径，由部署者按画质调整 */
+/** 单页出图成本（元），由部署者按画质调整 */
 const PRICE_PER_PAGE: Record<string, number> = { low: 0.6, medium: 1, high: 1.6 };
 
-/** 自定义页数上限，与参考站一致（app:3408） */
+/** 自定义页数上限 */
 export const PAGE_COUNT_MAX = 20;
 
 /**
  * 素材带来的页数下限：`沟通模块 + 额外户型图 + 素材页`。
- * 私宅版至少留 1 页给场景演示（参考站 app:3377 的 max(1, render)）。
+ * 私宅版至少留 1 页给场景演示（max(1, render)）。
  */
 export function materialPageMinimum(m: MaterialCounts, edition: Edition): number {
   const extraFloorplan = Math.max(0, m.floorplanCount - 1);
@@ -61,7 +61,7 @@ export function estimateCost(pages: number, quality: keyof typeof PRICE_PER_PAGE
   return (pages * unit).toFixed(2);
 }
 
-/** 核算提示文案：公式段 + 扩页说明，与参考站 app:3427-3433 同结构 */
+/** 核算提示文案：公式段 + 扩页说明 */
 export function pageCountHint(
   pages: number,
   selected: number,
@@ -85,7 +85,7 @@ export function pageCountHint(
 
 /**
  * 页序列：把沟通模块页与素材页拼成最终页序列。
- * 目前我方只有户型图素材（`renderedFloorplan` / `floorplan`），效果图尚未接入（批次 3），
+ * 目前只有户型图素材（`renderedFloorplan` / `floorplan`），效果图尚未接入（批次 3），
  * 所以素材页只贡献额外户型图页；接通效果图后在这里追加即可，不用改调用方。
  */
 export function buildPageSequence(

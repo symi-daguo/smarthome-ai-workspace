@@ -48,7 +48,7 @@ interface PlanInput {
   highlights: string;
   keySpaces: string;
   needs: string;
-  // 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）
+  // 「补充需求与服务资料」9 项
   priorityNeeds: string;
   excludedItems: string;
   renovationStage: string;
@@ -100,11 +100,11 @@ const TOKENS_PER_PAGE: Record<string, number> = {
   private: Number(process.env.BILLING_PLAN_PRIVATE_TOKENS ?? 160),
 };
 
-/** 效果图上限（对齐参考站 PLAN_RENDER_MAX_FILES） */
+/** 效果图上限 */
 const RENDER_MAX = 5;
 
 /**
- * 效果图提交前校验（对齐参考站 app.js:3661-3662）。
+ * 效果图提交前校验。
  *
  * 为什么放在服务端而不是只在前端拦：前端校验能被绕过（改个 body 就行），
  * 而分组信息直接决定「哪张是方案主视觉」——漏了空间名，出图阶段才知道，
@@ -133,9 +133,9 @@ function assertRenderAssetsReady(
   });
 }
 
-/** 户型图上限（对齐参考站 PLAN_FLOORPLAN_MAX_FILES） */
+/** 户型图上限 */
 const FLOORPLAN_MAX_FILES = 3;
-/** 单文件与总体积上限（同参考站口径）：户型图不压缩，超限直接拒而不是偷偷降质 */
+/** 单文件与总体积上限：户型图不压缩，超限直接拒而不是偷偷降质 */
 const FLOORPLAN_FILE_MAX = 20 * 1024 * 1024;
 const FLOORPLAN_TOTAL_MAX = 35 * 1024 * 1024;
 
@@ -378,8 +378,8 @@ export class PlansService {
 
     // 生成走这里，失败会重试：只重试「再试一次有可能成功」的错误
     // （超时 / 连接重置 / 5xx / 429）；参数错与 key 无效（4xx）立刻抛出，
-    // 重试多少次都一样，只会白让用户等。参考站户型图渲染模块的
-    // 「重试上限 6 次」是同一量级的思路。
+    // 重试多少次都一样，只会白让用户等。渲染类长耗时任务
+    // 用「重试上限 6 次」是同一量级的思路。
     let img: { buffer: Buffer; mimeType: string; ext: string };
     img = await withRetry(async () => {
       if (cfg.provider === 'comfyui') {
@@ -448,7 +448,7 @@ export class PlansService {
     return { assetId: asset.id, floorplanAssetId: plan.floorplanAssetId };
   }
 
-  /** 复刻 MediaService.comfyui 工作流读取：失败抛 COMFYUI_WORKFLOW_MISSING */
+  /** 与 MediaService 同样读取 comfyui 工作流：失败抛 COMFYUI_WORKFLOW_MISSING */
   private async loadComfyWorkflow(path: string): Promise<Record<string, unknown>> {
     const fs = await import('node:fs/promises');
     const tryPaths = [path, join(this.uploadDir(), '..', 'comfyui-workflow.json')];
@@ -627,9 +627,9 @@ export class PlansService {
      * A 改第 3 页保存后，B 基于旧版改第 5 页再保存，会把 A 的修改整份抹掉，
      * 而 versionNo 照常递增、界面一切正常 —— 静默丢数据，最难查的一种。
      *
-     * 参考站的做法是存双份草稿快照让用户手动合并（app:3692 双快照到 localStorage，
-     * 409 冲突时落 `p2_draft_{acct}:{proj}:conflict:{ts}`）。
-     * 我方不加草稿快照：409 里带回**服务端当前版本**，前端提示用户重新载入再改，
+     * 常见做法是存双份草稿快照让用户手动合并（409 冲突时把冲突副本落到
+     * localStorage 的 `draft_conflict:{proj}:{ts}` 键）。
+     * 这里不加草稿快照：409 里带回**服务端当前版本**，前端提示用户重新载入再改，
      * 至少保证「丢得明明白白」而不是「不知不觉没了」。
      */
     if (dto.versionNo !== undefined && dto.versionNo !== plan.versionNo) {

@@ -440,7 +440,7 @@ model PlanProject {
   keySpaces                String   @default("")
   // 客户需求自由文本（家庭成员/装修阶段/最想实现的场景）
   needs                    String   @default("")
-  // 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）。
+  // 「补充需求与服务资料」9 项。
   // 独立成列而不是塞一个 JSON：这一组字段要参与 LLM 提示词、也要能按
   // 「明确不做的项目」做交付前自检，散在 JSON 里查不动。
   priorityNeeds            String   @default("") // 最看重的需求（按重要度排序）
@@ -470,7 +470,7 @@ model PlanProject {
   /**
    * 校对时所处的文案版本号；与 versionNo 相等即「当前这版已逐页校对过」。
    *
-   * 刻意不额外存内容哈希：参考站用 reviewedDigest 是因为它的保存路径不止一条，
+   * 刻意不额外存内容哈希：资料的保存路径不止一条，
    * 而本项目所有改文案的入口（updatePage）都恒递增 versionNo，
    * 一个版本号就足以表达「内容变了」，引入哈希只是多一处会漂移的口径。
    */
@@ -488,13 +488,13 @@ model PlanProject {
   /** 每张图对应的楼层名，长度与「主图 + 额外图」一致；空串表示未填 */
   floorplanFloors          String[] @default([])
   /**
-   * 装修效果图（对齐参考站 renderAssetMeta，app.js:859-870）。
+   * 装修效果图。
    * id 与 meta 分开存：id 用来取文件本体，meta 是门店填的分组信息，
    * 两者同序；放进一个 JSON 会让「取图」每次都得解 JSON 再筛。
    */
   renderAssetIds          String[] @default([])
   /**
-   * 方案绑定的场景视频（最多 2 条，参考站同口径）。
+   * 方案绑定的场景视频（最多 2 条）。
    * 刻意**不做**「在方案页现场生视频」：那要现场调模型、消耗额度，
    * 而模型是客户自备的。门店用「AI 生视频」出好片后挂进来即可。
    */
@@ -664,7 +664,7 @@ model OrderRequest {
   needs       String   @default("")
   rawInput    String   @default("")
   budget      String   @default("")
-  // —— 接待阶段结构化采集（对齐参考站「边聊边记」表单，2026-10-13 补齐）——
+  // —— 接待阶段结构化采集（2026-10-13 补齐）——
   // 装修阶段：undecided 尚未开始 / designing 设计中 / waterBefore 水电施工前 /
   // waterDuring 水电施工中 / roughDone 硬装完成 / living 已经入住
   renoStage   String   @default("undecided")
@@ -674,7 +674,7 @@ model OrderRequest {
   district    String   @default("")
   address     String   @default("")
   store       String   @default("")
-  // 生活需求细分（参考站同名字段）
+  // 生活需求细分
   residents   String   @default("") // 谁会经常住在这里
   priority1   String   @default("")
   priority2   String   @default("")

@@ -3,18 +3,18 @@
  *
  * 为什么要模版化 —— 两条外部依据，都不是拍脑袋：
  *
- * 1) 参考站（app.js:3343-3349）把「交付版式」做成 contentLayout 三选一
+ * 1) 「交付版式」做成 contentLayout 三选一
  *    （classic / presales-v1 / residence-v1），并按版式套不同的页数公式。
- *    我方对应字段是 `edition`（standard / presale / private），已实装。
+ *    对应字段是 `edition`（standard / presale / private），已实装。
  *
  * 2) 行业对「给客户的点位图」有硬要求。小米 MICA 数字家庭工程师课程的公开讲义
  *    写得很直接：看方案图先盯三件——**点位、线路、图例**，「每张规范的图纸都有
  *    符号说明，先花两分钟看懂图例，后面的阅读就顺了」；交付物里要含**点位表**。
- *    而参考站自己的实现也印证了这点：信号热力图模块给每个设备
+ *    而信号热力图模块的实现也印证了这点：它给每个设备
  *    画「图标 + 右上角编号 + 名称标签」，灯光场景模块的标记点是
  *    `<div class="dot">序号</div><div class="lbl">名称</div>` —— 都是编号 + 标签。
  *
- *    改前的我方只有「品类色块图标 + 名称」，**既没有编号也没有图例**，
+ *    改前只有「品类色块图标 + 名称」，**既没有编号也没有图例**，
  *    客户拿到那张图无法把某个标记对应回清单里的某一台设备。
  */
 
@@ -84,7 +84,7 @@ export function markerTemplate(k: string | null | undefined): MarkerTemplate {
   return MARKER_TEMPLATES.some((t) => t.key === k) ? (k as MarkerTemplate) : 'numbered';
 }
 
-/** 交付文件名里的版式后缀（对齐参考站 p2DownloadFilename 的 edition 命名） */
+/** 交付文件名里的版式后缀（edition 命名） */
 export const EDITION_LABEL: Record<string, string> = {
   standard: '标准完整方案',
   presale: '售前定制提案',
