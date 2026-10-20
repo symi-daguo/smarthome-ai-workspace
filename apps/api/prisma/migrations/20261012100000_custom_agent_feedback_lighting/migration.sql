@@ -1,4 +1,4 @@
--- 定制智能体 / 问题反馈 / 智能灯光场景演示
+-- 定制智能体 / 问题反馈 / 智能灯光场景编排
 CREATE TABLE "CustomAgent" (
     "id" TEXT NOT NULL,
     "tenantId" TEXT NOT NULL,

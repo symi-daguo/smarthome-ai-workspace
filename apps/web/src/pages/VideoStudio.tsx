@@ -241,7 +241,7 @@ export function VideoStudio(): ReactNode {
 
           {/* 描述 */}
           <div style={{ marginBottom: 14 }}>
-            <Text strong style={{ display: 'block', fontSize: 15, marginBottom: 8 }}>视频描述（可编辑）</Text>
+            <Text strong style={{ display: 'block', fontSize: 15, marginBottom: 8 }}>画面说明（可改）</Text>
             <textarea
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
@@ -312,7 +312,7 @@ export function VideoStudio(): ReactNode {
                   value={musicStyle}
                   onChange={(e) => setMusicStyle(e.target.value)}
                   maxLength={MAX_MUSIC_LEN}
-                  placeholder="例如：轻柔、低音量的无歌词器乐"
+                  placeholder="例如：低音量的纯器乐，无人声"
                 />
               </div>
             )}

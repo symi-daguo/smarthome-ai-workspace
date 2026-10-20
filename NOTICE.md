@@ -16,6 +16,11 @@
   本项目自行 AI 生成或自行绘制；
 - 全部实现为自有代码，自有视觉体系（靛蓝主色 + 自有阴影/转角体系），不复制对方品牌标识与配色。
 
+> 这一点不是口头承诺：仓库里跑得起来的
+> **`pnpm check:brand`** 会扫每一个已跟踪文件，查第三方商标标记、公司名、
+> 本机绝对路径链接与未登记的外链域名；新增域名必须人工确认后才能加白名单。
+> 完整证据与核查方法见 [COMPLIANCE.md](./COMPLIANCE.md)。
+
 `replica/` 目录下的对标基线文档（`recon.md` / `features.csv` / `ai-canvas-spec.md` /
 `full-parity-matrix.md`）记录的是**功能形态与差距分析**，不含对方代码。
 参考站原始截图（`.ref-site/`、`replica/screens/`、`replica/diffs/`）遵循 clean-room 原则
@@ -27,8 +32,8 @@
 
 | 许可 | 主要依赖 |
 |---|---|
-| MIT | NestJS、React、Ant Design、Vite、Prisma CLI、zod、pg、argon2、exceljs、pptxgenjs、dayjs、react-router-dom、ws、lucide(ISC) |
-| Apache-2.0 | pdfjs-dist、Prisma Client |
+| MIT | NestJS、React、Ant Design、Vite、Prisma CLI、zod、pg、argon2、exceljs、pptxgenjs、dayjs、react-router-dom、ws |
+| Apache-2.0 | pdfjs-dist、Prisma Client、Prisma CLI、reflect-metadata、rxjs |
 | BSD-2-Clause | mammoth |
 | ISC | lucide |
 

@@ -443,13 +443,13 @@ model PlanProject {
   // 「补充需求与服务资料」9 项（对齐参考站 P2_SALES_FIELDS）。
   // 独立成列而不是塞一个 JSON：这一组字段要参与 LLM 提示词、也要能按
   // 「明确不做的项目」做交付前自检，散在 JSON 里查不动。
-  priorityNeeds            String   @default("") // 最重要的需求（按优先级）
+  priorityNeeds            String   @default("") // 最看重的需求（按重要度排序）
   excludedItems            String   @default("") // 明确不做的项目
   renovationStage          String   @default("") // 装修阶段
   existingDevices         String   @default("") // 现有设备与生态
-  serviceEvidence          String   @default("") // 真实案例或交付依据
+  serviceEvidence          String   @default("") // 过往案例或交付凭证
   serviceScope             String   @default("") // 已确认服务范围
-  serviceContact           String   @default("") // 负责人与联系入口（不自动带入登录账号）
+  serviceContact           String   @default("") // 对接人与联系方式（不自动带入登录账号）
   budgetItems              String   @default("") // 已确认参考费用（每行：项目|类别|金额区间）
   budgetSource             String   @default("") // 费用来源与日期
   // A-K 风格键
@@ -536,7 +536,7 @@ model KnowledgeDoc {
   @@index([tenantId, enabled])
 }
 
-// ---------- S3 产品库与点位布局（百宝箱"智能设备点位布局"） ----------
+// ---------- S3 产品库与点位布局（百宝箱"设备点位布置"） ----------
 
 // 全局共享产品目录（种子数据；租户自建产品留待后续）
 model Product {
@@ -776,7 +776,7 @@ model FeedbackTicket {
   @@index([tenantId, createdAt])
 }
 
-// ---------- 智能灯光场景演示（灯具编排 + 手工时间轴 + 出片） ----------
+// ---------- 智能灯光场景编排（灯具编排 + 手工时间轴 + 出片） ----------
 
 model LightingScene {
   id            String   @id @default(uuid())

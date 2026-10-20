@@ -249,7 +249,7 @@ export function TaskBall(): ReactNode {
         </Button>
       </div>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-        生成会在后台继续，完成后这里亮红点。可同时查看多个任务。
+        生成会在后台继续跑，完成后这个位置会亮起红点；可以同时盯着多个任务。
       </Text>
       {merged.length === 0 ? (
         <Text type="secondary" style={{ fontSize: 12 }}>

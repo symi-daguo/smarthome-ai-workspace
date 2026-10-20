@@ -105,7 +105,7 @@ export async function generateViaMinimaxVideo(opts: {
       break;
     }
     if (qd?.status === 'Fail') {
-      throw new ServiceUnavailableException({ code: 'VIDEO_GEN_FAILED', message: '视频生成失败，请稍后重试' });
+      throw new ServiceUnavailableException({ code: 'VIDEO_GEN_FAILED', message: '视频这次没生成出来，过一会儿再试一次' });
     }
   }
   if (!fileUrl) throw new ServiceUnavailableException({ code: 'VIDEO_TIMEOUT', message: '视频生成超时，任务仍在后台处理' });

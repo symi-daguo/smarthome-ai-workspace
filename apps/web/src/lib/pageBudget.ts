@@ -78,7 +78,7 @@ export function pageCountHint(
     ? `已选 ${pages} 页，预计实际 ${pages} 页`
     : selected < pages
       ? `已选 ${selected} 页，将自动扩至 ${pages} 页`
-      : `当前文案 ${pages} 页，保存时按实际文案页数同步`;
+      : `当前文案 ${pages} 页，落库时按实际写出的文案页数对齐`;
 
   return { formula, expansion, cost: `初版出图约 ¥${estimateCost(pages, quality)}` };
 }

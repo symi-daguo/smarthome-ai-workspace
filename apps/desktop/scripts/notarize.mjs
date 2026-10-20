@@ -131,11 +131,34 @@ function latestSubmission(fileName) {
  *    timeout is reached」。所以这里改成轮询提交历史，直到 Accepted / Invalid。
  *
  * 两种失败的处置完全不同，不能混为一谈：传输失败要重传，等待超时要轮询。
+ *
+ * ⚠️ 判定顺序有讲究：**先判等待超时，再判传输失败**。
+ * 之前反过来，导致「等待超时」的报错里只要带一个 network/HTTPClientError 字样
+ * 就被当成上传中断，于是**重新上传了一遍同一个文件**（216MB 白传一次，
+ * Apple 还要多扫一遍）。实测 dmg 那次就是这么把提交历史弄成两条同名 In Progress 的。
  */
+const WAIT_TIMEOUT = /timed out|timeout is reached|exceeded.{0,20}timeout|timeout.{0,20}exceeded/i;
 const TRANSPORT_ERROR = /abortedUpload|HTTPClientError|connectTimeout|connection reset|ECONNRESET|EPIPE|premature|network/i;
+
+/** 报错里取最后一行非空内容（报错常以空行结尾，直接取 last 会打出空括号） */
+function lastMeaningfulLine(msg) {
+  const lines = String(msg).split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.length ? lines[lines.length - 1].slice(0, 160) : '(无输出)';
+}
 
 async function submitAndWait(file, label) {
   const fileName = basename(file);
+
+  // 提交前先看历史：这个文件是不是已经在处理中了？
+  // 有的话直接轮询，**不重复上传**（216MB 传一次要 25 分钟，Apple 还要多扫一遍）。
+  // 上一次跑崩/被杀/误判超时后重跑本脚本，就会走到这条分支。
+  const already = latestSubmission(fileName);
+  if (already && already.status === 'In Progress') {
+    log(`  ${fileName} 已有在处理中的提交（${already.id}），直接等结果，不重复上传`);
+    await pollUntilFinal(fileName, label);
+    return;
+  }
+
   // 第 1 次用加速端点，之后改用常规端点：两个端点在跨境链路上表现不一样
   const variants = ['--s3-acceleration', '--no-s3-acceleration'];
 
@@ -152,20 +175,39 @@ async function submitAndWait(file, label) {
       return;
     } catch (e) {
       const msg = String(e.message);
+      // 等待超时优先判定：服务端仍在处理，绝不能当成上传失败去重传
+      if (WAIT_TIMEOUT.test(msg)) {
+        log('  等待超时，改为轮询提交历史（服务端仍在处理）');
+        await pollUntilFinal(fileName, label);
+        return;
+      }
       if (TRANSPORT_ERROR.test(msg)) {
+        // 硬保障：只要这个文件已经有一条在处理中的提交，就**绝不重复上传**。
+        // 216MB 传一次要 25 分钟，Apple 还要多扫一遍；而报错文本本身不总是可靠
+        // （等待超时的报错也可能夹带 network 之类的字样）。宁可等，也不重传。
+        const pending = latestSubmission(fileName);
+        if (pending && pending.status === 'In Progress') {
+          log(`  已有在处理中的提交（${pending.id}），不重复上传，改为轮询`);
+          await pollUntilFinal(fileName, label);
+          return;
+        }
         if (attempt < 3) {
-          log(`  上传中断（${msg.split('\n').pop().slice(0, 160).trim()}），10 秒后换端点重传`);
+          log(`  上传中断（${lastMeaningfulLine(msg)}），10 秒后换端点重传`);
           await sleep(10_000);
           continue;
         }
         throw new Error(`${label} 上传连续 3 次中断，最后一次：\n${msg.slice(-2000)}`);
       }
-      // 非传输类失败：多半是等待超时，服务端仍在处理，改为轮询
-      log('  改为轮询提交历史（服务端仍在处理）');
-      break;
+      // 其余非传输类失败：多半也是服务端在处理，同样走轮询
+      log(`  非传输类失败（${lastMeaningfulLine(msg)}），改为轮询提交历史`);
+      await pollUntilFinal(fileName, label);
+      return;
     }
   }
+}
 
+/** 轮询提交历史直到出终态（Accepted / Invalid / Rejected） */
+async function pollUntilFinal(fileName, label) {
   const deadline = Date.now() + 60 * 60 * 1000;
   let last = '';
   while (Date.now() < deadline) {
@@ -247,11 +289,20 @@ rmSync(TMP, { recursive: true, force: true });
 mkdirSync(TMP, { recursive: true });
 
 const APP_ZIP = join(TMP, `${PRODUCT}.zip`);
-log('压缩 .app（notarytool 不接受 .app，只接受 zip/dmg/pkg）');
-run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP, APP_ZIP]);
+// app zip 已有 Accepted 提交就别再压一遍、传一遍：
+// 压缩产物每次都不一样（时间戳、压缩流），重传只会让 Apple 多扫一次，
+// 而且「已公证的那一份」与「刚压出来的这一份」对不上号。
+// 崩溃后重跑脚本时，这一步能省掉 25 分钟上传。
+const appPrior = latestSubmission(`${PRODUCT}.zip`);
+if (appPrior && appPrior.status === 'Accepted') {
+  log(`app zip 已有 Accepted 提交（${appPrior.id}），跳过压缩与提交`);
+} else {
+  log('压缩 .app（notarytool 不接受 .app，只接受 zip/dmg/pkg）');
+  run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP, APP_ZIP]);
 
-log('提交公证（等待结果，最长 30 分钟）');
-await submitAndWait(APP_ZIP, 'app');
+  log('提交公证（等待结果，最长 30 分钟）');
+  await submitAndWait(APP_ZIP, 'app');
+}
 
 log('装订电子签章到 .app');
 run('xcrun', ['stapler', 'staple', APP]);
@@ -271,38 +322,48 @@ const ZIP_OUT = join(OUT_DIR, `${PRODUCT}-${VERSION}-${ARCH}-mac.zip`);
 const STAGE = join(TMP, 'dmg-out');
 mkdirSync(STAGE, { recursive: true });
 
-log('用装订后的 .app 重打 dmg');
-try {
-  const builder = join(DESKTOP_DIR, 'node_modules/.bin/electron-builder');
-  run(builder, [
-    '--mac', 'dmg',
-    '--prepackaged', APP,
-    '--publish', 'never',
-    '--config', join(DESKTOP_DIR, 'electron-builder.yml'),
-    '--config.directories.output', STAGE,
-  ], { cwd: DESKTOP_DIR });
-} catch (e) {
-  log(`electron-builder --prepackaged 失败（${e.message}），改用 hdiutil 直接打 dmg`);
-  const stage = join(TMP, 'dmg-stage');
-  mkdirSync(stage, { recursive: true });
-  execFileSync('cp', ['-R', APP, join(stage, `${PRODUCT}.app`)]);
-  execFileSync('ln', ['-s', '/Applications', join(stage, 'Applications')]);
-  run('hdiutil', [
-    'create',
-    '-volname', PRODUCT,
-    '-srcfolder', stage,
-    '-ov', '-format', 'UDZO',
-    join(STAGE, `${PRODUCT}.dmg`),
-  ]);
-}
+// 已经提交过的 dmg 不重打。
+// 为什么：重打出来的是**新字节**（时间戳、压缩流都不同），与 Apple 那边已公证的
+// 那一份不是同一个东西 —— 拿旧票据去装订新文件会失败，或者装订成功但
+// 与实际公证内容对不上。重跑脚本时这是最容易踩的坑。
+const priorSubmission = latestSubmission(basename(DMG));
+const reuseDmg = Boolean(priorSubmission) && existsSync(DMG);
+if (reuseDmg) {
+  log(`复用已提交的 dmg（${basename(DMG)}，提交号 ${priorSubmission.id} / ${priorSubmission.status}），不重打`);
+} else {
+  log('用装订后的 .app 重打 dmg');
+  try {
+    const builder = join(DESKTOP_DIR, 'node_modules/.bin/electron-builder');
+    run(builder, [
+      '--mac', 'dmg',
+      '--prepackaged', APP,
+      '--publish', 'never',
+      '--config', join(DESKTOP_DIR, 'electron-builder.yml'),
+      '--config.directories.output', STAGE,
+    ], { cwd: DESKTOP_DIR });
+  } catch (e) {
+    log(`electron-builder --prepackaged 失败（${e.message}），改用 hdiutil 直接打 dmg`);
+    const stage = join(TMP, 'dmg-stage');
+    mkdirSync(stage, { recursive: true });
+    execFileSync('cp', ['-R', APP, join(stage, `${PRODUCT}.app`)]);
+    execFileSync('ln', ['-s', '/Applications', join(stage, 'Applications')]);
+    run('hdiutil', [
+      'create',
+      '-volname', PRODUCT,
+      '-srcfolder', stage,
+      '-ov', '-format', 'UDZO',
+      join(STAGE, `${PRODUCT}.dmg`),
+    ]);
+  }
 
-// 暂存目录里只应该有一个 dmg
-const staged = readdirSync(STAGE).filter((n) => n.endsWith('.dmg'));
-if (staged.length !== 1) {
-  fail(`dmg 产出异常：${STAGE} 下有 ${staged.length} 个 dmg（期望 1 个）`);
+  // 暂存目录里只应该有一个 dmg
+  const staged = readdirSync(STAGE).filter((n) => n.endsWith('.dmg'));
+  if (staged.length !== 1) {
+    fail(`dmg 产出异常：${STAGE} 下有 ${staged.length} 个 dmg（期望 1 个）`);
+  }
+  renameSync(join(STAGE, staged[0]), DMG);
+  log(`dmg：${DMG}`);
 }
-renameSync(join(STAGE, staged[0]), DMG);
-log(`dmg：${DMG}`);
 
 log('提交 dmg 公证');
 await submitAndWait(DMG, 'dmg');

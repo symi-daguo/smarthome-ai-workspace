@@ -36,7 +36,7 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
 /**
  * 底图 + 点位标记 合成为一张标注图纸（dataURL, PNG）。
  *
- * marker 决定标记样式（对齐参考站 wifi-heatmap.js `drawDevices()` 的
+ * marker 决定标记样式（对齐参考站信号热力图模块的
  * 「图标 + 右上角编号 + 名称标签」模式，见 data/planTemplates.ts 的依据说明）：
  *   numbered —— 圆形徽章写编号 + 名称标签（默认，可与点位清单逐条对照）
  *   icon     —— 徽章贴产品主图/品类图标 + 名称标签（改前的老行为）

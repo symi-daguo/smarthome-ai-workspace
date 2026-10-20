@@ -43,15 +43,15 @@ const { Text, Title } = Typography;
 
 /** 「补充需求与服务资料」9 项，顺序与参考站 P2_SALES_FIELDS 一致 */
 const SALES_FIELDS: { name: string; label: string; placeholder: string; extra?: string }[] = [
-  { name: 'priorityNeeds', label: '最重要的需求（按优先级）', placeholder: '例如：先解决起夜照明，再考虑客厅会客；仅填写客户已表达的需求' },
-  { name: 'excludedItems', label: '明确不做的项目', placeholder: '例如：不做窗帘联动、不增加摄像头' },
-  { name: 'renovationStage', label: '装修阶段', placeholder: '例如：准备水电、已精装入住；不确定可留空' },
-  { name: 'existingDevices', label: '现有设备与生态', placeholder: '填写已有设备、希望保留的开关与控制习惯' },
-  { name: 'serviceEvidence', label: '真实案例或交付依据', placeholder: '填写同类项目、实际解决的问题及可核对的记录；没有就留空' },
-  { name: 'serviceScope', label: '已确认服务范围', placeholder: '填写包含/不包含的服务、现场对接、使用指导和售后范围' },
-  { name: 'serviceContact', label: '负责人与联系入口', placeholder: '填写可向业主展示的负责人、电话或微信', extra: '不会自动使用登录账号信息，避免把不该给客户的联系方式带出去' },
-  { name: 'budgetItems', label: '已确认参考费用（选填）', placeholder: '每行一条：本次|灯光与开关|2500-3000', extra: '这些项目不计入本次合计，也不代替正式报价' },
-  { name: 'budgetSource', label: '费用来源与日期', placeholder: '例如：门店确认的参考清单及日期；未确认价格可不填费用明细' },
+  { name: 'priorityNeeds', label: '最看重的需求（按重要度排序）', placeholder: '例如：先把起夜照明做掉，客厅会客后面再说；只填客户明确提过的' },
+  { name: 'excludedItems', label: '明确不做的项目', placeholder: '例如：暂不做窗帘联动、不新增摄像头' },
+  { name: 'renovationStage', label: '装修阶段', placeholder: '例如：水电阶段、已精装入住；拿不准就空着' },
+  { name: 'existingDevices', label: '现有设备与生态', placeholder: '写已有的设备、想保留的开关与使用习惯' },
+  { name: 'serviceEvidence', label: '过往案例或交付凭证', placeholder: '写同类项目、真实解决的问题与可核对的凭证；没有就不写' },
+  { name: 'serviceScope', label: '已确认服务范围', placeholder: '填写包含/不覆盖的服务、到场对接、操作培训与保修范围' },
+  { name: 'serviceContact', label: '对接人与联系方式', placeholder: '填写可向业主展示的负责人、电话或微信', extra: '不会自动使用登录账号信息，避免把不该给客户的联系方式带出去' },
+  { name: 'budgetItems', label: '参考费用（已确认的可填）', placeholder: '每行一条：本次|灯光与开关|2500-3000', extra: '这些项目不计入本次合计，也不代替正式报价' },
+  { name: 'budgetSource', label: '费用来源与日期', placeholder: '例如：门店已确认的参考清单与日期；价格没定的可以先不填明细' },
 ];
 
 const STEPS = ['客户资料', '逐页审稿', '生成与校对', '交付客户'];
@@ -133,8 +133,8 @@ function tierAmount(area: number, tier: (typeof BUDGET_TIERS)[number]): number {
 }
 
 const EDITIONS = [
-  { key: 'standard', name: '标准完整方案（原版A）', desc: '适合需求明确后的完整汇报：需求、投入取舍、重点场景、预算范围、交付依据和下一步，共 9 个基础模块' },
-  { key: 'presale', name: '售前定制提案（原版B）', desc: '售前沟通用，可按客户关注点裁剪' },
+  { key: 'standard', name: '标准交付方案（A 版）', desc: '适合需求已明确的完整交付汇报：含需求、取舍、关键场景、预算区间、交付依据与后续动作，总共 9 个基础模块' },
+  { key: 'presale', name: '售前沟通提案（B 版）', desc: '售前沟通用，可按客户关注点裁剪' },
   { key: 'private', name: '私宅设计提案 · 新版', desc: '固定高端画册版型，细节更精' },
 ];
 
@@ -470,7 +470,7 @@ const [editing, setEditing] = useState<{
 
   const confirmRoom = (i: number): void => {
     if (!raList[i]?.room.trim()) {
-      message.warning('请先填写这张效果图对应的空间');
+      message.warning('先给这张渲染图选一个空间');
       return;
     }
     setRaList((prev) => ensureRepresentativeList(prev.map((a, x) => (x === i ? { ...a, roomConfirmed: true } : a))));
@@ -1052,13 +1052,13 @@ const [editing, setEditing] = useState<{
               <Input placeholder="例如：XX 智能家居体验馆" size="large" />
             </Form.Item>
             <Form.Item label="重点空间" name="keySpaces">
-              <Input placeholder="例如：客餐厅灯光、主卧睡眠、全屋 WiFi" size="large" />
+              <Input placeholder="例如：客餐灯光、主卧睡眠、全屋联动 WiFi" size="large" />
             </Form.Item>
-            <Form.Item label="服务亮点" name="highlights" extra="填写实际提供的服务，不填写未经确认的时效或质保承诺">
-              <Input.TextArea rows={2} placeholder="例如：全屋智能设计、选品、安装调试一站式" />
+            <Form.Item label="服务亮点" name="highlights" extra="只写确定能兑现的服务；未确认的交付时效与质保不要写进去">
+              <Input.TextArea rows={2} placeholder="例例如：全屋方案设计、产品选配、安装调试一次做完" />
             </Form.Item>
             <Form.Item label="客户需求" name="needs">
-              <Input.TextArea rows={3} placeholder="请写清家庭成员、装修阶段、预算、重点空间和最想实现的生活场景。" />
+              <Input.TextArea rows={3} placeholder="请说明家里有几口人、装修到哪一步、预算范围、想重点做的空间与最想实现的生活场景。" />
             </Form.Item>
 
             {/* 户型图素材（对齐参考站第 1 步 p2Floorplan 区）：
@@ -1110,7 +1110,7 @@ const [editing, setEditing] = useState<{
 
             {/* 装修效果图（对齐参考站 p2RenderImages 区）：
                 上限 5 张；每张要填实际空间并确认；同一空间只能有一张代表图
-                （主视觉唯一来源）；用途区分「生成场景对比」与「直接展示已有状态图」。 */}
+                （主视觉唯一来源）；用途区分「生成场景对比」与「按当前状态原样呈现」。 */}
             <div style={{ marginTop: 18 }}>
               <Text strong style={{ display: 'block', fontSize: 15, marginBottom: 6 }}>装修效果图（最多 {RENDER_MAX} 张）</Text>
               <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8, lineHeight: 1.7 }}>
@@ -1172,7 +1172,7 @@ const [editing, setEditing] = useState<{
                           onChange={(v) => setRaList((prev) => prev.map((x, xi) => xi === i ? { ...x, useMode: v, roomConfirmed: false } : x))}
                           options={[
                             { value: 'generate', label: '生成场景对比' },
-                            { value: 'provided', label: '直接展示已有状态图' },
+                            { value: 'provided', label: '按当前状态原样呈现' },
                           ]}
                         />
                         {a.useMode === 'provided' ? (
@@ -1200,7 +1200,7 @@ const [editing, setEditing] = useState<{
                 默认折叠：九项全不填是常态，铺开占掉半屏反而挤掉真正要填的资料。 */}
             <details style={{ marginTop: 4 }}>
               <summary style={{ cursor: 'pointer', fontSize: 13, color: token.colorTextSecondary, userSelect: 'none' }}>
-                补充需求与服务资料（选填）
+                补充资料与服务信息（可不填）
               </summary>
               <Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '6px 0 10px', lineHeight: 1.7 }}>
                 填写已有事实，帮助方案解释取舍与服务依据。未知内容留空；参考费用不代替正式报价。
@@ -1600,7 +1600,7 @@ const [editing, setEditing] = useState<{
             <PlanSlide page={active} index={activePage} plan={slidePlan} t={t} listNo={floorplanListPageNo(view.pages, activePage)} />
             <div style={{ marginTop: 12 }}>
               <Button size="small" type="text" onClick={() => setShowNarration(!showNarration)}>
-                {showNarration ? '▾' : '▸'} 本页讲解稿（客户阅读模式不显示）
+                {showNarration ? '▾' : '▸'} 本页的讲解词（客户阅读视图下不展示）
               </Button>
               {showNarration ? (
                 <div style={{ marginTop: 8, padding: '12px 14px', background: token.colorFillQuaternary, borderRadius: 10, fontSize: 13, lineHeight: 1.8, color: token.colorTextSecondary }}>

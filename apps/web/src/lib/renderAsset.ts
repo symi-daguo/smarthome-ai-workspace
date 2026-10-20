@@ -22,7 +22,7 @@ export const ROOM_OPTIONS = [
   '玄关', '客厅', '餐厅', '厨房', '主卧', '次卧', '儿童房', '书房', '卫生间', '阳台', '全屋',
 ];
 
-/** 用途：generate=生成场景对比 / provided=直接展示已有状态图 */
+/** 用途：generate=生成场景对比 / provided=按当前状态原样呈现 */
 export type UseMode = 'generate' | 'provided';
 
 export interface RenderAsset {
@@ -41,7 +41,7 @@ export interface RenderAsset {
 
 /** 上传约束校验。返回可读报错，通过则返回 null */
 export function checkRenderUpload(count: number): string | null {
-  if (count > RENDER_MAX) return `本方案已选择 ${RENDER_MAX} 张效果图，请先移除一张`;
+  if (count > RENDER_MAX) return `本方案已选择 ${RENDER_MAX} 张渲染图，请先移除一张`;
   return null;
 }
 
@@ -88,10 +88,10 @@ export function checkRenderReady(list: RenderAsset[]): string | null {
   if (!list.length) return null;
   const bad = list.findIndex((a) => !a.room.trim() || !a.roomConfirmed);
   if (bad >= 0) {
-    return '请填写每张效果图的实际空间并确认，同一空间可使用同名；不同楼层请写明楼层。';
+    return '请为每张渲染图指定它对应的空间并确认，同名即视为同一空间；跨楼层请注明属于几层。';
   }
   const noScene = list.findIndex((a) => a.useMode === 'provided' && !a.sceneName.trim());
-  if (noScene >= 0) return '选择「直接展示已有状态图」时，请填写该图对应的场景名称。';
+  if (noScene >= 0) return '选择「按当前状态原样呈现」时，请填写该图对应的场景名称。';
   return null;
 }
 

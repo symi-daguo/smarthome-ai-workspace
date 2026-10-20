@@ -145,7 +145,7 @@ function ExternalKnowledgeCard(): ReactNode {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="客户电脑性能足够时，可自行部署专业知识库引擎，平台通过 REST 接口实时检索，让对话 / 接单 / 方案生成等所有板块的 AI 优先参考你的资料。"
+        message="客户电脑性能足够时，可自行部署专业知识库引擎，平台通过 REST 接口实时检索，让对话 / 接单 / 方案生成等所有板块的 AI 以你上传的资料为先。"
         description={
           <ul style={{ margin: '6px 0 0', paddingLeft: 20, fontSize: 12.5 }}>
             <li><b>WeKnora</b>（腾讯开源，GitHub: Tencent/WeKnora）：git clone 后 docker compose up -d，默认后端 http://127.0.0.1:8080，在 WeKnora 网页「账户设置」创建 API Key 填入此处</li>
@@ -280,7 +280,7 @@ export function KnowledgeBase(): ReactNode {
     <div style={pageContainerStyle}>
       <Title level={3} style={{ marginBottom: 4 }}>我的知识库</Title>
       <Text type="secondary">
-        上传你的产品资料、报价规则、品牌话术等，之后所有智能体回答都会优先参考你的资料——一次上传，处处生效
+        把产品资料、报价规则与品牌话术放进来，此后智能体的每一次回答都会以你上传的资料为先——一次上传，处处生效
       </Text>
 
       {/* 本地资料库与下面的「内容提取资料」语义不同：前者供 AI 召回，后者是提取工作流的输入。
@@ -324,7 +324,7 @@ export function KnowledgeBase(): ReactNode {
           </Button>
         </div>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          支持 txt / md / Word / PDF，可多选，单份上限约 8 万字{files.length > 0 ? `；已选 ${files.length} 个文件` : ''}
+          支持 txt / md / Word / PDF，可以多选，单个文件上限约 8 万字{files.length > 0 ? `；已选 ${files.length} 个文件` : ''}
         </Text>
       </div>
 

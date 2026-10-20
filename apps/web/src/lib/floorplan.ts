@@ -48,10 +48,10 @@ export function appendFloorplanFiles(
 
   for (const f of picked) {
     if (slots.length >= FLOORPLAN_MAX) {
-      return { slots, added, skipped, error: `户型图最多上传 ${FLOORPLAN_MAX} 张，超出的图片未添加` };
+      return { slots, added, skipped, error: `户型图最多上传 ${FLOORPLAN_MAX} 张，多余的那几张没有加进来` };
     }
     if (f.size > FILE_MAX) {
-      return { slots, added, skipped, error: `户型图「${f.name}」超过 20MB，请先压缩后再上传` };
+      return { slots, added, skipped, error: `户型图「${f.name}」超过 20MB，请先压小体积再上传` };
     }
     // 去重：同一文件重复选中直接忽略，不报错也不占额度
     const dup = slots.some((s) => fileKey({ ...s, lastModified: 0, type: '' }) === `${f.name}|${f.size}|0|`);
@@ -62,7 +62,7 @@ export function appendFloorplanFiles(
 
   const total = slots.reduce((a, b) => a + b.size, 0);
   if (total > TOTAL_MAX) {
-    return { slots: current, added: 0, skipped, error: '户型图总大小不能超过 35MB，请减少文件或压缩后重试' };
+    return { slots: current, added: 0, skipped, error: '户型图总大小不能超过 35MB，请减掉几个文件或压小后重传' };
   }
   return { slots, added, skipped, error: null };
 }

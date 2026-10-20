@@ -11,7 +11,7 @@ import { ACCENT_TEAL, fillHeightContainerStyle } from '../theme/tokens';
 const { Text } = Typography;
 
 /**
- * 智能灯光场景演示（百宝箱「方案与设计」工具）：
+ * 智能灯光场景编排（百宝箱「方案与设计」工具）：
  *   ① 上传效果图 + 选画幅 → ② 编排灯具（拖动移位 / 改类型 / 增删 / 设常暗）
  *   → ③ 手工灯光时间轴（每盏灯一条轨道、关键帧调亮度与色温）→ ④ 出片。
  *
@@ -158,7 +158,7 @@ function buildVideoPrompt(fixtures: Fixture[], timeline: Timeline): string {
     const seg = kfs.map((k, idx) => `第 ${(k.t * timeline.durationSec).toFixed(1)} 秒${idx < kfs.length - 1 ? '起' : ''}亮度 ${k.brightness}%、色温 ${k.colorTemp}K`).join('，');
     return `${i + 1}) ${f.name}（${TYPE_LABEL[f.type]}）：${seg}`;
   });
-  return `室内智能灯光场景演示，真实室内摄影质感，画面稳定，机位固定。灯光变化按以下编排依次发生：${parts.join('；')}。整体节奏自然，灯光过渡平滑无闪烁。`;
+  return `室内智能灯光场景编排，真实室内摄影质感，画面稳定，机位固定。灯光变化按以下编排依次发生：${parts.join('；')}。整体节奏自然，灯光过渡平滑无闪烁。`;
 }
 
 export function LightingStudio(): ReactNode {
@@ -466,7 +466,7 @@ export function LightingStudio(): ReactNode {
   return (
     <div style={fillHeightContainerStyle}>
       <PageHeader
-        title="智能灯光场景演示"
+        title="智能灯光场景编排"
         description="上传效果图，编排每盏灯并手工调整时间轴，生成灯光场景演示视频"
         extra={
           <Space>

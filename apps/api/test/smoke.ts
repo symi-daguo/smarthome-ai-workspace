@@ -2464,7 +2464,7 @@ async function main(): Promise<void> {
   check('幂等键在库中唯一（重放没有产生第二条产物）', stillOne === 1);
 
   // ---------- 生成调用的有限重试（0.2.11）----------
-  // 参考站 floorplan-render.js 用 MAX_POLL_FAILURES=6 表达同一量级的思路：
+  // 参考站户型图渲染模块用「重试上限 6 次」表达同一量级的思路：
   // 生图链路长、失败率高，不该一次抖动就让用户白等白扣。
   {
     const retryable = (e: unknown): boolean => defaultIsRetryable(e);

@@ -38,17 +38,17 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
       { key: 'zone-render', img: '/images/tools/tool-zone-render.jpg', name: '平面图生效果图', desc: '框选 1~4 个区域分别出图', to: '/image' },
       { key: 'bare-render', img: '/images/tools/tool-bare-render.jpg', name: '毛坯房效果图', desc: '空房间直接出智能氛围图', to: '/image' },
       { key: 'wifi-heat', img: '/images/tools/tool-wifi-heat.jpg', name: 'WiFi 热力图', desc: '拖拽设备，生成信号覆盖', to: '/device-layout?mode=wifi' },
-      { key: 'device-layout', img: '/images/tools/tool-device-layout.jpg', name: '智能设备点位布局', desc: '拖拽布点，导出图纸与设备清单', to: '/device-layout' },
+      { key: 'device-layout', img: '/images/tools/tool-device-layout.jpg', name: '设备点位布置', desc: '拖拽布点，导出图纸与设备清单', to: '/device-layout' },
       { key: 'light-plan', img: '/images/tools/tool-light-plan.jpg', name: '灯光点位效果图', desc: '编辑灯带，导出高清灯光平面图', to: '/device-layout?mode=light' },
       { key: 'light-diagnosis', img: '/images/tools/tool-light-scene.jpg', name: '智能灯光问诊', desc: '五项任务逐题问诊，给出分级问题与灯组建议', to: '/lighting-diagnosis' },
-      { key: 'light-scene', img: '/images/tools/tool-light-scene.jpg', name: '智能灯光场景演示', desc: '上传效果图，手工编排每盏灯的时间轴并生成视频', to: '/lighting' },
+      { key: 'light-scene', img: '/images/tools/tool-light-scene.jpg', name: '智能灯光场景编排', desc: '拖入空间实拍图，逐盏排灯的时间轴后出片', to: '/lighting' },
     ],
   },
   {
     title: '产品中心',
     tools: [
       { key: 'product-lib', img: '/images/tools/tool-product-lib.jpg', name: '公共库与我的库', desc: '上传产品，联动报价和点位', to: '/products' },
-      { key: 'quote', img: '/images/tools/tool-quote.jpg', name: '智能报价', desc: '选品配单，自动算价导出报价单', to: '/quote' },
+      { key: 'quote', img: '/images/tools/tool-quote.jpg', name: '智能报价', desc: '挑完产品自动配清单，直接导出报价', to: '/quote' },
     ],
   },
   {
@@ -57,7 +57,7 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
       { key: 'geo', img: '/images/tools/tool-geo.jpg', name: 'GEO 品宣代发', desc: '本地搜索品宣，人工运营', manual: true, badge: '人工服务' },
       { key: 'video-edit', img: '/images/tools/tool-video-edit.jpg', name: '视频代剪', desc: '贴链接交剪辑师成片', manual: true, badge: '人工服务' },
       { key: 'custom-agent', img: '/images/tools/tool-custom-agent.jpg', name: '定制智能体', desc: '打造你专属的 AI 智能体', to: '/agents' },
-      { key: 'feedback', img: '/images/tools/tool-feedback.jpg', name: '问题反馈', desc: '用着遇到问题？提交反馈，我们尽快排查处理', to: '/feedback' },
+      { key: 'feedback', img: '/images/tools/tool-feedback.jpg', name: '问题反馈', desc: '哪里不顺手？给我们提一条反馈，我们逐条跟进', to: '/feedback' },
     ],
   },
 ];

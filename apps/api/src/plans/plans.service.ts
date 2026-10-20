@@ -115,13 +115,13 @@ function assertRenderAssetsReady(
   meta: { room: string; roomConfirmed: boolean; useMode: string; sceneName: string; representative: boolean }[],
 ): void {
   if (!ids.length) return;
-  if (ids.length > RENDER_MAX) throw new BadRequestException(`本方案已选择 ${RENDER_MAX} 张效果图，请先移除一张`);
+  if (ids.length > RENDER_MAX) throw new BadRequestException(`本方案已选择 ${RENDER_MAX} 张渲染图，请先移除一张`);
   const bad = meta.findIndex((m) => !m.room?.trim() || !m.roomConfirmed);
   if (bad >= 0) {
-    throw new BadRequestException('请填写每张效果图的实际空间并确认，同一空间可使用同名；不同楼层请写明楼层。');
+    throw new BadRequestException('请为每张渲染图指定它对应的空间并确认，同名即视为同一空间；跨楼层请注明属于几层。');
   }
   const noScene = meta.findIndex((m) => m.useMode === 'provided' && !m.sceneName?.trim());
-  if (noScene >= 0) throw new BadRequestException('选择「直接展示已有状态图」时，请填写该图对应的场景名称。');
+  if (noScene >= 0) throw new BadRequestException('选择「按当前状态原样呈现」时，请填写该图对应的场景名称。');
   // 代表图互斥兜底：同一空间**被勾为代表图的**只能一张。
   // 只看房间是否重复是错的：同空间本来就允许放多张图，只是不允许都当主视觉。
   const repSeen = new Set<string>();
@@ -142,9 +142,9 @@ const FLOORPLAN_TOTAL_MAX = 35 * 1024 * 1024;
 /** 体积校验：返回可读报错，通过则返回 null */
 export function checkFloorplanSizes(sizes: number[]): string | null {
   const over = sizes.findIndex((b) => b > FLOORPLAN_FILE_MAX);
-  if (over >= 0) return `户型图第 ${over + 1} 张超过 20MB，请先压缩后再上传`;
+  if (over >= 0) return `户型图第 ${over + 1} 张超过 20MB，请先压小体积再上传`;
   const total = sizes.reduce((a, b) => a + b, 0);
-  if (total > FLOORPLAN_TOTAL_MAX) return '户型图总大小不能超过 35MB，请减少文件或压缩后重试';
+  if (total > FLOORPLAN_TOTAL_MAX) return '户型图总大小不能超过 35MB，请减掉几个文件或压小后重传';
   return null;
 }
 
@@ -165,13 +165,13 @@ function alignFloorplanFloors(mainId: string | null | undefined, extra: string[]
 /** 「补充需求与服务资料」9 项 → 提示词行。只输出填写过的，空项不占篇幅 */
 function salesBriefLines(input: CreatePlanDto): string[] {
   const rows: [string, string][] = [
-    ['最重要的需求（按优先级）', input.priorityNeeds],
+    ['最看重的需求（按重要度排序）', input.priorityNeeds],
     ['明确不做的项目', input.excludedItems],
     ['装修阶段', input.renovationStage],
     ['现有设备与生态', input.existingDevices],
-    ['真实案例或交付依据', input.serviceEvidence],
+    ['过往案例或交付凭证', input.serviceEvidence],
     ['已确认服务范围', input.serviceScope],
-    ['负责人与联系入口', input.serviceContact],
+    ['对接人与联系方式', input.serviceContact],
     ['已确认参考费用', input.budgetItems],
     ['费用来源与日期', input.budgetSource],
   ];
@@ -320,7 +320,7 @@ export class PlansService {
     // 楼层名与图片一一对应；缺失补空串，避免数组错位导致「二层」贴到「一层」的图上
     const total = 1 + extraIds.length;
     if (total > FLOORPLAN_MAX_FILES) {
-      throw new BadRequestException(`户型图最多 ${FLOORPLAN_MAX_FILES} 张，超出的图片未添加`);
+      throw new BadRequestException(`户型图最多 ${FLOORPLAN_MAX_FILES} 张，多余的那几张没有加进来`);
     }
     const floors = [...(dto.floorplanFloors ?? [])];
     while (floors.length < total) floors.push('');
@@ -378,8 +378,8 @@ export class PlansService {
 
     // 生成走这里，失败会重试：只重试「再试一次有可能成功」的错误
     // （超时 / 连接重置 / 5xx / 429）；参数错与 key 无效（4xx）立刻抛出，
-    // 重试多少次都一样，只会白让用户等。参考站 floorplan-render.js 的
-    // MAX_POLL_FAILURES=6 是同一量级的思路。
+    // 重试多少次都一样，只会白让用户等。参考站户型图渲染模块的
+    // 「重试上限 6 次」是同一量级的思路。
     let img: { buffer: Buffer; mimeType: string; ext: string };
     img = await withRetry(async () => {
       if (cfg.provider === 'comfyui') {

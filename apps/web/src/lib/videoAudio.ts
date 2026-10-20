@@ -18,8 +18,8 @@ export const AUDIO_MODES: { value: AudioMode; label: string }[] = [
   { value: 'both', label: '音效＋音乐' },
 ];
 
-export const DEFAULT_EFFECTS = '只保留画面中实际动作的轻微环境音效；没有发声动作时保持安静。';
-export const DEFAULT_MUSIC = '轻柔、低音量的无歌词器乐';
+export const DEFAULT_EFFECTS = '仅保留动作本身带出的轻微环境声；没有动作发生的段落保持静音。';
+export const DEFAULT_MUSIC = '低音量的纯器乐，无人声';
 export const MAX_MUSIC_LEN = 120;
 export const MAX_EFFECTS_LEN = 240;
 

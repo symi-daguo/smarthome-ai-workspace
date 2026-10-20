@@ -33,7 +33,7 @@ const QUICK_CARDS = [
     icon: <HomeOutlined />,
     title: '生成智能方案',
     desc: '户型 → 全屋方案 + 可编辑 PPT',
-    prompt: '给 140㎡ 三室两厅做一份全屋智能方案',
+    prompt: '给 140㎡ 为一套三居室做全屋智能方案',
     tone: '#5B5BF0',
   },
   {
@@ -121,7 +121,7 @@ function ChatActions({ content }: { content: string }): ReactNode | null {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       } else {
-        message.error('复制失败，请手动选择文本复制');
+        message.error('自动复制没成功，请手动选中后按 Cmd+C');
       }
     }
   };
@@ -371,7 +371,7 @@ export function Dashboard(): ReactNode {
                   Hi{user?.displayName ? `，${user.displayName}` : ''}，欢迎回来
                 </Title>
                 <Text type="secondary" style={{ fontSize: isWide ? 17 : 14, lineHeight: 1.7 }}>
-                  说一句话，出方案 · 出图 · 出视频 · 出文案——智能家居获客与交付，全程帮你搞定
+                  一句话生成方案 · 出图 · 出视频 · 出文案——智能家居获客与交付，全程帮你搞定
                 </Text>
               </div>
 
@@ -453,7 +453,7 @@ export function Dashboard(): ReactNode {
                   onChange={setInput}
                   onSubmit={handleSubmit}
                   loading={sending}
-                  placeholder="说说你想创作什么…例如：给 140㎡ 三室两厅做一份全屋智能方案"
+                  placeholder="描述你想做的内容…例如：给 140㎡ 为一套三居室做全屋智能方案"
                   suffix={false}
                   header={
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '4px 0' }}>

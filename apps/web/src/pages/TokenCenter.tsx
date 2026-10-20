@@ -138,7 +138,7 @@ export function TokenCenter(): ReactNode {
 
   const changePassword = async (values: { oldPassword: string; newPassword: string; confirm: string }): Promise<void> => {
     if (values.newPassword !== values.confirm) {
-      message.error('两次输入的新密码不一致');
+      message.error('两次输入的新密码对不上');
       return;
     }
     setPwdLoading(true);

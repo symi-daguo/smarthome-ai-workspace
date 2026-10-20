@@ -696,7 +696,7 @@ export function MainLayout(): ReactNode {
             open={guideOpen}
             onCancel={() => setGuideOpen(false)}
             onOk={() => setGuideOpen(false)}
-            okText="我知道了，开始使用"
+            okText="明白，开始使用"
             cancelButtonProps={{ style: { display: 'none' } }}
           >
             <Text style={{ display: 'block', marginBottom: 12 }}>
