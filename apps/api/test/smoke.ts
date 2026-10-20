@@ -620,6 +620,31 @@ async function main(): Promise<void> {
     putAgain.status === 200 && cfgAfter2.body.chat.keyMasked === '••••1234' && cfgAfter2.body.chat.model.startsWith('（跟随'),
   );
 
+  // ---------- 出图通道的测试夹具：临时写入一个假 Key ----------
+  // 出图校验链的顺序是「Key → 幂等 → 参数完整性 → 通道能力 → 扣额度」。
+  // Key 缺失会在第一步就 503 IMAGE_KEY_MISSING 短路，于是
+  // 「参数不全 400」「通道不支持 503」「幂等去重」「额度不足 403」这几条
+  // 根本走不到对应分支 —— 本地 .env 有真 Key 所以绿，CI 没 Key 所以红。
+  // 这里自己写一个假 Key：baseUrl 指向本机死端口（127.0.0.1:9），
+  // 任何误发的上游请求都会立刻连接被拒，不会真的出图、不会真的扣额度。
+  // 用完即删（DELETE 整行），把「恢复 .env 默认」这条既有语义保持住。
+  const setFakeImageKey = async (): Promise<boolean> => {
+    const r = await request(base, '/api/admin/model-config/image', {
+      ...authA,
+      method: 'PUT',
+      body: JSON.stringify({
+        provider: 'minimax',
+        baseUrl: 'http://127.0.0.1:9/v1',
+        model: 'smoke-image-model',
+        apiKey: 'smoke-image-key',
+      }),
+    });
+    return r.status === 200;
+  };
+  const clearImageKey = async (): Promise<void> => {
+    await request(base, '/api/admin/model-config/image', { ...authA, method: 'DELETE' });
+  };
+
   // ---------- 开源定位：额度耗尽只暂停 AI，不锁功能 ----------
   // 用户口径：客户用自己充值/本地的模型，扣费实际不发生。
   // 额度只能是「用量可视化 + 超产熔断」，绝不能变成使用门槛 —— 这条断言把承诺钉死。
@@ -636,12 +661,15 @@ async function main(): Promise<void> {
       if (r.status !== 200) blocked.push(`${name}=${r.status}`);
     }
     check(`额度耗尽不锁任何非 AI 功能（实测阻塞 ${blocked.length} 个）`, blocked.length === 0);
+    const keyReady = await setFakeImageKey();
+    check('出图通道临时写入测试用 Key（否则校验链在第一步就短路，测不到额度分支）', keyReady);
     const ai = await request(base, '/api/media/images', {
       ...authA, method: 'POST', body: JSON.stringify({ prompt: '一张现代客厅效果图', size: '1024x1024' }),
     });
     check('额度耗尽时 AI 调用被暂停且给出可读原因（非 500）',
       ai.status === 403 && (ai.body as { message?: string })?.message === 'TOKEN_INSUFFICIENT',
       `实际 status=${ai.status} body=${JSON.stringify(ai.body)?.slice(0, 200)}`);
+    await clearImageKey();
     await prisma.tenant.update({ where: { id: tenantA }, data: { tokenBalance: keep?.tokenBalance ?? 80_000 } });
   }
 
@@ -1657,6 +1685,12 @@ async function main(): Promise<void> {
   check('清理后画布列表为空（测试数据不残留）', canvasList2.status === 200 && canvasList2.body.length === 0);
   check('清理后生图模型配置回到默认来源', canvasCfgReset.body.image.source === 'env');
 
+  // 画布块的 ComfyUI 假服务端到此为止；后面的局部重绘 / 幂等 / 遮罩链路用回默认通道。
+  // 这里重新写入测试用假 Key —— 少了它，这几组断言会在 Key 校验处短路（503 IMAGE_KEY_MISSING），
+  // 根本走不到「参数 400 / 通道能力 503 / 幂等去重 / 遮罩到达出图层」这些真正要验的分支。
+  const lateKeyReady = await setFakeImageKey();
+  check('生图通道再次写入测试用 Key（供后续局部重绘/幂等/遮罩链路用例使用）', lateKeyReady);
+
   // ---------- 任务中心：跨页面/跨刷新的任务来源 ----------
   const tasksList = await request<{ id: string; status: string; title: string }[]>(base, '/api/canvas/tasks', authA);
   check('任务中心列表可查（200 且为数组）', tasksList.status === 200 && Array.isArray(tasksList.body));
@@ -2594,6 +2628,8 @@ async function main(): Promise<void> {
     check('遮罩确实到达出图层：provider 不支持时作业失败而非静默整张重画', false);
     check('拒绝文案点明缺的是 mask 参数并给出可行替代，而非笼统说 provider 不行', false);
   }
+  // 夹具收尾：把临时假 Key 删掉，生图配置回到 .env 默认，不给使用者留脏配置
+  await clearImageKey();
 
   // ================= Agent 机器接入（0.1.53） =================
 
