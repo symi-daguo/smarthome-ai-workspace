@@ -1856,6 +1856,83 @@ async function main(): Promise<void> {
     afterEdit.body?.reviewed === false && afterEdit.body?.versionNo === 2,
   );
 
+  // ---------- 交付模版（户型图设计 / 产品放置） ----------
+  // 模版不改案页文字，但改客户看到的东西：照样要 bump versionNo 并让校对失效，
+  // 否则打完包改模版，旧交付链接还能下，客户端拿到的是旧模版而门店以为已更新。
+  const tplSeed = await prisma.planProject.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      title: '交付模版验证',
+      style: 'A',
+      edition: 'standard',
+      floorplanTemplate: 'annotated',
+      markerTemplate: 'numbered',
+      pageCount: 9,
+      pages: [{ type: 'scene', heading: '模版验证页', subtitle: '', body: '正文', bullets: ['要点'], narration: '' }],
+      versionNo: 1,
+      reviewedRevision: 1,
+    },
+  });
+  const tplBefore = await request<{ floorplanTemplate?: string; markerTemplate?: string; reviewed?: boolean }>(base, `/api/plans/${tplSeed.id}`, authA);
+  check(
+    '方案详情带出交付模版（默认 annotated + numbered）',
+    tplBefore.body?.floorplanTemplate === 'annotated' && tplBefore.body?.markerTemplate === 'numbered',
+  );
+  const tplSet = await request<{ floorplanTemplate?: string; markerTemplate?: string; versionNo: number }>(base, `/api/plans/${tplSeed.id}/templates`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ floorplanTemplate: 'compare', markerTemplate: 'dot' }),
+  });
+  check(
+    '改交付模版生效（compare + dot）且版本号 +1',
+    tplSet.status === 200 && tplSet.body?.floorplanTemplate === 'compare'
+      && tplSet.body?.markerTemplate === 'dot' && tplSet.body?.versionNo === 2,
+  );
+  const tplAfter = await request<{ reviewed?: boolean; versionNo: number }>(base, `/api/plans/${tplSeed.id}`, authA);
+  check(
+    '改交付模版后校对状态失效（交付件变了，旧的"已校对"结论不成立）',
+    tplAfter.body?.reviewed === false && tplAfter.body?.versionNo === 2,
+  );
+  const tplConflict = await request<{ code?: string }>(base, `/api/plans/${tplSeed.id}/templates`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ floorplanTemplate: 'render', versionNo: 1 }),
+  });
+  check('改交付模版带过期版本号返回 409（乐观锁，不静默覆盖）', tplConflict.status === 409 && tplConflict.body?.code === 'PLAN_VERSION_CONFLICT');
+  const tplBad = await request(base, `/api/plans/${tplSeed.id}/templates`, {
+    ...authA, method: 'PATCH', body: JSON.stringify({ floorplanTemplate: 'nope' }),
+  });
+  check('非法模版取值被拒（400，不落库）', tplBad.status === 400);
+  const tplCross = await request(base, `/api/plans/${tplSeed.id}/templates`, {
+    ...authB, method: 'PATCH', body: JSON.stringify({ floorplanTemplate: 'render' }),
+  });
+  check('跨租户改模版 404（不泄露他租户方案是否存在）', tplCross.status === 404);
+  const tplPersist = await request<{ floorplanTemplate?: string }>(base, `/api/plans/${tplSeed.id}`, authA);
+  check('非法模版没有污染已有配置（仍是 compare）', tplPersist.body?.floorplanTemplate === 'compare');
+
+  // ---------- 角色权限覆盖各自业务线：销售顾问得能做完「接待 → 出方案」 ----------
+  // 端点级验证：模板里给了权限还不够，得让真实成员按该角色真的拿到/拿不到。
+  const salesRoleId = (await prisma.role.findUniqueOrThrow({ where: { key: 'sales' } })).id;
+  const financeRoleId = (await prisma.role.findUniqueOrThrow({ where: { key: 'finance' } })).id;
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: salesRoleId } });
+  const salesPlanList = await request(base, '/api/plans', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
+  check('销售顾问能看方案（接待客户要拿方案给客户看）', salesPlanList.status === 200);
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: financeRoleId } });
+  const financePlanList = await request(base, '/api/plans', { headers: { Authorization: `Bearer ${relogin.body.token}` } });
+  check('财务看不到方案（岗位用不到，权限不必给宽）', financePlanList.status === 403);
+  await prisma.membership.update({ where: { id: memberA.id }, data: { roleId: originalRoleId } });
+
+  // 模版必须出现在**列表**和**分享页**里：前端这两处都按模版渲染，
+  // 接口少给一个字段，页面就退回默认模版 —— 客户看到的和门店设置的不一样。
+  const tplList = await request<{ id: string; floorplanTemplate?: string; markerTemplate?: string }[]>(base, '/api/plans', authA);
+  const tplListRow = tplList.body?.find((r) => r.id === tplSeed.id);
+  check(
+    '方案列表带出交付模版（列表页展示当前模版）',
+    tplListRow?.floorplanTemplate === 'compare' && tplListRow?.markerTemplate === 'dot',
+  );
+  const tplShare = await request<{ floorplanTemplate?: string; markerTemplate?: string }>(base, `/api/public/plans/${tplSeed.shareToken}`);
+  check(
+    '分享页接口带出交付模版（客户看到的与交付 PPT 同一模版）',
+    tplShare.status === 200 && tplShare.body?.floorplanTemplate === 'compare' && tplShare.body?.markerTemplate === 'dot',
+  );
+
   // ---------- 交付三件套打包 + 签名直链（批次 0+9） ----------
   // 搬到服务端的唯一理由是文件名：浏览器 blob 下载实测一律落成随机名。
   // 所以「Content-Disposition 里有中文方案名」本身就是一条必须锁住的断言。
@@ -2741,6 +2818,21 @@ async function main(): Promise<void> {
     );
     const adminTpl = tpl.body.find((t) => t.key === 'tenant_admin');
     check('租户管理员模板含成员管理权限（否则没人能建账号）', (adminTpl?.permissions ?? []).includes('tenant:member:manage'));
+
+    // 角色模板层：销售顾问这条业务线必须能走完，财务不必。
+    // 依据：参考站首页把「生方案」与「生图」「生视频」并列为一级按钮（hc-tool），
+    // 定位语「从内容获客到方案成交，全流程 AI 提效」—— 出方案是销售岗每天要用的动作。
+    // 少了 content:read/generate，销售这条线就断在「能报价，却做不出方案给客户看」。
+    const salesTpl = tpl.body.find((t) => t.key === 'sales');
+    const financeTpl = tpl.body.find((t) => t.key === 'finance');
+    check(
+      '销售顾问角色模板含做方案权限（content:read + content:generate）',
+      (salesTpl?.permissions ?? []).includes('content:read') && (salesTpl?.permissions ?? []).includes('content:generate'),
+    );
+    check(
+      '财务角色模板不含做方案权限（岗位用不到，权限不必给宽）',
+      !(financeTpl?.permissions ?? []).includes('content:read') && !(financeTpl?.permissions ?? []).includes('content:generate'),
+    );
 
     // 建成员 → 能登录 → 权限真的按角色生效
     const phoneM = randomPhone();

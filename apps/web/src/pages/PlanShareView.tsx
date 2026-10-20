@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { planTheme, type PlanPage } from '../data/planThemes';
 import { PlanSlide } from '../components/PlanSlide';
-import { withFloorplanPage } from '../lib/planPages';
+import { deliverPages, floorplanListPageNo } from '../lib/planPages';
 
 const { Text } = Typography;
 
@@ -21,6 +21,9 @@ interface SharePlan {
   floorplanAssetId?: string | null;
   renderedFloorplanAssetId?: string | null;
   layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+  /** 交付模版（分享页必须与交付 PPT 同模版，否则客户看到的和收到手的不一样） */
+  floorplanTemplate?: string | null;
+  markerTemplate?: string | null;
   /** 门店挂进来的场景视频（最多 2 条），走公开流内联播放 */
   videoAssetIds?: string[];
   /** 视频标题（与 videoAssetIds 同序），用于视频下方说明 */
@@ -63,13 +66,30 @@ export function PlanShareView(): ReactNode {
     floorplanUrl: plan.floorplanAssetId && token ? `/api/public/plans/${token}/floorplan` : null,
     renderedFloorplanUrl: plan.renderedFloorplanAssetId && token ? `/api/public/plans/${token}/rendered-floorplan` : null,
     layoutPoints: plan.layoutPoints ?? null,
+    floorplanTemplate: plan.floorplanTemplate ?? null,
+    markerTemplate: plan.markerTemplate ?? null,
   };
 
   const videoCount = Math.min(plan.videoAssetIds?.length ?? 0, 2);
   const videoTitles = plan.videoTitles ?? [];
 
-  // 有户型图素材时补一页「户型与设备点位」：参考站同样把户型图算成独立页
-  const shown = withFloorplanPage(plan.pages, Boolean(slidePlan.floorplanUrl || slidePlan.renderedFloorplanUrl));
+  // 有户型图素材时补一页「户型与设备点位」：参考站同样把户型图算成独立页。
+  // 点位清单续页也要补，否则分享页比交付 PPT 少页 —— 客户在手机上看到的
+  // 和收到手的对不上，会以为漏发内容。
+  // 页序走 planPages.deliverPages：PPTX / 讲稿 / 分享页共用同一份，
+  // 这里自己再写一遍插页逻辑，改一处忘另一处就会静默错位。
+  const shown = (() => {
+    const r = deliverPages({
+      pages: plan.pages,
+      floorplanUrl: slidePlan.floorplanUrl,
+      renderedFloorplanUrl: slidePlan.renderedFloorplanUrl,
+      layoutPoints: plan.layoutPoints ?? null,
+      floorplanTemplate: plan.floorplanTemplate ?? null,
+      markerTemplate: plan.markerTemplate ?? null,
+    });
+    const fpIndex = r.pages.findIndex((p) => p.type === 'floorplan');
+    return { pages: r.pages, syntheticAt: fpIndex };
+  })();
 
   return (
     <div className="plan-share-page" style={{ minHeight: '100vh', background: t.bg, padding: '24px 16px 64px' }}>
@@ -105,7 +125,7 @@ export function PlanShareView(): ReactNode {
           </div>
         ) : null}
         {shown.pages.map((p, i) => (          <div key={i} style={{ boxShadow: '0 2px 16px rgba(0,0,0,.08)' }}>
-            <PlanSlide page={p} index={i} plan={slidePlan} t={t} />
+            <PlanSlide page={p} index={i} plan={slidePlan} t={t} listNo={floorplanListPageNo(shown.pages, i)} />
           </div>
         ))}
         <div style={{ textAlign: 'center', marginTop: 16 }}>

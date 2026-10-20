@@ -2,7 +2,8 @@ import PptxGenJS from 'pptxgenjs';
 import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } from '../data/planThemes';
 import { catMeta, compositePoints } from './pointOverlay';
 import { customerText } from './planSanitize';
-import { withFloorplanPage } from './planPages';
+import { floorplanListPageNo, POINT_ROWS_PER_PAGE, deliverPages, deliverPointCount } from './planPages';
+import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
 
 /**
  * 方案 PPT 生成器（16:9 原生可编辑幻灯片）。
@@ -25,14 +26,22 @@ export interface PlanForExport {
   /** AI 渲染的精装修效果图（与原始户型图共存时优先用此图，覆盖点位叠加） */
   renderedFloorplanUrl?: string | null;
   layoutPoints?: { name: string; category: string; iconKey?: string; x: number; y: number }[] | null;
+  /** 户型图设计模版：annotated(点位标注) | compare(原图对照) | render(单图效果) */
+  floorplanTemplate?: string | null;
+  /** 产品放置模版：numbered(编号+名称) | icon(产品图+名称) | dot(色点+编号) */
+  markerTemplate?: string | null;
 }
 
 // 16:9 = 13.333 x 7.5 英寸
-const W = 13.333;
-const H = 7.5;
+const W = 13.333;const H = 7.5;
 const MX = 0.66; // 左右外边距
 /** 户型页左栏图片框（英寸），与前端卡片的图片区保持同一比例 */
 const FLOOR_BOX: [number, number] = [8.6, 6.15];
+
+/**
+ * 点位清单是否走「编号列表」版式、以及交付页序列，都放在 planPages.ts ——
+ * 那是页序的唯一来源，PPTX / 讲稿 / 分享页都从那里取，改一处即可三处同步。
+ */
 import { FONT_PPTX } from '../theme/fonts';
 const FONT = FONT_PPTX;
 
@@ -207,6 +216,8 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
 
   // 空间动线页：优先用精装修效果图 > 户型+点位合成图 > 场景实景图
   let floorplan: { data: string; ratio: number } | null = null;
+  // 「原图对照」模版的左栏：未叠加点位的原始户型
+  let leftImage: { data: string; ratio: number } | null = null;
   if (plan.renderedFloorplanUrl) {
     try {
       const data = await imgData(plan.renderedFloorplanUrl);
@@ -230,28 +241,50 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
    * 点位叠加：底图用「精装修效果图优先」，与 PlanSlide 的 useFloorplanVisual 同规则。
    * 此前条件是 `!floorplan && plan.floorplanUrl`，于是生成了精装修图之后
    * 点位合成被整段跳过 —— 页面上写着「户型与设备点位」，却一个点位都没有。
+   *
+   * 模版联动两处：
+   *   - `render` 模版刻意不叠加点位（它就是「只放效果图」的展示型模版）
+   *   - 标记样式由 markerTemplate 决定（编号 / 产品图 / 色点，见 data/planTemplates.ts）
    */
-  if (plan.layoutPoints?.length) {
+  const fpTpl = floorplanTemplate(plan.floorplanTemplate);
+  const mkTpl = markerTemplate(plan.markerTemplate);
+  if (plan.layoutPoints?.length && fpTpl !== 'render') {
     const base = (plan.renderedFloorplanUrl ?? plan.floorplanUrl) as string | null | undefined;
     if (base) {
       try {
-        const composed = await compositePoints(base, plan.layoutPoints, 1400);
-        const [bw, bh] = FLOOR_BOX;
+        const composed = await compositePoints(base, plan.layoutPoints, 1400, mkTpl);
         // 先合成点位再裁剪：点位图标已经画在图上，跟着一起裁，不会与点位错位
-        const data = await coverCrop(composed, bw, bh, 'center');
-        floorplan = { data, ratio: bw / bh };
+        if (fpTpl === 'compare') {
+          // 原图对照模版左栏要放**未叠加点位**的原始户型，对照才有意义
+          const orig = await imgData(plan.floorplanUrl as string);
+          const [bw, bh] = FLOOR_BOX;
+          leftImage = { data: await coverCrop(orig, bw, bh, 'center'), ratio: bw / bh };
+        }
+        const [bw, bh] = FLOOR_BOX;
+        floorplan = { data: await coverCrop(composed, bw, bh, 'center'), ratio: bw / bh };
       } catch {
         // 合成失败就沿用前面的底图，宁可没点位也不要整页丢图
       }
     }
   }
+  if (fpTpl === 'compare' && !leftImage && plan.floorplanUrl) {
+    try {
+      const orig = await imgData(plan.floorplanUrl);
+      const [bw, bh] = FLOOR_BOX;
+      leftImage = { data: await coverCrop(orig, bw, bh, 'center'), ratio: bw / bh };
+    } catch {
+      /* 原图取不到就退回 annotated */
+    }
+  }
 
   // 有户型图素材时补一页「户型与设备点位」：分享页/预览/PPTX 必须页数一致
-  const outPages = withFloorplanPage(plan.pages, Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl)).pages;
-  console.info('[pptx] 交付页数', outPages.length, '| 有户型图', Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl));
-  outPages.forEach((p, i) => {
+  const finalPages = deliverPages(plan).pages;
+  const listCount = deliverPointCount(plan);
+  console.info('[pptx] 交付页数', finalPages.length, '| 有户型图', Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl), '| 点位清单', listCount);
+  finalPages.forEach((p, i) => {
     const slide = pptx.addSlide();
     slide.background = { color: hex(t.bg) };
+    const listNo = floorplanListPageNo(finalPages, i);
     switch (p.type) {
       case 'cover': coverSlide(slide, p, plan, t, img(p)); break;
       case 'brand': brandSlide(slide, p, i, plan, t, img(p)); break;
@@ -261,7 +294,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
       case 'scene': sceneSlide(slide, p, i, plan, t, img(p)); break;
       case 'budget': budgetSlide(slide, p, i, plan, t, pptx); break;
       case 'delivery': deliverySlide(slide, p, i, plan, t, img(p), pptx); break;
-      case 'floorplan': floorplanSlide(slide, p, i, plan, t, img(p), floorplan); break;
+      case 'floorplan': floorplanSlide(slide, p, i, plan, t, img(p), floorplan, leftImage, listNo); break;
     }
     if (p.narration) slide.addNotes(p.narration);
   });
@@ -503,37 +536,127 @@ function sceneSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
 /**
  * 户型与设备点位页（PPTX 版）。
  *
- * 图用 contain：户型图被裁掉一半比看不清楚更严重。右侧按品类汇总点位，
- * 客户要确认的是「装了多少、都是些什么」，不是逐个编号。
+ * 图用 contain：户型图被裁掉一半比看不清楚更严重。
+ *
+ * 右侧版式由 `floorplanTemplate` 决定（见 data/planTemplates.ts）：
+ *   annotated（默认）—— 品类图例 + **编号点位清单**，客户能按编号把图上标记对回清单；
+ *                       这正是行业对点位图的基本要求（图例 + 点位表），也是改前缺的那块。
+ *   compare           —— 左半栏放未叠加点位的原始户型，右半栏放效果图，改造前后对照。
+ *   render            —— 只放效果图，不叠加点位。
+ *
+ * 点位清单每页最多 9 条，超出的转入下一页（`floorplanExtraPages`），
+ * 不做「取前 9 条」——那会让客户拿到的清单缺设备，施工交底时是事故。
  */
 function floorplanSlide(
   slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme,
   img: string, floorplan: { data: string; ratio: number } | null,
+  leftImage: { data: string; ratio: number } | null = null,
+  listNo = 0,
 ): void {
+  const tpl = floorplanTemplate(plan.floorplanTemplate);
+  const points = plan.layoutPoints ?? [];
+  /**
+   * 编号清单的判定必须与 `deliverPointCount` **完全一致**，否则两处会打架：
+   * deliverPointCount 决定「插几张清单页」，这里决定「画不画编号清单」。
+   * 口径不一致时（此前 render 模版两处不同）会出现「页上写『续下页 · 还有 3 台』，
+   * 但根本没有下一页」—— 客户永远拿不到那 3 台设备的编号。
+   *
+   * render 模版不叠加点位 → 图上没有徽章 → 不出编号清单（退回品类汇总）；
+   * icon 模版标记上是产品图，编号无意义 → 同样退回品类汇总。
+   */
+  const numbered = tpl !== 'render' && markerTemplate(plan.markerTemplate) !== 'icon' && points.length > 0;
+
   const rightW = 4.1;
   const x = W - rightW - MX;
+  // 右栏纵向分区：清单区 → 续页提示 → 图例 → 结论条 → 页脚
+  const listTop = 3.28;
+  const listMaxBottom = 5.58;
+  const rowGap = 0.05;
   folio(slide, p, i, t, x, 0.5, rightW);
   claim(slide, p, t, x, 1.05, rightW, 0.9, 19);
-  slide.addText(p.body, { x, y: 2.05, w: rightW, h: 1.5, fontSize: 10.5, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.55, valign: 'top', margin: 0 });
+  slide.addText(p.body, { x, y: 2.05, w: rightW, h: 1.05, fontSize: 10.5, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.55, valign: 'top', margin: 0 });
 
-  // 品类汇总
-  const m = new Map<string, number>();
-  for (const pt of plan.layoutPoints ?? []) m.set(pt.category, (m.get(pt.category) ?? 0) + 1);
-  const rows = [...m.entries()].slice(0, 8);
-  const top = 3.7;
-  const rowH = rows.length ? Math.min(0.42, (5.5 - top) / rows.length) : 0;
-  rows.forEach(([category, count], ri) => {
-    const y = top + ri * (rowH + 0.1);
-    slide.addShape('roundRect', { x, y, w: rightW, h: rowH, fill: { color: hex(t.surface) }, line: { color: hex(t.accent), transparency: 82, width: 0.5 }, rectRadius: 0.08 });
-    slide.addText(catMeta(category).label, { x: x + 0.16, y, w: rightW - 1.0, h: rowH, fontSize: 10, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0 });
-    slide.addText(String(count), { x: x + rightW - 0.9, y, w: 0.74, h: rowH, fontSize: 12, bold: true, color: hex(t.accent), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
-  });
-  quoteBar(slide, p, t, x, 5.85, rightW);
-  footer(slide, plan, t, x, 6.85, rightW);
+  if (numbered) {
+    // —— 编号点位清单：编号与图上徽章严格一致（都是 idx+1）——
+    // pageNo 是「这是第几张点位清单页」，用它算切片起点；
+    // 不能用 points.indexOf(pt) 反查起点：同名设备会命中第一处，编号直接错位。
+    const start = listNo * POINT_ROWS_PER_PAGE;
+    const rows = points.slice(start, start + POINT_ROWS_PER_PAGE);
+    // 行高按「清单区实际高度 ÷ 行数」算，且把行间距先扣掉：
+    // 此前行距没算进去，9 行时清单底边会压到图例上，两块内容叠在一起。
+    const rowH = rows.length
+      ? Math.max(0.16, Math.min(0.34, (listMaxBottom - listTop - rows.length * rowGap) / rows.length))
+      : 0;
+    if (!rows.length) {
+      slide.addText('本套方案未布设设备点位', { x, y: listTop, w: rightW, h: 0.4, fontSize: 10, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
+    }
+    rows.forEach((pt, ri) => {
+      const no = start + ri + 1;
+      const y = listTop + ri * (rowH + rowGap);
+      slide.addShape('roundRect', { x, y, w: rightW, h: rowH, fill: { color: hex(t.surface) }, line: { color: hex(t.accent), transparency: 86, width: 0.5 }, rectRadius: 0.06 });
+      // 编号圆点：底色与图上该点的品类色一致
+      const dot = Math.min(0.22, rowH * 0.86);
+      slide.addShape('ellipse', { x: x + 0.1, y: y + rowH / 2 - dot / 2, w: dot, h: dot, fill: { color: catMeta(pt.category).color.replace('#', '') } });
+      slide.addText(String(no), { x: x + 0.1, y: y + rowH / 2 - dot / 2, w: dot, h: dot, fontSize: 7.5, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: FONT, margin: 0 });
+      slide.addText(pt.name, { x: x + 0.4, y, w: rightW - 1.15, h: rowH, fontSize: 9.5, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0 });
+      slide.addText(catMeta(pt.category).label, { x: x + rightW - 1.1, y, w: 0.98, h: rowH, fontSize: 8, color: hex(t.sub), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
+    });
+    // 分页提示：只在不是最后一张时显示「续下页」
+    const more = points.length - start - rows.length;
+    if (more > 0) {
+      const hintY = listTop + rows.length * (rowH + rowGap) + 0.04;
+      slide.addText(`续下页 · 还有 ${more} 台`, { x, y: hintY, w: rightW, h: 0.26, fontSize: 8.5, color: hex(t.accent), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
+    }
+  } else {
+    // —— 品类汇总（无编号模版 / 无点位时的兜底）——
+    // 不截断：此前只列前 8 类，设备种类多的方案里客户看不到自己买的那几类。
+    const m = new Map<string, number>();
+    for (const pt of points) m.set(pt.category, (m.get(pt.category) ?? 0) + 1);
+    const rows = [...m.entries()];
+    const gap = 0.08;
+    const rowH = rows.length ? Math.max(0.2, Math.min(0.42, (listMaxBottom - listTop - rows.length * gap) / rows.length)) : 0;
+    rows.forEach(([category, count], ri) => {
+      const y = listTop + ri * (rowH + gap);
+      slide.addShape('roundRect', { x, y, w: rightW, h: rowH, fill: { color: hex(t.surface) }, line: { color: hex(t.accent), transparency: 82, width: 0.5 }, rectRadius: 0.08 });
+      slide.addText(catMeta(category).label, { x: x + 0.16, y, w: rightW - 1.0, h: rowH, fontSize: 10, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0 });
+      slide.addText(String(count), { x: x + rightW - 0.9, y, w: 0.74, h: rowH, fontSize: 12, bold: true, color: hex(t.accent), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
+    });
+  }
 
-  // 左侧整页大图
+  /**
+   * 图例：品类色块 + 名称 + 数量（行业规范要求「每张图纸都有符号说明」）。
+   *
+   * **不截断**：此前只画前 5 个品类，而图上可能有 7 种颜色的点 —— 客户对不上图例，
+   * 等于没有图例。这里用富文本流式排版（PowerPoint 自动换行），品类再多也不会少画。
+   */
+  const legend = [...new Map(points.map((pt) => [pt.category, catMeta(pt.category)])).entries()];
+  if (legend.length) {
+    const runs: { text: string; options: Record<string, unknown> }[] = [
+      { text: '图例  ', options: { fontSize: 8, bold: true, color: hex(t.sub) } },
+    ];
+    legend.forEach(([category, meta], li) => {
+      const n = points.filter((pt) => pt.category === category).length;
+      if (li) runs.push({ text: '   ', options: { fontSize: 8, color: hex(t.sub) } });
+      runs.push({ text: `■ ${meta.label}`, options: { fontSize: 8, bold: true, color: meta.color } });
+      runs.push({ text: ` ${n}`, options: { fontSize: 8, color: hex(t.sub) } });
+    });
+    slide.addText(runs, { x, y: 5.86, w: rightW, h: 0.6, fontFace: FONT, valign: 'top', margin: 0, lineSpacingMultiple: 1.15 });
+  }
+  quoteBar(slide, p, t, x, 6.5, rightW);
+  footer(slide, plan, t, x, 6.98, rightW);
+
+  // 左侧图区
   const boxW = x - 0.4;
   const boxH = H - 0.9;
+  if (tpl === 'compare' && leftImage && floorplan) {
+    // 原图对照：左右各占一半，中间留缝
+    const halfW = (boxW - 0.12) / 2;
+    slide.addImage({ data: leftImage.data, x: 0, y: 0.45, w: halfW, h: boxH });
+    slide.addImage({ data: floorplan.data, x: halfW + 0.12, y: 0.45, w: halfW, h: boxH });
+    slide.addText('原始户型（客户户型图）', { x: 0.1, y: H - 0.75, w: halfW - 0.2, h: 0.32, fontSize: 9, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 40 }, fontFace: FONT, valign: 'middle', margin: 0 });
+    slide.addText('AI 精装修效果 · 点位同步', { x: halfW + 0.22, y: H - 0.75, w: halfW - 0.2, h: 0.32, fontSize: 9, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 40 }, fontFace: FONT, valign: 'middle', margin: 0 });
+    return;
+  }
   if (floorplan?.data) {
     // 主流程已按 FLOOR_BOX 预裁过，这里直接铺满，不留白
     slide.addImage({ data: floorplan.data, x: 0, y: 0.45, w: boxW, h: boxH });
@@ -541,10 +664,12 @@ function floorplanSlide(
     // 没有上传户型图时用实景兜底，但要在图上说明，别让客户以为是自家户型
     slide.addImage({ data: img, x: 0, y: 0.45, w: boxW, h: boxH });
   }
-  slide.addText(
-    floorplan?.data ? (plan.renderedFloorplanUrl ? 'AI 精装修效果 · 点位同步' : '客户户型 · 设备点位图') : '空间实景示意（非客户户型）',
-    { x: 0.22, y: H - 0.75, w: boxW - 0.44, h: 0.32, fontSize: 9.5, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 35 }, fontFace: FONT, valign: 'middle', margin: 0 },
-  );
+  const caption = !floorplan?.data
+    ? '空间实景示意（非客户户型）'
+    : tpl === 'render'
+      ? 'AI 精装修效果示意（不含设备点位）'
+      : plan.renderedFloorplanUrl ? 'AI 精装修效果 · 点位同步' : '客户户型 · 设备点位图';
+  slide.addText(caption, { x: 0.22, y: H - 0.75, w: boxW - 0.44, h: 0.32, fontSize: 9.5, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 35 }, fontFace: FONT, valign: 'middle', margin: 0 });
 }
 
 function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, pptx: PptxGenJS): void {
@@ -624,7 +749,9 @@ function deliverySlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: Pla
 /** 导出完整讲稿（每页讲解稿汇总为文本文件） */
 export function buildNarrationText(plan: PlanForExport): string {
   const lines = [`# ${plan.title} · 完整讲解稿`, `版本 V${plan.versionNo}`, ''];
-  withFloorplanPage(plan.pages, Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl)).pages.forEach((p, i) => {
+  // 页序列必须与 PPTX 走同一个入口（含点位清单续页），
+  // 否则「讲稿第 7 页」和「PPT 第 7 页」对不上，门店照着讲会讲错页。
+  deliverPages(plan).pages.forEach((p, i) => {
     // 标题与讲解稿都过净化：讲解稿是直接发给客户的，
     // 里面留着「待客户确认现场条件」这类内部语句会直接引发追问
     const heading = customerText(p.heading) || p.heading;

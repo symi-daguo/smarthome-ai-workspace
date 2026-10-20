@@ -22,6 +22,9 @@ export const createPlanSchema = z.object({
   budgetSource: z.string().max(2000).optional().default(''),
   style: z.string().length(1).default('A'),
   edition: z.enum(['standard', 'presale', 'private']).default('standard'),
+  // 交付模版：户型图设计样式 + 产品放置样式（取值见 web/src/data/planTemplates.ts）
+  floorplanTemplate: z.enum(['annotated', 'compare', 'render']).default('annotated'),
+  markerTemplate: z.enum(['numbered', 'icon', 'dot']).default('numbered'),
   pageCount: z.number().int().min(9).max(16).default(9),
   /** 提交幂等键：方案按页数扣费且要先调 LLM，重放的代价最高，必须防重复提交 */
   clientRequestId: z.string().max(64).optional(),
@@ -106,6 +109,18 @@ export const updatePlanPageSchema = z.object({
   quote: z.string().max(300).optional(),
 });
 export type UpdatePlanPageDto = z.infer<typeof updatePlanPageSchema>;
+
+/**
+ * 改交付模版：户型图设计样式 + 产品放置样式。
+ * 取值与前端 data/planTemplates.ts 一一对应，改那边要同步改这里。
+ */
+export const updatePlanTemplatesSchema = z.object({
+  /** 乐观锁版本号：客户端打开时看到的 versionNo，传了而服务端已更新则 409 */
+  versionNo: z.number().int().min(1).optional(),
+  floorplanTemplate: z.enum(['annotated', 'compare', 'render']).optional(),
+  markerTemplate: z.enum(['numbered', 'icon', 'dot']).optional(),
+});
+export type UpdatePlanTemplatesDto = z.infer<typeof updatePlanTemplatesSchema>;
 
 /** 给方案挂接户型图与设备点位（点位布局编辑器 → 方案空间动线页） */
 

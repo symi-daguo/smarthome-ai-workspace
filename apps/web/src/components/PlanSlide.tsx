@@ -4,6 +4,8 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { compositePoints, type PointLike } from '../lib/pointOverlay';
 import { customerText } from '../lib/planSanitize';
+import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
+import { POINT_ROWS_PER_PAGE } from '../lib/planPages';
 
 interface SlidePlan {
   store: string;
@@ -12,6 +14,9 @@ interface SlidePlan {
   /** AI 渲染的精装修效果图（与原始户型图共存时优先用此图，覆盖点位叠加） */
   renderedFloorplanUrl?: string | null;
   layoutPoints?: PointLike[] | null;
+  /** 交付模版（与 PPTX 同源，见 data/planTemplates.ts） */
+  floorplanTemplate?: string | null;
+  markerTemplate?: string | null;
 }
 
 /**
@@ -101,7 +106,10 @@ function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit:
    * 这属于承诺了却不给，不是「少个功能」。
    */
   const base = (useRendered ? plan.renderedFloorplanUrl : plan.floorplanUrl) as string | null | undefined;
-  const hasPoints = Boolean(plan.layoutPoints?.length);
+  // render 模版刻意不叠加点位（它就是「只放效果图」的展示型模版），与 PPTX 同规则
+  const fpTpl = floorplanTemplate(plan.floorplanTemplate);
+  const mkTpl = markerTemplate(plan.markerTemplate);
+  const hasPoints = Boolean(plan.layoutPoints?.length) && fpTpl !== 'render';
   const needCompose = Boolean(base && hasPoints);
   const [composite, setComposite] = useState<string | null>(null);
   useEffect(() => {
@@ -110,11 +118,11 @@ function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit:
       return;
     }
     let alive = true;
-    void compositePoints(base, plan.layoutPoints ?? [], 1200)
+    void compositePoints(base, plan.layoutPoints ?? [], 1200, mkTpl)
       .then((url) => { if (alive) setComposite(url); })
       .catch(() => { if (alive) setComposite(null); });
     return () => { alive = false; };
-  }, [needCompose, base, plan.layoutPoints]);
+  }, [needCompose, base, plan.layoutPoints, mkTpl]);
 
   // 户型图也用 cover 铺满：contain 会在卡片内留出上下白边，PPT 里非常难看。
   // 点位图标是合成进图里的，裁剪时会跟着一起裁，不会与点位错位。
@@ -129,7 +137,7 @@ function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit:
   return { src: '', label: '空间动线实景', fit: 'cover' };
 }
 
-export function PlanSlide({ page: raw, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
+export function PlanSlide({ page: raw, index, plan, t, listNo = 0 }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme; listNo?: number }): ReactNode {
   // 客户可见的出口在这里统一净化一次。
   //
   // 为什么放在组件里而不是 4 个调用点各自处理：PlanSlide 被编辑预览、客户放映、
@@ -156,7 +164,7 @@ export function PlanSlide({ page: raw, index, plan, t }: { page: PlanPage; index
     case 'scene': return <SceneSlide page={page} index={index} plan={plan} t={t} />;
     case 'budget': return <BudgetSlide page={page} index={index} plan={plan} t={t} />;
     case 'delivery': return <DeliverySlide page={page} index={index} plan={plan} t={t} />;
-    case 'floorplan': return <FloorplanSlide page={page} index={index} plan={plan} t={t} />;
+    case 'floorplan': return <FloorplanSlide page={page} index={index} plan={plan} t={t} listNo={listNo} />;
   }
 }
 
@@ -536,15 +544,33 @@ function DeliverySlide({ page, index, plan, t }: { page: PlanPage; index: number
  *
  * 图用 contain 而不是 cover：户型图被裁掉一半比看不清楚更严重。
  */
-function FloorplanSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
+function FloorplanSlide({ page, index, plan, t, listNo = 0 }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme; listNo?: number }): ReactNode {
   const { src: visual, label, fit } = useFloorplanVisual(plan);
   const src = visual || plan.floorplanUrl || pageImage(page);
-  // 按品类汇总点位：客户看的是「装了多少、都是些什么」，不是逐个编号
+  const points = plan.layoutPoints ?? [];
+  const fpTpl = floorplanTemplate(plan.floorplanTemplate);
+  const mkTpl = markerTemplate(plan.markerTemplate);
+  /**
+   * 与 PPTX **同口径**（planPptx.floorplanSlide）：
+   * - render 模版不叠加点位，也不列编号清单（否则图上没有徽章，清单编号对不上）
+   * - icon 模版标记上是产品图，编号无意义，只列品类汇总
+   *
+   * 之前这里只做品类汇总，编号清单与图例都只在 PPTX 里 —— 门店在页面上看到的
+   * 和客户收到的 PPT 不是同一份东西。
+   */
+  const numbered = fpTpl !== 'render' && mkTpl !== 'icon' && points.length > 0;
+  const start = listNo * POINT_ROWS_PER_PAGE;
+  const rows = numbered ? points.slice(start, start + POINT_ROWS_PER_PAGE) : [];
+  const remaining = numbered ? Math.max(0, points.length - start - rows.length) : 0;
+  // 品类汇总：全量不截断（截断会让客户看不到自己买的那几类）
   const summary = useMemo(() => {
     const m = new Map<string, number>();
-    for (const p of plan.layoutPoints ?? []) m.set(p.category, (m.get(p.category) ?? 0) + 1);
-    return [...m.entries()].map(([category, count]) => ({ label: catMeta(category).label, count })).slice(0, 8);
-  }, [plan.layoutPoints]);
+    for (const p of points) m.set(p.category, (m.get(p.category) ?? 0) + 1);
+    return [...m.entries()].map(([category, count]) => ({ label: catMeta(category).label, color: catMeta(category).color, count }));
+  }, [points]);
+  // 图例：品类色块 + 名称 + 数量。行业规范要求「每张规范的图纸都有符号说明」，
+  // 这里不按数量截断 —— 图上有 7 种颜色的点，图例只写 5 种，客户会对不上。
+  const legend = summary;
 
   return (
     <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
@@ -562,15 +588,45 @@ function FloorplanSlide({ page, index, plan, t }: { page: PlanPage; index: numbe
             <Claim page={page} t={t} size="clamp(8px,2.2cqw,17px)" />
             <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw' }}>{page.body}</div>
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.8cqw', marginTop: '1.8cqw' }}>
-              {summary.map((s) => (
-                <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '1.2cqw', padding: '0.7cqw 1.2cqw', background: t.surface, borderRadius: '1cqw', border: `1px solid ${t.accent}1a`, flex: '1 1 0', minHeight: 0 }}>
-                  <span style={{ fontSize: 'clamp(6px,1.25cqw,10.5px)', color: t.text, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>{s.label}</span>
-                  <span style={{ fontSize: 'clamp(6px,1.5cqw,12px)', color: t.accent, fontWeight: 800 }}>{s.count}</span>
-                </div>
-              ))}
+              {numbered
+                ? rows.map((pt, ri) => {
+                  const no = start + ri + 1;
+                  const meta = catMeta(pt.category);
+                  return (
+                    <div key={`${pt.name}-${no}`} style={{ display: 'flex', alignItems: 'center', gap: '0.8cqw', padding: '0.35cqw 0.7cqw', background: t.surface, borderRadius: '0.6cqw', border: `1px solid ${t.accent}1a`, flex: '1 1 0', minHeight: 0 }}>
+                      <span style={{ width: '1.6cqw', height: '1.6cqw', minWidth: '1.6cqw', borderRadius: '50%', background: meta.color, color: '#fff', fontSize: 'clamp(5px,0.85cqw,8px)', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>{no}</span>
+                      <span style={{ fontSize: 'clamp(5px,1.05cqw,9.5px)', color: t.text, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>{pt.name}</span>
+                      <span style={{ fontSize: 'clamp(5px,0.95cqw,8.5px)', color: t.sub, flex: 'none' }}>{meta.label}</span>
+                    </div>
+                  );
+                })
+                : summary.map((s) => (
+                  <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '1.2cqw', padding: '0.7cqw 1.2cqw', background: t.surface, borderRadius: '1cqw', border: `1px solid ${t.accent}1a`, flex: '1 1 0', minHeight: 0 }}>
+                    <span style={{ fontSize: 'clamp(6px,1.25cqw,10.5px)', color: t.text, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>{s.label}</span>
+                    <span style={{ fontSize: 'clamp(6px,1.5cqw,12px)', color: t.accent, fontWeight: 800 }}>{s.count}</span>
+                  </div>
+                ))}
             </div>
+            {remaining > 0 ? (
+              <div style={{ fontSize: 'clamp(5px,0.95cqw,8.5px)', color: t.accent, textAlign: 'right', marginTop: '0.5cqw' }}>
+                续下页 · 还有 {remaining} 台
+              </div>
+            ) : null}
           </div>
         </div>
+        {/* 图例：与 PPTX 同款（全量不截断），多行自动换行 */}
+        {legend.length ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.4cqw 1.1cqw', marginTop: '1.2cqw' }}>
+            <span style={{ fontSize: 'clamp(5px,0.95cqw,8.5px)', color: t.sub, fontWeight: 700, flex: 'none' }}>图例</span>
+            {legend.map((l) => (
+              <span key={l.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4cqw', fontSize: 'clamp(5px,0.95cqw,8.5px)', flex: 'none' }}>
+                <span style={{ width: '0.8cqw', height: '0.8cqw', minWidth: '0.8cqw', borderRadius: '50%', background: l.color, display: 'inline-block' }} />
+                <span style={{ color: t.sub }}>{l.label}</span>
+                <span style={{ color: t.accent, fontWeight: 800 }}>{l.count}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div style={{ display: 'flex', alignItems: 'center', gap: '2cqw', marginTop: '1.8cqw' }}>
           <div style={{ flex: 1 }}><QuoteBar quote={page.quote} t={t} /></div>
           <Footer plan={plan} t={t} />

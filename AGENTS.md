@@ -15,6 +15,26 @@ pnpm typecheck && pnpm build && pnpm smoke
 **不要把这些命令接 `| tail -N`**：管道会缓冲输出并吃掉 pnpm 的退出码，
 上次就是这样把「编译失败」读成了「通过」。要收尾输出就重定向到文件再看。
 
+**`pnpm smoke` 跑的是 `dist/` 里的编译产物**（`apps/api` 的 script 是
+`node dist/test/smoke.js`），不是 `test/smoke.ts` 源码。所以：
+
+- 改了 `apps/api/test/smoke.ts` 之后**必须先 `pnpm build`**，否则跑的是旧断言
+  （新加的断言一条都不会出现，条数与上次一模一样 —— 这是「断言没生效」的典型假象）
+- 改了 `apps/api/src/**` 同样要先 build 再 smoke，否则测的是旧代码
+- 断言总数不变时先怀疑「没重新 build」，而不是「新断言挂了」
+
+## 前端纯逻辑回归（零新增依赖）
+
+`apps/web/scripts/check-delivery-templates.mjs` 用 Node 24 原生类型剥离直接跑 TS：
+
+```bash
+node apps/web/scripts/check-delivery-templates.mjs
+```
+
+源码按 Vite 惯例写无扩展名相对导入，而 Node 的 ESM 要求完整扩展名，
+脚本里用 `module.registerHooks` 补了一个解析钩子把 `../data/x` 映射到 `.ts`。
+**不要为了跑脚本把源码改成 `.ts` 后缀**（TS 默认不允许 `allowImportingTsExtensions`）。
+
 ## 技术栈版本纪律
 
 **依赖一律用当前最新稳定版**，且必须联网核对，不能凭印象：

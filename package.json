@@ -1,6 +1,6 @@
 {
   "name": "smart-home-ai-saas",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "private": true,
   "description": "智能家居 AI 工作台：多租户、RBAC、agent 工具调用、内容提取与知识库（开源自部署，模型自选）",
   "packageManager": "pnpm@11.28.6",
@@ -13,6 +13,7 @@
     "dev:api": "pnpm --filter @app/api dev",
     "dev:web": "pnpm --filter @app/web dev",
     "build": "pnpm -r build",
+    "check:templates": "pnpm --filter @app/web check:templates",
     "typecheck": "pnpm -r typecheck",
     "smoke": "pnpm --filter @app/api smoke",
     "db:migrate": "pnpm --filter @app/api prisma:migrate",

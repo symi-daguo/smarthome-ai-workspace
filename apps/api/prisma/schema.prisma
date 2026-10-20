@@ -456,6 +456,11 @@ model PlanProject {
   style                    String   @default("A")
   // standard | presale | private
   edition                  String   @default("standard")
+  // 户型图设计模版：annotated(点位标注图) | compare(原图对照) | render(单张效果图)
+  // 依据见 web/data/planTemplates.ts：行业要求点位图必须带图例与点位表。
+  floorplanTemplate        String   @default("annotated")
+  // 产品放置模版：numbered(编号+名称) | icon(产品图+名称) | dot(色点+编号)
+  markerTemplate           String   @default("numbered")
   // 方案页数（10/12 等，最少 9）
   pageCount                Int      @default(9)
   // 方案页数组（cover/space/scene/budget），逐页审稿编辑后整体覆盖

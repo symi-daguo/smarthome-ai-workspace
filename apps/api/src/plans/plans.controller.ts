@@ -32,10 +32,12 @@ import {
   bindVideosSchema,
   createPlanSchema,
   updatePlanPageSchema,
+  updatePlanTemplatesSchema,
   type AttachFloorplanDto,
   type BindVideosDto,
   type CreatePlanDto,
   type UpdatePlanPageDto,
+  type UpdatePlanTemplatesDto,
 } from './plans.schemas.js';
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
@@ -93,6 +95,8 @@ export class PlansController {
       budgetSource: dto.budgetSource ?? '',
       style: dto.style,
       edition: dto.edition,
+      floorplanTemplate: dto.floorplanTemplate,
+      markerTemplate: dto.markerTemplate,
       pageCount: dto.pageCount,
       floorplanAssetId: dto.floorplanAssetId,
       extraFloorplanAssetIds: dto.extraFloorplanAssetIds,
@@ -166,8 +170,23 @@ export class PlansController {
     });
   }
 
-  /** 逐页校对确认：把当前版本标记为已校对；之后任何一次改文案都会让它自动失效 */
+  /**
+   * 改交付模版（户型图设计样式 / 产品放置样式）。
+   *
+   * 模版不改案页文字，但改客户看到的东西，所以照样 bump versionNo、
+   * 让逐页校对结论失效 —— 打完包再改模版，旧链接必须失效。
+   */
   @RequirePermissions('content:generate')
+  @Patch(':id/templates')
+  updateTemplates(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updatePlanTemplatesSchema)) dto: UpdatePlanTemplatesDto,
+  ) {
+    return this.plans.updateTemplates(user.activeTenantId as string, id, dto);
+  }
+
+  /** 逐页校对确认：把当前版本标记为已校对；之后任何一次改文案都会让它自动失效 */  @RequirePermissions('content:generate')
   @Post(':id/review')
   review(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

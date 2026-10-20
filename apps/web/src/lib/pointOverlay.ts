@@ -2,6 +2,7 @@ import { categoryIconDataUrl, productIconDataUrl } from './product-icons';
 import { FONT_STACK_CANVAS } from '../theme/fonts';
 import { catMeta as catMetaDict } from './categoryStore';
 import { fileUrl } from './api';
+import type { MarkerTemplate } from '../data/planTemplates';
 
 /** 设备点位叠加共享模块：类别配色 + canvas 合成标注图（点位编辑器导出与方案 PPTX 共用） */
 
@@ -32,8 +33,23 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 底图 + 品类图标徽章点位 + 名称标签 合成为一张标注图纸（dataURL, PNG） */
-export async function compositePoints(baseSrc: string, points: PointLike[], targetW = 1600): Promise<string> {
+/**
+ * 底图 + 点位标记 合成为一张标注图纸（dataURL, PNG）。
+ *
+ * marker 决定标记样式（对齐参考站 wifi-heatmap.js `drawDevices()` 的
+ * 「图标 + 右上角编号 + 名称标签」模式，见 data/planTemplates.ts 的依据说明）：
+ *   numbered —— 圆形徽章写编号 + 名称标签（默认，可与点位清单逐条对照）
+ *   icon     —— 徽章贴产品主图/品类图标 + 名称标签（改前的老行为）
+ *   dot      —— 按品类配色的小实心点 + 编号，名称全交给右侧清单
+ *
+ * 三种模式下标记的**编号都是 idx+1**，与点位清单顺序严格一致。
+ */
+export async function compositePoints(
+  baseSrc: string,
+  points: PointLike[],
+  targetW = 1600,
+  marker: MarkerTemplate = 'icon',
+): Promise<string> {
   const img = await loadImage(baseSrc);
   const scale = Math.max(1, Math.min(3, targetW / img.naturalWidth));
   const canvas = document.createElement('canvas');
@@ -62,11 +78,33 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
     return iconCache.get(p.iconKey || p.category) ?? null;
   };
   const pointIcons = await Promise.all(points.map(loadIcon));
-  const r = Math.max(14, canvas.width * 0.016);
-  ctx.font = `bold ${Math.round(r * 0.95)}px ${FONT_STACK_CANVAS}`;
+  const dot = marker === 'dot';
+  const r = Math.max(14, canvas.width * (dot ? 0.009 : 0.016));
+  ctx.font = `bold ${Math.round(r * (dot ? 1.3 : 0.95))}px ${FONT_STACK_CANVAS}`;
   points.forEach((p, idx) => {
     const x = p.x * canvas.width;
     const y = p.y * canvas.height;
+    const no = String(idx + 1);
+
+    // —— dot：小实心点 + 右下角编号（点位密集时最干净）——
+    if (dot) {
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.72, 0, Math.PI * 2);
+      ctx.fillStyle = catMeta(p.category).color + 'e6';
+      ctx.shadowColor = 'rgba(0,0,0,.30)';
+      ctx.shadowBlur = r * 0.45;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = Math.max(1.5, r * 0.22);
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `800 ${Math.round(r * 0.72)}px ${FONT_STACK_CANVAS}`;
+      ctx.fillText(no, x, y + r * 0.04);
+      return;
+    }
     const color = catMeta(p.category).color;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -79,7 +117,9 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
     ctx.strokeStyle = '#ffffff';
     ctx.stroke();
     const icon = pointIcons[idx];
-    if (icon) {
+    // numbered：徽章中央写编号（与点位清单一一对应），不贴图标；
+    // icon：徽章贴产品主图/品类图标。两者的徽章底色都按品类，视觉分类一致。
+    if (marker !== 'numbered' && icon) {
       const s = r * 1.35;
       if (p.iconUrl) {
         // 产品照片：圆形裁剪贴入徽章
@@ -101,8 +141,10 @@ export async function compositePoints(baseSrc: string, points: PointLike[], targ
       ctx.fillStyle = '#fff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(p.name.slice(0, 1), x, y + r * 0.05);
+      ctx.fillText(marker === 'numbered' ? no : p.name.slice(0, 1), x, y + r * 0.05);
     }
+    // dot 模版不带名称标签（名称全在右侧清单里），其余两种都带
+    if (dot) return;
     const tw = ctx.measureText(p.name).width;
     const lx = x + r + 6;
     const ly = y - r * 0.7;

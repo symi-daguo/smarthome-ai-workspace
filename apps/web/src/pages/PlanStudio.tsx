@@ -18,11 +18,12 @@ import {
 import { Alert, App as AntApp, Button, Checkbox, Drawer, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Spin, Steps, Tag, Tooltip, Typography, theme } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { FLOORPLAN_TEMPLATES, MARKER_TEMPLATES, floorplanTemplate, markerTemplate, type FloorplanTemplate, type MarkerTemplate } from '../data/planTemplates';
 import { api, fileUrl } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { newRequestId } from '../lib/request-id';
 import { compressImage } from '../lib/compress';
-import { withFloorplanPage } from '../lib/planPages';
+import { deliverPages, floorplanListPageNo } from '../lib/planPages';
 import { FLOORPLAN_MAX, appendFloorplanFiles, type FloorplanSlot } from '../lib/floorplan';
 import {
   RENDER_MAX, ROOM_OPTIONS, checkRenderUpload, checkRenderReady,
@@ -35,7 +36,7 @@ import {
 } from '../lib/pageBudget';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
-import { exportPlanPptx, buildNarrationText } from '../lib/planPptx';
+import { exportPlanPptx, buildNarrationText, type PlanForExport } from '../lib/planPptx';
 import { PlanSlide, PAGE_BULLET_LIMIT } from '../components/PlanSlide';
 
 const { Text, Title } = Typography;
@@ -150,6 +151,9 @@ interface PlanDetail {
   needs: string;
   style: string;
   edition: string;
+  /** 交付模版：户型图设计样式 + 产品放置样式 */
+  floorplanTemplate?: string | null;
+  markerTemplate?: string | null;
   pageCount: number;
   pages: PlanPage[];
   versionNo: number;
@@ -186,11 +190,28 @@ interface PlanListItem {
   area: string;
   style: string;
   edition: string;
+  /** 交付模版：户型图设计样式 + 产品放置样式 */
+  floorplanTemplate?: string | null;
+  markerTemplate?: string | null;
   pageCount: number;
   versionNo: number;
   shareToken: string;
   updatedAt: string;
 }
+
+/**
+ * 导出用的完整方案数据 —— PPTX / 讲稿 / 交付包三处必须用同一份。
+ *
+ * 坑在这里：讲稿的页序取决于「有没有户型图」（有则多一页户型页，外加点位清单续页），
+ * 而 `plan` 上只有 assetId、没有可直接加载的 URL。少传一次，门店拿到的讲稿就少两页，
+ * 照着讲稿讲会讲错页。户型图 URL 在前端拼（带登录 token），不能落在服务端。
+ */
+const exportPayload = (p: PlanDetail): PlanForExport => ({
+  ...p,
+  floorplanUrl: p.floorplanAssetId ? fileUrl(`/api/media/assets/${p.floorplanAssetId}/file`) : null,
+  renderedFloorplanUrl: p.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${p.renderedFloorplanAssetId}/file`) : null,
+  layoutPoints: p.layoutPoints ?? null,
+});
 
 export function PlanStudio(): ReactNode {
   const { message, modal } = AntApp.useApp();
@@ -201,6 +222,9 @@ export function PlanStudio(): ReactNode {
   const [step, setStep] = useState(0);
   const [style, setStyle] = useState('A');
   const [version, setVersion] = useState<'standard' | 'presale' | 'private'>('standard');
+  // 交付模版（户型图设计 / 产品放置），与 PPTX、分享页同源
+  const [fpTpl, setFpTpl] = useState<FloorplanTemplate>('annotated');
+  const [mkTpl, setMkTpl] = useState<MarkerTemplate>('numbered');
   const [pageCount, setPageCount] = useState(9);
   /** 页数是否走「自定义」输入；档位按钮与自定义互斥，选档位会收起自定义 */
   const [customPages, setCustomPages] = useState(false);
@@ -242,6 +266,7 @@ const [editing, setEditing] = useState<{
     heading: string; subtitle: string; bullets: string; body: string; narration: string; quote: string;
   } | null>(null);
   const [savingPage, setSavingPage] = useState(false);
+  const [savingTpl, setSavingTpl] = useState(false);
   /** 交付前的校对门：确认通过后自动执行原本要做的动作（导出 / 复制分享链接） */
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewChecked, setReviewChecked] = useState(false);
@@ -292,6 +317,8 @@ const [editing, setEditing] = useState<{
         setPlan(detail);
         setStyle(detail.style);
         setVersion(detail.edition as 'standard' | 'presale' | 'private');
+        setFpTpl(floorplanTemplate(detail.floorplanTemplate));
+        setMkTpl(markerTemplate(detail.markerTemplate));
         setPageCount(detail.pageCount);
         setActivePage(0);
         setStep(1);
@@ -493,6 +520,8 @@ const [editing, setEditing] = useState<{
           ...Object.fromEntries(SALES_FIELDS.map((f) => [f.name, (values as Record<string, string>)[f.name] ?? ''])),
           style,
           edition: version,
+          floorplanTemplate: fpTpl,
+          markerTemplate: mkTpl,
           // 提交时必须夹取到素材下限，不能直接传用户选的档位：
           // 选了 9 页但素材撑到 11 页时，按 9 提交就会真的少给客户 2 页，
           // 而且扣费也跟着按 9 算 —— 提示里写了「自动扩至 11 页」却不扩，是最坏的组合。
@@ -534,6 +563,33 @@ const [editing, setEditing] = useState<{
       narration: p.narration,
       quote: p.quote ?? '',
     });
+  };
+
+  /**
+   * 保存交付模版（户型图设计 / 产品放置）。
+   *
+   * 模版能改、且改完要让校对状态失效：服务端 bump versionNo 并清空 reviewedRevision，
+   * 门店需要重新确认一次才能打包。这是有意的 —— 模版一变，客户看到的交付件就变了，
+   * 旧的「已校对」结论不再成立。
+   */
+  const saveTemplates = async (): Promise<void> => {
+    if (!plan) return;
+    setSavingTpl(true);
+    try {
+      const updated = await api<PlanDetail>(`/api/plans/${plan.id}/templates`, {
+        method: 'PATCH',
+        body: JSON.stringify({ versionNo: plan.versionNo, floorplanTemplate: fpTpl, markerTemplate: mkTpl }),
+      });
+      setPlan(updated);
+      setFpTpl(floorplanTemplate(updated.floorplanTemplate));
+      setMkTpl(markerTemplate(updated.markerTemplate));
+      if (step === 3) void runPreflight(updated.id);
+      message.success(`交付模版已更新（版本 ${updated.versionNo}），请重新校对后再打包交付`);
+    } catch (e) {
+      message.error((e as Error).message || '模版保存失败');
+    } finally {
+      setSavingTpl(false);
+    }
   };
 
   const savePage = async (): Promise<void> => {
@@ -591,6 +647,8 @@ const [editing, setEditing] = useState<{
       setPlan(detail);
       setStyle(detail.style);
       setVersion(detail.edition as 'standard' | 'presale' | 'private');
+      setFpTpl(floorplanTemplate(detail.floorplanTemplate));
+      setMkTpl(markerTemplate(detail.markerTemplate));
       setPageCount(detail.pageCount);
       // 效果图按存下来的 meta 回填：不回填的话，打开历史方案看到的是空白素材区，
       // 用户以为图没了，实际库里还在，重新生成还会把它们当新图再扣一遍额度。
@@ -675,12 +733,7 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     setExporting(true);
     try {
-      const { blob, fileName } = await exportPlanPptx({
-        ...plan,
-        floorplanUrl: plan.floorplanAssetId ? fileUrl(`/api/media/assets/${plan.floorplanAssetId}/file`) : null,
-        renderedFloorplanUrl: plan.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
-        layoutPoints: plan.layoutPoints ?? null,
-      });
+      const { blob, fileName } = await exportPlanPptx(exportPayload(plan));
       downloadBlob(blob, fileName);
       message.success('PPTX 已下载（16:9 原生幻灯片，可直接编辑）');
     } catch (e) {
@@ -703,15 +756,11 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     setPackaging(true);
     try {
-      const { blob } = await exportPlanPptx({
-        ...plan,
-        floorplanUrl: plan.floorplanAssetId ? fileUrl(`/api/media/assets/${plan.floorplanAssetId}/file`) : null,
-        renderedFloorplanUrl: plan.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
-        layoutPoints: plan.layoutPoints ?? null,
-      });
+      const payload = exportPayload(plan);
+      const { blob } = await exportPlanPptx(payload);
       const fd = new FormData();
       fd.append('pptx', new File([blob], `${plan.title}.pptx`, { type: 'application/octet-stream' }));
-      fd.append('narration', buildNarrationText(plan));
+      fd.append('narration', buildNarrationText(payload));
       const res = await api<{ token: string; fileName: string; size: number; contents: string[] }>(
         `/api/plans/${plan.id}/package`,
         { method: 'POST', body: fd },
@@ -758,7 +807,7 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     // 走共用的 downloadBlob：本地那版在 a.click() 之后立刻 revokeObjectURL，
     // 下载还没开始就被撤掉，讲稿点了没反应。共用的那版延迟 5 秒释放。
-    downloadBlob(new Blob([buildNarrationText(plan)], { type: 'text/markdown;charset=utf-8' }), `${plan.title}-完整讲稿.md`);
+    downloadBlob(new Blob([buildNarrationText(exportPayload(plan))], { type: 'text/markdown;charset=utf-8' }), `${plan.title}-完整讲稿.md`);
   };
 
   // 讲稿同样是发出去的文件，和 PPTX 走同一道门
@@ -807,14 +856,24 @@ const [editing, setEditing] = useState<{
     [materials, editionKey],
   );
 
-  // 有户型图素材时补一页「户型与设备点位」。syntheticAt 是插入点：
-  // 存文案前用它把索引映射回真实页，虚拟页没有文案，也不参与扣费与版本号。
+  // 交付页序：走 planPages.deliverPages（PPTX / 讲稿 / 分享页 / 本页预览共用同一份）。
+  // 以前这里只插户型页、不插点位清单续页，于是门店在「生成与校对」里看到 10 页，
+  // 导出的 PPT 是 11 页 —— 页数对不上，门店会以为少了一页。
+  // virtualAt 是虚拟页（户型页 + 清单续页）的下标：它们没有文案，编辑时映射回真实页。
   const view = useMemo(
-    () => withFloorplanPage(plan?.pages ?? [], Boolean(slidePlan.floorplanUrl || slidePlan.renderedFloorplanUrl)),
-    [plan?.pages, slidePlan.floorplanUrl, slidePlan.renderedFloorplanUrl],
+    () => deliverPages({
+      pages: plan?.pages ?? [],
+      floorplanUrl: slidePlan.floorplanUrl,
+      renderedFloorplanUrl: slidePlan.renderedFloorplanUrl,
+      layoutPoints: plan?.layoutPoints ?? null,
+      floorplanTemplate: plan?.floorplanTemplate ?? null,
+      markerTemplate: plan?.markerTemplate ?? null,
+    }),
+    [plan?.pages, plan?.layoutPoints, plan?.floorplanTemplate, plan?.markerTemplate,
+      slidePlan.floorplanUrl, slidePlan.renderedFloorplanUrl],
   );
   const realIndexOf = (viewIndex: number): number =>
-    view.syntheticAt >= 0 && viewIndex >= view.syntheticAt ? viewIndex - 1 : viewIndex;
+    viewIndex - view.virtualAt.filter((v) => v <= viewIndex).length;
   const active = view.pages[activePage];
   // 分配建议：预算有效时按占比给出建议金额，用户改过的分类用覆盖值（清空即恢复跟随建议）
   const splitRows = ECOSYSTEM_SPLIT.map((row) => {
@@ -1224,6 +1283,74 @@ const [editing, setEditing] = useState<{
               })}
             </div>
 
+            <Text strong style={{ display: 'block', fontSize: 15, margin: '18px 0 8px' }}>交付模版：户型图设计</Text>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {FLOORPLAN_TEMPLATES.map((t) => {
+                const activeSel = fpTpl === t.key;
+                return (
+                  <div
+                    key={t.key}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setFpTpl(t.key)}
+                    onKeyDown={(e) => e.key === 'Enter' && setFpTpl(t.key)}
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: 12,
+                      cursor: 'pointer',
+                      border: `2px solid ${activeSel ? token.colorPrimary : token.colorBorderSecondary}`,
+                      background: activeSel ? token.colorPrimaryBg : token.colorBgContainer,
+                    }}
+                  >
+                    <Text strong>{t.name}</Text>
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>{t.desc}</Text>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>{t.hint}</Text>
+                  </div>
+                );
+              })}
+            </div>
+
+            <Text strong style={{ display: 'block', fontSize: 15, margin: '18px 0 8px' }}>交付模版：产品放置</Text>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {MARKER_TEMPLATES.map((m) => {
+                const activeSel = mkTpl === m.key;
+                return (
+                  <div
+                    key={m.key}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setMkTpl(m.key)}
+                    onKeyDown={(e) => e.key === 'Enter' && setMkTpl(m.key)}
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: 12,
+                      cursor: 'pointer',
+                      border: `2px solid ${activeSel ? token.colorPrimary : token.colorBorderSecondary}`,
+                      background: activeSel ? token.colorPrimaryBg : token.colorBgContainer,
+                    }}
+                  >
+                    <Text strong>{m.name}</Text>
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>{m.desc}</Text>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>{m.hint}</Text>
+                  </div>
+                );
+              })}
+            </div>
+
+            <Button
+              block
+              type="primary"
+              loading={savingTpl}
+              disabled={!plan}
+              onClick={() => void saveTemplates()}
+              style={{ marginTop: 12 }}
+            >
+              保存交付模版
+            </Button>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
+              模版决定交付 PPT 里户型页怎么画、设备点位怎么标。改完需重新校对才能打包。
+            </Text>
+
             <Text strong style={{ display: 'block', fontSize: 15, margin: '18px 0 8px' }}>方案页数</Text>
             <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
               {pageChoices.map((n) => {
@@ -1356,7 +1483,7 @@ const [editing, setEditing] = useState<{
                 whiteSpace: 'pre-wrap',
               }}
             >
-              <Text style={{ fontSize: 13.5 }}>{buildNarrationText(plan)}</Text>
+              <Text style={{ fontSize: 13.5 }}>{buildNarrationText(exportPayload(plan))}</Text>
             </div>
           ) : null}
         </>
@@ -1380,7 +1507,7 @@ const [editing, setEditing] = useState<{
               }}
             >
               <div style={{ padding: '10px 10px 0' }}>
-                <PlanSlide page={p} index={i} plan={slidePlan} t={t} />
+                <PlanSlide page={p} index={i} plan={slidePlan} t={t} listNo={floorplanListPageNo(view.pages, i)} />
               </div>
               <div style={{ padding: '12px 16px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1470,7 +1597,7 @@ const [editing, setEditing] = useState<{
                 修改当前页
               </Button>
             </div>
-            <PlanSlide page={active} index={activePage} plan={slidePlan} t={t} />
+            <PlanSlide page={active} index={activePage} plan={slidePlan} t={t} listNo={floorplanListPageNo(view.pages, activePage)} />
             <div style={{ marginTop: 12 }}>
               <Button size="small" type="text" onClick={() => setShowNarration(!showNarration)}>
                 {showNarration ? '▾' : '▸'} 本页讲解稿（客户阅读模式不显示）
@@ -2067,7 +2194,7 @@ function PlanReader({
       {/* 舞台：页内容（PlanSlide 内部按 cqw 自适应缩放，窄屏无需额外适配） */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isNarrow ? 8 : 20, overflow: 'hidden' }}>
         <div ref={stageRef} style={{ width: '100%', maxWidth: isNarrow ? '100%' : 1280, willChange: 'transform, opacity' }}>
-          <PlanSlide page={page} index={index} plan={slidePlan} t={t} />
+          <PlanSlide page={page} index={index} plan={slidePlan} t={t} listNo={floorplanListPageNo(pages, index)} />
         </div>
       </div>
 

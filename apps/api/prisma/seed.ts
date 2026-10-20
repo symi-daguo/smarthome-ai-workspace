@@ -46,8 +46,14 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     key: 'sales',
     name: '销售顾问',
     scope: 'TENANT',
-    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'content:extract', 'knowledge:read', 'cs:write'],
-    description: '接待客户、报价、出报价单；不能改团队设置，也看不到模型配置',
+    // content:read/generate 是**接待客户做方案**这一步本身，不是「设计师的活」：
+    // 参考站把「生方案」放在首页主入口，与「生图」「生视频」并列成一级按钮
+    // （首页 placeholder 原话「给 140㎡ 三室两厅做一份全屋智能方案」，
+    //  定位语「从内容获客到方案成交，全流程 AI 提效」）——
+    // 方案生成是服务商获客到成交链路上的高频动作，销售岗每天都要用。
+    // 不给的话这条线断在「出方案」：能报价，却打不开方案、也做不出方案给客户看。
+    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'content:read', 'content:generate', 'content:extract', 'knowledge:read', 'cs:write'],
+    description: '接待客户、做方案、报价、出报价单；不能改团队设置，也看不到模型配置',
   },
   {
     key: 'designer',
@@ -96,7 +102,8 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     key: 'operator',
     name: '运营',
     scope: 'TENANT',
-    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'publish:read', 'publish:write', 'content:extract', 'knowledge:read', 'cs:write'],
+    // 与销售顾问同理：自称「接待、报价、发布三样都沾」，接待就包含出方案。
+    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'content:read', 'content:generate', 'content:extract', 'publish:read', 'publish:write', 'knowledge:read', 'cs:write'],
     description: '接待、报价、发布三样都沾的混合岗；职责单时装销售顾问或市场运营，权限更窄更安全',
   },
   // 只读成员也要能提反馈：遇到问题的人恰恰常常是权限最低的人，反馈入口不能因角色低而关闭

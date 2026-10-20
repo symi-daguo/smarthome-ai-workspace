@@ -60,6 +60,8 @@ interface PlanInput {
   budgetSource: string;
   style: string;
   edition: 'standard' | 'presale' | 'private';
+  floorplanTemplate: 'annotated' | 'compare' | 'render';
+  markerTemplate: 'numbered' | 'icon' | 'dot';
   pageCount: number;
   floorplanAssetId?: string | null;
   /** createPlanSchema 给了默认值 []，这里声明为必填数组，服务层不必再判空 */
@@ -265,6 +267,8 @@ export class PlansService {
         budgetSource: input.budgetSource,
         style: input.style,
         edition: input.edition,
+        floorplanTemplate: input.floorplanTemplate,
+        markerTemplate: input.markerTemplate,
         pageCount: pages.length,
         pages: pages as unknown as never,
         versionNo: 1,
@@ -567,6 +571,7 @@ export class PlansService {
       take: 50,
       select: {
         id: true, title: true, customer: true, area: true, style: true, edition: true,
+        floorplanTemplate: true, markerTemplate: true,
         pageCount: true, versionNo: true, shareToken: true, updatedAt: true,
       },
     });
@@ -650,6 +655,50 @@ export class PlansService {
     });
   }
 
+  /**
+   * 改交付模版（户型图设计 / 产品放置）。
+   *
+   * 为什么单独一个端点而不是塞进 updatePage：模版不改正案页文字，
+   * 但**会改变客户看到的东西**（户型页版式、点位标注样式、清单是否分页）。
+   * 所以它必须像改页一样 bump versionNo 并让 reviewedRevision 失效 ——
+   * 否则打完包改了模版，旧的交付链接还能下，客户端拿到的是旧模版，
+   * 而门店以为已经更新了。
+   *
+   * 乐观锁与 updatePage 同理：期间有人改过案就直接 409，不做静默覆盖。
+   */
+  async updateTemplates(
+    tenantId: string,
+    id: string,
+    dto: {
+      floorplanTemplate?: 'annotated' | 'compare' | 'render';
+      markerTemplate?: 'numbered' | 'icon' | 'dot';
+      versionNo?: number;
+    },
+  ) {
+    const plan = await this.detail(tenantId, id);
+    if (dto.versionNo !== undefined && dto.versionNo !== plan.versionNo) {
+      throw new ConflictException({
+        code: 'PLAN_VERSION_CONFLICT',
+        message: `方案已被他人更新到 V${plan.versionNo}（你基于 V${dto.versionNo} 操作），本次修改未保存`,
+        currentVersionNo: plan.versionNo,
+      });
+    }
+    const changed =
+      (dto.floorplanTemplate !== undefined && dto.floorplanTemplate !== plan.floorplanTemplate) ||
+      (dto.markerTemplate !== undefined && dto.markerTemplate !== plan.markerTemplate);
+    if (!changed) return { ...plan, versionNo: plan.versionNo };
+    return this.prisma.planProject.update({
+      where: { id },
+      data: {
+        ...(dto.floorplanTemplate !== undefined ? { floorplanTemplate: dto.floorplanTemplate } : {}),
+        ...(dto.markerTemplate !== undefined ? { markerTemplate: dto.markerTemplate } : {}),
+        versionNo: { increment: 1 },
+        // 改模版等于改交付内容，校对结论必须重新确认
+        reviewedRevision: null,
+      },
+    });
+  }
+
   async remove(tenantId: string, id: string): Promise<void> {
     await this.detail(tenantId, id);
     await this.prisma.planProject.delete({ where: { id } });
@@ -666,6 +715,8 @@ export class PlansService {
       store: plan.store,
       style: plan.style,
       edition: plan.edition,
+      floorplanTemplate: plan.floorplanTemplate,
+      markerTemplate: plan.markerTemplate,
       versionNo: plan.versionNo,
       updatedAt: plan.updatedAt,
       pages: plan.pages,
