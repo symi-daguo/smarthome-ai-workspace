@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module.js';
@@ -71,9 +71,16 @@ const PERMISSION_SET = new Set<string>(PERMISSIONS);
 
 const checks: [string, boolean][] = [];
 
-function check(name: string, ok: boolean): void {
+/**
+ * 记一条断言。
+ *
+ * `detail` 是可选的**实际值**（状态码、响应体片段…）。它只在失败时打印：
+ * 断言红的时候光看「FAIL xxx」没法判断是判据写错了还是功能坏了，
+ * 附上实际值才能一眼看出问题 —— 这一点在 CI 上尤其重要（本地不一定复现得了）。
+ */
+function check(name: string, ok: boolean, detail?: string): void {
   checks.push([name, ok]);
-  console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`);
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok || !detail ? '' : ` —— ${detail}`}`);
 }
 
 const randomPhone = (): string => `13${Math.floor(Math.random() * 1e9).toString().padStart(9, '0')}`;
@@ -633,7 +640,8 @@ async function main(): Promise<void> {
       ...authA, method: 'POST', body: JSON.stringify({ prompt: '一张现代客厅效果图', size: '1024x1024' }),
     });
     check('额度耗尽时 AI 调用被暂停且给出可读原因（非 500）',
-      ai.status === 403 && (ai.body as { message?: string })?.message === 'TOKEN_INSUFFICIENT');
+      ai.status === 403 && (ai.body as { message?: string })?.message === 'TOKEN_INSUFFICIENT',
+      `实际 status=${ai.status} body=${JSON.stringify(ai.body)?.slice(0, 200)}`);
     await prisma.tenant.update({ where: { id: tenantA }, data: { tokenBalance: keep?.tokenBalance ?? 80_000 } });
   }
 
@@ -890,15 +898,49 @@ async function main(): Promise<void> {
     staleNames.push(name);
   }
   const beforeTrim = listBackups().length;
+  const beforeTrimList = listBackups();
+  // mtime 必须在裁剪**之前**记：被删掉的文件事后 stat 会 ENOENT。
+  const mtimeBefore = new Map<string, number>();
+  for (const n of beforeTrimList) {
+    try {
+      mtimeBefore.set(n, statSync(join(backupDir, n)).mtimeMs);
+    } catch {
+      /* 并发写导致的瞬时消失，忽略 */
+    }
+  }
   await fetch(`${base}/api/admin/backup`, { headers: authA.headers });
   const afterTrim = listBackups();
   check(
     '备份留盘裁剪到固定份数（只增不减会撑爆磁盘）',
     beforeTrim >= 4 && afterTrim.length === 3,
   );
+  /**
+   * 判定「删的是最旧的」必须**按 mtime 比**，不能按「是不是我造的假备份」比。
+   *
+   * 为什么：裁剪只保留固定份数，删掉几份取决于**环境里本来有多少份**。
+   * 本机库里有历次跑测留下的几十份真备份 → 裁剪会一路删到真备份；
+   * 干净克隆（CI）里一份真备份都没有 → 只删得掉 2 份假备份。
+   * 用「假备份全被删」当判据，本机绿、CI 红（实测 CI 第一次跑就红了这条）。
+   * 用 mtime 顺序判「被删的一定不比留下的新」，两种环境都成立。
+   */
+  const mtimeOf = (name: string): number => {
+    try {
+      return statSync(join(backupDir, name)).mtimeMs;
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  };
+  const removed = beforeTrimList.filter((n) => !afterTrim.includes(n));
+  const removedNewest = removed.length
+    ? Math.max(...removed.map((n) => mtimeBefore.get(n) ?? 0))
+    : Number.POSITIVE_INFINITY;
+  const keptOldest = afterTrim.length ? Math.min(...afterTrim.map(mtimeOf)) : 0;
   check(
     '裁剪删掉的是最旧的备份，且真备份一份没少',
-    staleNames.every((n) => !afterTrim.includes(n)) && afterTrim.some((n) => !staleNames.includes(n)),
+    removed.length > 0
+      && removedNewest <= keptOldest
+      && afterTrim.some((n) => !staleNames.includes(n)),
+    `removed=${removed.length} afterTrim=${afterTrim.length}`,
   );
 
   const cleanupRes = await request<{ deleted: number; freedBytes: number }>(base, '/api/admin/storage/cleanup?beforeDays=3650', { ...authA, method: 'POST' });
@@ -2319,11 +2361,11 @@ async function main(): Promise<void> {
   const maskOnly = await request(base, '/api/media/images', {
     ...authA, method: 'POST', body: JSON.stringify({ prompt: '局部重绘测试用提示词', maskDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
   });
-  check('只给遮罩不给原图被拒（400）', maskOnly.status === 400);
+  check('只给遮罩不给原图被拒（400）', maskOnly.status === 400, `实际 status=${maskOnly.status} body=${JSON.stringify(maskOnly.body)?.slice(0, 200)}`);
   const imgOnly = await request(base, '/api/media/images', {
     ...authA, method: 'POST', body: JSON.stringify({ prompt: '局部重绘测试用提示词', imageAssetId: '00000000-0000-0000-0000-000000000000' }),
   });
-  check('只给原图不给遮罩被拒（400）', imgOnly.status === 400);
+  check('只给原图不给遮罩被拒（400）', imgOnly.status === 400, `实际 status=${imgOnly.status} body=${JSON.stringify(imgOnly.body)?.slice(0, 200)}`);
   const notSupported = await request<{ code?: string }>(base, '/api/media/images', {
     ...authA,
     method: 'POST',
@@ -2336,6 +2378,7 @@ async function main(): Promise<void> {
   check(
     'provider 不支持局部重绘时明确拒绝而非静默忽略（503 IMAGE_EDIT_UNSUPPORTED）',
     notSupported.status === 503 && notSupported.body.code === 'IMAGE_EDIT_UNSUPPORTED',
+    `实际 status=${notSupported.status} body=${JSON.stringify(notSupported.body)?.slice(0, 200)}`,
   );
 
   // ---------- 生成提交幂等键：重复提交不重复出图、不重复扣额度 ----------
@@ -2365,6 +2408,7 @@ async function main(): Promise<void> {
   check(
     '同一提交键重复提交直接取回原产物（deduped=true，不重复扣额度）',
     idemReplay.status === 201 && idemReplay.body?.deduped === true && idemReplay.body?.id === seededAsset.id,
+    `实际 status=${idemReplay.status} body=${JSON.stringify(idemReplay.body)?.slice(0, 200)}`,
   );
   const idemOtherKey = await request<{ deduped?: boolean }>(base, '/api/media/images', {
     ...authA,
