@@ -1,0 +1,126 @@
+name: CI
+
+# 触发时机：主干推送 + 面向主干的 PR。
+# 为什么必须要有：仓库此前零 CI，「本地门禁全绿」无法证明别人克隆下来也能构建。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支的重复推送只留最新一次，省 Actions 配额
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: 门禁（typecheck + build + smoke）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # smoke 跑的是 dist/ 里的编译产物，要真库。
+    # 必须用 pgvector 镜像：历史迁移里有 CREATE EXTENSION vector，普通 postgres 镜像会失败。
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: smarthome
+          POSTGRES_PASSWORD: smarthome
+          POSTGRES_DB: smarthome
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smarthome -d smarthome"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # 与生产同口径：生产红线（JWT_SECRET / 默认密码）必须真的被拦住，
+      # 用 development 环境跑等于把这道闸门绕过去了。
+      NODE_ENV: production
+      DATABASE_URL: postgresql://smarthome:smarthome@localhost:5432/smarthome?schema=public
+      # 仅供 CI 使用的占位值：不是密钥、不进任何交付物
+      JWT_SECRET: ci-only-not-a-real-secret-0000000000000000
+      SEED_ADMIN_PHONE: '13800000000'
+      SEED_ADMIN_PASSWORD: CiOnlyNotADefaultPassword
+      CORS_ORIGIN: http://localhost:5173
+      PUBLIC_ORIGIN: http://localhost:5173
+      RATE_LIMIT_AUTH: 1000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版本取自 package.json 的 packageManager 字段（pnpm@11.28.6），不手写，避免两处漂移
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        # 只装门禁要用的两个包：desktop 的依赖里含内嵌 PostgreSQL 的四个平台二进制，
+        # 门禁用不上，装了纯浪费下载与构建时间。
+        run: pnpm install --frozen-lockfile --filter "@app/api..." --filter "@app/web"
+
+      - name: 生成 Prisma Client
+        # Prisma 7 起不再随安装自动 generate，必须显式跑一次
+        run: pnpm --filter @app/api prisma:generate
+
+      - name: 跑数据库迁移
+        run: pnpm --filter @app/api prisma:deploy
+
+      - name: 灌种子
+        # smoke 断言「公共库预置产品」，产品与品类来自种子，不灌会红
+        run: pnpm --filter @app/api prisma:seed
+
+      - name: 类型检查
+        run: pnpm --filter @app/api typecheck && pnpm --filter @app/web typecheck
+
+      - name: 文档检查
+        # 相对链接失效 / 表格列数不齐 / 代码块没闭合 / 标题跳级 ——
+        # 这四类在编辑器里看不出来，渲染到 GitHub 上才发现
+        run: pnpm check:docs
+
+      - name: 构建
+        run: pnpm --filter @app/api build && pnpm --filter @app/web build
+
+      - name: 冒烟测试
+        run: pnpm --filter @app/api smoke
+
+  desktop:
+    name: 桌面端编译（tsc）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # 门禁只验证桌面端代码能编译，不需要 Electron 二进制（几百 MB）
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        # 这里不能用 gate 那样的 filter：desktop 自己的依赖里就有 electron 与
+        # 四个平台的 @embedded-postgres（合计 456MB），少一个都编不过。
+        # pnpm store 有缓存，第二次跑不会重复下载。
+        run: pnpm install --frozen-lockfile
+
+      - name: 脚本语法自检
+        # 打包钩子（after-pack）只在 electron-builder 里才会被执行，
+        # CI 里没有真实打包机会，用 node --check 至少挡住语法错误
+        run: node --check apps/desktop/scripts/after-pack.mjs
+
+      - name: 编译桌面端主进程
+        run: pnpm --filter @app/desktop build
+
+      # 桌面端的运行时自证（起库→迁移→种子→登录）依赖 macOS 的内嵌 PG 二进制，
+      # 只在 macOS runner 上有意义；签名与公证只能在有 Developer ID 证书的机器上做，
+      # 两者都留在本机门禁里，不放到 CI。

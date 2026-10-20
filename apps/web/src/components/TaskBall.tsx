@@ -1,0 +1,345 @@
+import { ClearOutlined, RobotOutlined } from '@ant-design/icons';
+import { Badge, Button, Popover, Typography, theme } from 'antd';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useChatStore } from '../store/ChatStore';
+import { api } from '../lib/api';
+
+const { Text } = Typography;
+
+const BALL_SIZE = 52;
+const MARGIN = 24;
+const POS_KEY = 'task_ball_pos';
+
+/**
+ * 任务轮询节奏：原先是固定 6s，无任务、接口失败、页面隐藏时照打不误
+ * （listTasks 每次 take:50 全量返回，一天 14400 次）。
+ * 改为按负载自适应，并在失败时指数退避，防止后端故障期间把查询打满。
+ */
+const POLL_ACTIVE = 5000; // 有进行中任务：结果出来要及时看到红点
+const POLL_IDLE = 60000; // 无进行中任务：降频到 1 分钟，仍保留「刷新后红点还在」
+const POLL_BACKOFF_BASE = 10000; // 首次失败 10s，之后翻倍
+const POLL_BACKOFF_MAX = 300000; // 退避封顶 5 分钟，仍会自愈恢复
+
+/** 服务端任务（跨页面/跨刷新可见） */
+interface ServerTask {
+  id: string;
+  kind: string;
+  status: string;
+  title: string;
+  resultUrl: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+function loadPos(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(POS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { x: number; y: number };
+    return Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 右下角任务球：生成任务浮球（可拖拽、Esc 收起、Home 复位、红点角标） */
+/**
+ * 任务状态。与后端 GenerationJob.status 对齐到这五类即可——
+ * 再细分也不会改变用户该做什么动作（重试 / 核对 / 忽略），只会增加心智负担。
+ */
+type TaskState = 'running' | 'done' | 'failed' | 'unknown' | 'interrupted' | 'canceled';
+
+/** 各状态的一句话说明：重点是告诉用户「能不能直接再点一次」 */
+const STATE_HINT: Record<TaskState, string> = {
+  running: '生成中',
+  done: '',
+  failed: '生成失败',
+  unknown: '额度已扣，结果待核对',
+  interrupted: '服务重启导致中断，可重新提交',
+  canceled: '已取消',
+};
+
+/** 是否属于「需要用户留意的坏态」：徽标与配色都按它区分 */
+const ATTENTION: TaskState[] = ['failed', 'unknown', 'interrupted', 'canceled'];
+
+export function TaskBall(): ReactNode {
+  const { token } = theme.useToken();
+  const navigate = useNavigate();
+  const { tasks, clearFinished, unreadDone, markTasksRead } = useChatStore();
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(loadPos);
+  const [open, setOpen] = useState(false);
+  const [serverTasks, setServerTasks] = useState<ServerTask[]>([]);
+  const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
+  const ballRef = useRef<HTMLDivElement>(null);
+  // 轮询调度状态放 ref 而非 state：调度间隔要在拉取完成后立刻重算，不能等一次渲染
+  const timerRef = useRef<number | null>(null);
+  const failRef = useRef(0);
+  const busyRef = useRef(false);
+
+  const defaultPos = useCallback((): { x: number; y: number } => ({
+    x: window.innerWidth - BALL_SIZE - MARGIN,
+    y: window.innerHeight - BALL_SIZE - MARGIN,
+  }), []);
+
+  const resetHome = useCallback(() => {
+    const p = defaultPos();
+    setPos(p);
+    localStorage.setItem(POS_KEY, JSON.stringify(p));
+  }, [defaultPos]);
+
+  // 任务来自服务端：切页或刷新后红点仍在（此前只读前端内存态，一刷新就丢）
+  const loadServerTasks = useCallback(async () => {
+    try {
+      const list = await api<ServerTask[]>('/api/canvas/tasks');
+      setServerTasks(list);
+      busyRef.current = list.some((t) => t.status === 'pending' || t.status === 'running');
+      failRef.current = 0;
+    } catch {
+      // 不清空 serverTasks：接口抖动时保留上一次的结果，任务球不闪空
+      failRef.current += 1;
+    }
+  }, []);
+
+  // 自调度：下一拍的间隔取决于「有没有在跑」与「刚才有没有失败」，
+  // 所以不能用 setInterval——那样间隔在创建时就定死了。
+  const schedule = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    // 标签页隐藏时完全停表：浏览器本就节流后台定时器，继续排程只是徒增服务端压力
+    if (document.hidden) return;
+    const delay = failRef.current > 0
+      ? Math.min(POLL_BACKOFF_MAX, POLL_BACKOFF_BASE * 2 ** Math.min(failRef.current - 1, 5))
+      : busyRef.current
+        ? POLL_ACTIVE
+        : POLL_IDLE;
+    timerRef.current = window.setTimeout(() => {
+      void loadServerTasks().then(schedule);
+    }, delay);
+  }, [loadServerTasks]);
+
+  useEffect(() => {
+    void loadServerTasks().then(schedule);
+    // 切回前台立即补同步一次：隐藏期间生成的成果不该要等满一个空闲周期才亮红点
+    const onVisible = (): void => {
+      if (!document.hidden) void loadServerTasks().then(schedule);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    };
+  }, [loadServerTasks, schedule]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Home') resetHome();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [resetHome]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e: MouseEvent): void => {
+      const target = e.target as HTMLElement;
+      if (ballRef.current?.contains(target)) return;
+      if (target.closest('.ant-popover')) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
+  const onPointerDown = (e: React.PointerEvent): void => {
+    const current = pos ?? defaultPos();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, originX: current.x, originY: current.y, moved: false };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e: React.PointerEvent): void => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+    if (drag.moved) {
+      setPos({
+        x: Math.min(Math.max(8, drag.originX + dx), window.innerWidth - BALL_SIZE - 8),
+        y: Math.min(Math.max(8, drag.originY + dy), window.innerHeight - BALL_SIZE - 8),
+      });
+    }
+  };
+
+  const onPointerUp = (): void => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (drag?.moved) {
+      setPos((cur) => {
+        const next = cur ?? defaultPos();
+        localStorage.setItem(POS_KEY, JSON.stringify(next));
+        return next;
+      });
+    }
+    if (drag && !drag.moved) {
+      const next = !open;
+      setOpen(next);
+      if (next) markTasksRead();
+    }
+  };
+
+  // 前端即时任务 + 服务端持久任务，按 id 去重（同一任务两边都有时取服务端那份）
+  //
+  // 状态分五类而不是三类：把「扣了额度但结果待核对」（unknown）和「服务重启导致中断」
+  // （interrupted）单独拎出来，是为了让用户知道这两种情况**该不该再点一次**。
+  // 笼统显示「失败」会让人以为没扣钱就重试，反而多扣一次。
+  const merged = useMemo(() => {
+    type Row = { id: string; title: string; status: TaskState; at: number };
+    const map = new Map<string, Row>();
+    for (const t of tasks) {
+      map.set(t.id, { id: t.id, title: t.title, status: t.status === 'running' ? 'running' : 'done', at: t.createdAt });
+    }
+    for (const t of serverTasks) {
+      const st = (['pending', 'running'].includes(t.status)
+        ? 'running'
+        : ['failed', 'unknown', 'interrupted', 'canceled'].includes(t.status)
+          ? (t.status as TaskState)
+          : 'done');
+      map.set(t.id, {
+        id: t.id,
+        title: t.title,
+        status: st,
+        at: new Date(t.createdAt).getTime(),
+      });
+    }
+    return [...map.values()].sort((a, b) => b.at - a.at);
+  }, [tasks, serverTasks]);
+
+  const running = merged.filter((t) => t.status === 'running');
+  const finished = merged.filter((t) => t.status === 'done');
+  const current = pos ?? defaultPos();
+
+  const panel: ReactNode = (
+    <div style={{ width: 300 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <Text strong>生成任务</Text>
+        <Button
+          size="small"
+          type="text"
+          icon={<ClearOutlined />}
+          disabled={finished.length === 0}
+          onClick={() => {
+            clearFinished();
+            void api('/api/canvas/tasks/finished', { method: 'DELETE' })
+              .then(() => loadServerTasks())
+              .catch(() => undefined);
+          }}
+        >
+          清空已结束（{finished.length}）
+        </Button>
+      </div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+        生成会在后台继续，完成后这里亮红点。可同时查看多个任务。
+      </Text>
+      {merged.length === 0 ? (
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          当前没有待处理任务，历史作品仍可查看
+        </Text>
+      ) : (
+        <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {[...running, ...finished].map((t) => (
+            <div
+              key={t.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 8px',
+                borderRadius: 8,
+                border: `1px solid ${token.colorBorderSecondary}`,
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  flex: 'none',
+                  background: t.status === 'running'
+                    ? token.colorPrimary
+                    : t.status === 'unknown'
+                      ? token.colorWarning
+                      : ATTENTION.includes(t.status)
+                        ? token.colorError
+                        : token.colorSuccess,
+                }}
+              />
+              <Text style={{ flex: 1, fontSize: 12 }} ellipsis={{ tooltip: t.title }}>
+                {t.title}
+              </Text>
+              <Text type="secondary" style={{ fontSize: 11, flex: 'none', color: t.status === 'unknown' ? token.colorWarning : undefined }}>
+                {t.status === 'running' ? '生成中' : STATE_HINT[t.status] || formatTime(t.at)}
+              </Text>
+            </div>
+          ))}
+        </div>
+      )}
+      <Button type="link" size="small" style={{ padding: 0, marginTop: 8 }} onClick={() => navigate('/')}>
+        查看全部历史
+      </Button>
+    </div>
+  );
+
+  return (
+    <div
+      ref={ballRef}
+      style={{ position: 'fixed', left: current.x, top: current.y, zIndex: 1000, touchAction: 'none' }}
+    >
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (next) markTasksRead();
+        }}
+        content={panel}
+        trigger={[]}
+        placement="topRight"
+      >
+        <Badge count={unreadDone} size="small" offset={[-2, 2]}>
+          <div
+            role="button"
+            aria-label={`生成任务，${running.length}条进行中，共${merged.length}条，${open ? '收起' : '展开'}`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            style={{
+              width: BALL_SIZE,
+              height: BALL_SIZE,
+              borderRadius: '50%',
+              background: '#151515',
+              color: '#ffffff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'grab',
+              boxShadow: token.boxShadowSecondary,
+              userSelect: 'none',
+            }}
+          >
+            <RobotOutlined style={{ fontSize: 24 }} />
+          </div>
+        </Badge>
+      </Popover>
+    </div>
+  );
+}

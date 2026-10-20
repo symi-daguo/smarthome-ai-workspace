@@ -1,0 +1,33 @@
+{
+  "name": "@app/desktop",
+  "version": "1.0.0",
+  "license": "MIT",
+  "private": true,
+  "productName": "智能家居AI工作台",
+  "description": "智能家居 AI 工作台桌面端：Electron 壳 + 内嵌 PostgreSQL + 本地 API，双击即用",
+  "main": "dist/main.js",
+  "author": "SYMI Tech",
+  "packageManager": "pnpm@11.28.6",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "pnpm build && electron .",
+    "icons": "node scripts/make-icons.mjs",
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "verify:runtime": "node scripts/verify-runtime.mjs",
+    "verify:signature": "node scripts/verify-signature.mjs",
+    "dist": "pnpm build && pnpm prepare:runtime && electron-builder",
+    "dist:mac": "pnpm build && pnpm prepare:runtime && electron-builder --mac",
+    "notarize": "node scripts/notarize.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/pg": "8.23.1",
+    "electron": "44.9.0",
+    "electron-builder": "26.17.0",
+    "typescript": "6.0.3",
+    "@embedded-postgres/darwin-arm64": "18.4.0-beta.17",
+    "@embedded-postgres/darwin-x64": "18.4.0-beta.17",
+    "@embedded-postgres/linux-x64": "18.4.0-beta.17",
+    "@embedded-postgres/windows-x64": "18.4.0-beta.17"
+  }
+}

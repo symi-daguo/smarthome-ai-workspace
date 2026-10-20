@@ -1,0 +1,120 @@
+# electron-builder 配置（桌面端）
+#
+# 布局约定：
+#   app.asar          应用自身代码（编译后的主进程）+ 生产依赖
+#   Contents/Resources 运行时资源（extraResources），主进程用 process.resourcesPath 定位
+#
+# 运行时资源由 scripts/prepare-runtime.mjs 产出到 apps/desktop/runtime/，
+# 不在本文件里做裁剪 —— 裁剪逻辑集中在一处，便于对照与回归。
+
+appId: com.symitech.workbench
+productName: 智能家居AI工作台
+copyright: Copyright © 2026 SYMI Tech
+
+directories:
+  # 不能用 dist：那是 tsc 的编译产物目录（main.js 等），
+  # 共用一个目录会让 `files: dist/**/*` 把上一次的安装包也打进新包。
+  output: release
+  buildResources: build
+
+# asar 内只放主进程代码与生产依赖；运行时资源全部在 asar 外（见 extraResources）
+files:
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+  # asar 里不放任何 node_modules：主进程代码零依赖（pg 从 API 运行时目录加载），
+  # 留着依赖会让 electron-builder 的收集器顺着 pnpm 软链把整个工作区卷进来
+  - '!node_modules/**'
+
+extraResources:
+  # 从 runtime/ 整体复制到 Resources 根：得到 Resources/{pg,api,web}，
+  # 与主进程 process.resourcesPath 的取址方式一致。
+  #
+  # 为什么不能写成 `from: runtime/api`：
+  # electron-builder 的复制器**硬编码排除复制源根目录下的 node_modules**
+  # （app-builder-lib/out/util/filter.js 里 `if (relative === "node_modules") return false`），
+  # 写 from: runtime/api 会让 API 运行时的依赖目录整个消失（实测只复制到 2MB 的 dist）。
+  # 从上一级复制时它变成 "api/node_modules"，命中的是「子目录 node_modules 允许」的分支。
+  - from: runtime
+    to: .
+    filter:
+      - '**/*'
+
+asar: true
+# 没有需要重编译的原生模块（argon2 在 API 运行时目录里，已是 N-API 通用版）
+npmRebuild: false
+# dmg 内 asar 用 normal 压缩：maximum 会让启动时解包多花好几秒，收益却只有几个百分点
+compression: normal
+
+# 打包后裁掉 Electron 的 220 个多语言资源包（48.8MB），只留 en + zh_CN。
+# 必须在签名前跑：裁掉的文件本来就不需要签名，裁完再签，封印与内容才对得上。
+afterPack: scripts/after-pack.mjs
+
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  darkModeSupport: true
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  # hardened runtime 是公证的前置条件：不开的话 notarytool 直接拒收
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # 签名只针对**可执行代码**。osx-sign 默认会把 bundle 里每个文件都签一遍
+  # （每个文件一次 codesign + 一次 Apple 时间戳服务往返，16000 个文件要跑几小时）。
+  # 下面这些目录/后缀全是数据与静态资源，不需要签名；跳过后只剩几百个 Mach-O 要签。
+  # 注意：**不能**把 .node / .dylib / 无扩展名的可执行文件漏掉 ——
+  # 内嵌 PG 的 postgres/pg_ctl/initdb、PG 的动态库、argon2 的 N-API 模块都必须签。
+  signIgnore:
+    # 前端产物：纯静态资源，没有可执行代码
+    - '/Contents/Resources/web/'
+    # PG 的数据文件（时区表、字符集、postgres.bki），不是代码
+    - '/Contents/Resources/pg/share/'
+    # 依赖目录：只签 Mach-O 模块（.node / .dylib / .so）；
+    # 其余**带扩展名**的文件（js/json/png/md/wasm/tar.gz/…）全跳过。
+    # 无扩展名的可执行文件（如 @prisma/engines 的 schema-engine-<platform>）仍会签。
+    - '/Contents/Resources/api/node_modules/.*\.(?!node$|dylib$|so$)[^./]+$'
+    # API 编译产物与迁移 SQL：不是代码
+    - '/Contents/Resources/api/dist/.*\.(js|cjs|mjs|json|map)$'
+    - '/Contents/Resources/api/prisma/.*\.sql$'
+    # Electron 自带的资源（.pak / .lproj）：不是代码。
+    # 注意 Resources 目录在 framework 根下（Electron Framework.framework/Resources/），
+    # Versions/A/Resources 是它的软链视图，两处都要匹配到。
+    - '/Electron Framework\.framework/.*Resources/'
+    - '/Squirrel\.framework/.*\.lproj/.*'
+    - '/Squirrel\.framework/.*\.pak$'
+  # 公证由 scripts/notarize.mjs 单独执行（source ~/.symi/notary.env && npm run notarize），
+  # 这里关闭内置流程，避免签名后立刻提交、把「未装订」的中间产物发出去
+  notarize: false
+
+dmg:
+  # DMG 本身不签名（macOS 从 10.11 起不再校验 DMG 签名），公证对象是 .app 与 dmg 两层
+  sign: false
+  contents:
+    - x: 140
+      y: 220
+      type: file
+    - x: 400
+      y: 220
+      type: link
+      path: /Applications
+
+win:
+  # 用 512×512 PNG：electron-builder 会自行转成多尺寸 .ico
+  icon: build/icon.png
+  target:
+    - target: nsis
+    - target: zip
+
+linux:
+  icon: build/icon.png
+  category: Office
+  target:
+    - target: AppImage
+    - target: tar.gz

@@ -1,0 +1,30 @@
+{
+  "name": "smart-home-ai-saas",
+  "version": "1.0.0",
+  "license": "MIT",
+  "private": true,
+  "description": "智能家居 AI 工作台：多租户、RBAC、agent 工具调用、内容提取与知识库（开源自部署，模型自选）",
+  "packageManager": "pnpm@11.28.6",
+  "engines": {
+    "node": ">=24.19.0",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @app/api dev",
+    "dev:web": "pnpm --filter @app/web dev",
+    "build": "pnpm -r build",
+    "check:templates": "pnpm --filter @app/web check:templates",
+    "check:docs": "node scripts/check-docs.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "smoke": "pnpm --filter @app/api smoke",
+    "db:migrate": "pnpm --filter @app/api prisma:migrate",
+    "db:seed": "pnpm --filter @app/api prisma:seed",
+    "docker:prune": "docker image prune -f && docker builder prune -af --filter \"until=24h\"",
+    "ops:check": "bash scripts/ops-check.sh",
+    "notarize": "pnpm --filter @app/desktop notarize",
+    "desktop:runtime": "pnpm --filter @app/desktop prepare:runtime",
+    "desktop:verify": "pnpm --filter @app/desktop verify:runtime",
+    "desktop:mac": "pnpm --filter @app/desktop dist:mac"
+  }
+}

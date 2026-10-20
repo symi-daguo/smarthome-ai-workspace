@@ -1,0 +1,26 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+coverage/
+uploads/
+.DS_Store
+# 桌面端打包产物：
+# - runtime/  prepare-runtime 产出的运行时资源（PG 二进制 + 生产依赖，几百 MB，脚本可重建）
+# - release/  electron-builder 的安装包输出（.app 约 570MB + dmg 约 225MB + zip 约 225MB）
+# - build/ 下只忽略由 scripts/make-icons.mjs 生成的图标；
+#   entitlements.mac.plist 是 electron-builder.yml 引用的源文件，必须入库，
+#   否则新克隆的仓库编不出 mac 包（hardened runtime 的授权全靠它）
+apps/desktop/runtime/
+apps/desktop/release/
+apps/desktop/build/icon.icns
+apps/desktop/build/icon.png
+# 目标站参考截图与采集素材（含第三方品牌 UI，仅本地留存，不入库）
+.ref-site/
+# 逆向/对标记录整体不入库：
+#   这些文档天然含第三方品牌名与对标站信息，开源仓库里放它们既不合规也没价值。
+#   需要查阅时本地仍在（git rm --cached 只移出跟踪，不删工作区文件）。
+replica/
+# playwright-cli 自动化产出的快照/截图/console 日志（本地调试用）
+.playwright-cli/

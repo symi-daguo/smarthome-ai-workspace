@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- V8 需要 JIT：Electron 的渲染进程跑 JIT，缺这条 hardened runtime 下直接起不来 -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!--
+    加载内嵌 PostgreSQL 的第三方动态库（libpq / libcrypto / libicu 等）时，
+    系统的库签名校验会拦下「签名团队与主程序不一致」的 dylib。
+    这条 entitlement 是加载未使用同一 Team ID 签名的动态库的前提。
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!--
+    内嵌 PostgreSQL 的可执行文件依赖 DYLD_LIBRARY_PATH 找到同目录的动态库；
+    hardened runtime 默认会剥掉 DYLD_* 环境变量，这条是保留它们的前提。
+  -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <!-- 出站：调用模型 API / ComfyUI；入站：本地静态服务与本地 API 只监听 127.0.0.1 -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+  <!-- 用户在「个人设置」里选模型配置文件、导出方案时需要读写自己的文件 -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

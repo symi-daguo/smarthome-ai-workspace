@@ -1,0 +1,1 @@
+ALTER TABLE "PlanProject" ADD COLUMN "renderedFloorplanAssetId" TEXT;

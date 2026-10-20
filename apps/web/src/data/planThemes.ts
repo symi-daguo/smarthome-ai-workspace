@@ -1,0 +1,109 @@
+/** 11 套方案视觉风格主题（工作台与分享页共用），色值为自有设计 */
+export interface PlanTheme {
+  key: string;
+  name: string;
+  desc: string;
+  /** 页面底色 */
+  bg: string;
+  /** 卡片/内容底色 */
+  surface: string;
+  /** 主文字 */
+  text: string;
+  /** 次级文字 */
+  sub: string;
+  /** 强调色 */
+  accent: string;
+  /** 封面渐变 */
+  cover: string;
+  dark: boolean;
+  /** 封面实景配图（本地 public/images） */
+  coverImg: string;
+}
+
+export const PLAN_THEMES: PlanTheme[] = [
+  { key: 'A', name: '暖咖咨询', desc: '奶咖暖米底，温暖好沟通', bg: '#F5EFE8', surface: '#FFFDFB', text: '#3A2E26', sub: '#8A786A', accent: '#B07A4A', cover: 'linear-gradient(135deg,#6E4B33,#B07A4A)', dark: false, coverImg: '/images/cases/c1.jpg' },
+  { key: 'B', name: '极简莫兰迪', desc: '奶白低饱和，留白克制', bg: '#F1F0ED', surface: '#FFFFFF', text: '#3D3C38', sub: '#8C8A84', accent: '#9A958B', cover: 'linear-gradient(135deg,#8E8B84,#C9C5BC)', dark: false, coverImg: '/images/cases/c5.jpg' },
+  { key: 'C', name: '轻奢暗金', desc: '深咖金线，浓郁格调', bg: '#241B16', surface: '#2E241E', text: '#EFE6D8', sub: '#A79680', accent: '#C9A15E', cover: 'linear-gradient(135deg,#171009,#4A3A22)', dark: true, coverImg: '/images/cases/c2.jpg' },
+  { key: 'D', name: '原木侘寂', desc: '暖原木棉麻，温润自然', bg: '#F2EDE4', surface: '#FBF8F3', text: '#453B2E', sub: '#8F8271', accent: '#A08462', cover: 'linear-gradient(135deg,#7A6248,#B29A7C)', dark: false, coverImg: '/images/cases/c3.jpg' },
+  { key: 'E', name: '黑白高对比', desc: '杂志编辑感，现代都市', bg: '#F4F4F4', surface: '#FFFFFF', text: '#161616', sub: '#6E6E6E', accent: '#161616', cover: 'linear-gradient(135deg,#0C0C0C,#3A3A3A)', dark: false, coverImg: '/images/cases/c1.jpg' },
+  { key: 'F', name: '新中式雅韵', desc: '靛蓝暖白，留白写意', bg: '#EDF0F3', surface: '#FBFCFD', text: '#283446', sub: '#74808F', accent: '#3E5C76', cover: 'linear-gradient(135deg,#25384E,#5E7A96)', dark: false, coverImg: '/images/cases/c5.jpg' },
+  { key: 'G', name: '奶油法式', desc: '奶油色系，柔和浪漫', bg: '#F7F1EA', surface: '#FFFDFA', text: '#4C4038', sub: '#9A8A7C', accent: '#C99E8A', cover: 'linear-gradient(135deg,#B98E7A,#E3C4B4)', dark: false, coverImg: '/images/cases/c4.jpg' },
+  { key: 'H', name: '意式灰调', desc: '高级灰，理性质感', bg: '#ECEDEF', surface: '#FAFAFB', text: '#2C2F33', sub: '#7C828A', accent: '#5B6470', cover: 'linear-gradient(135deg,#42474E,#7C848E)', dark: false, coverImg: '/images/cases/c2.jpg' },
+  { key: 'I', name: '深空科技', desc: '深色底+冷光，科技氛围', bg: '#10151F', surface: '#171E2B', text: '#E6ECF5', sub: '#8493A8', accent: '#4FA8E0', cover: 'linear-gradient(135deg,#0A1020,#1E3A5C)', dark: true, coverImg: '/images/cases/c2.jpg' },
+  { key: 'J', name: '祖母绿', desc: '复古绿金，沉稳贵气', bg: '#EAF0EB', surface: '#FBFDFB', text: '#1F3A2D', sub: '#6E8577', accent: '#2E6B4F', cover: 'linear-gradient(135deg,#1C4A35,#3E7D5C)', dark: false, coverImg: '/images/cases/c3.jpg' },
+  { key: 'K', name: '手绘水彩', desc: '手绘线条，亲和提案感', bg: '#F4F1F6', surface: '#FDFCFE', text: '#41394B', sub: '#8B8296', accent: '#7E6C93', cover: 'linear-gradient(135deg,#6B5A80,#A99AC0)', dark: false, coverImg: '/images/cases/c4.jpg' },
+];
+
+export function planTheme(styleKey: string): PlanTheme {
+  return PLAN_THEMES.find((t) => t.key === styleKey) ?? PLAN_THEMES[0];
+}
+
+export interface PlanPage {
+  type: 'cover' | 'brand' | 'layout' | 'needs' | 'ecosystem' | 'scene' | 'budget' | 'delivery' | 'floorplan';
+  heading: string;
+  subtitle: string;
+  body: string;
+  bullets: string[];
+  /** 本页讲解稿（销售当面讲解用，客户阅读模式不显示） */
+  narration: string;
+  /** 底部引言块（一页一句价值收束语） */
+  quote?: string;
+}
+
+export const PAGE_TYPE_LABEL: Record<PlanPage['type'], string> = {
+  cover: '封面页',
+  brand: '品牌与服务实力',
+  layout: '空间动线与智能规划',
+  needs: '家庭需求洞察',
+  ecosystem: '全屋智能生态规划',
+  scene: '核心场景拆解',
+  budget: '预算规划与性价比方案',
+  delivery: '落地交付与售后闭环',
+  floorplan: '户型与设备点位',
+};
+
+/**
+ * 页型→实景配图（本地 public/images/cases，按空间语义映射）：
+ * c1 客厅落地窗灯带 / c2 家庭影院 / c3 玄关走廊感应灯 / c4 夜间卧室 / c5 餐厅暖光吊灯
+ */
+export const PAGE_IMAGE: Record<PlanPage['type'], string> = {
+  // 户型页优先用门店上传的图，这里只是没上传时的兜底实景
+  floorplan: '/images/cases/c4.jpg',
+  cover: '/images/cases/c1.jpg',
+  brand: '/images/cases/c5.jpg',
+  layout: '/images/cases/c3.jpg',
+  needs: '/images/cases/c5.jpg',
+  ecosystem: '/images/cases/c2.jpg',
+  scene: '/images/cases/c2.jpg',
+  budget: '/images/cases/c5.jpg',
+  delivery: '/images/cases/c1.jpg',
+};
+
+/** 场景页按副标题关键词细化配图（c4 夜间卧室过暗不可作背景，起夜/卧室场景改用 c3 感应灯暖光带） */
+export function sceneImage(subtitle: string): string {
+  const s = subtitle + '';
+  if (s.includes('影院') || s.includes('观影') || s.includes('客厅')) return '/images/cases/c2.jpg';
+  if (s.includes('卧室') || s.includes('睡眠') || s.includes('起夜') || s.includes('卫生间')) return '/images/cases/c3.jpg';
+  if (s.includes('餐') || s.includes('厨')) return '/images/cases/c5.jpg';
+  if (s.includes('玄关') || s.includes('归家') || s.includes('动线')) return '/images/cases/c3.jpg';
+  return '/images/cases/c1.jpg';
+}
+
+/** 卡片阴影（预览端 CSS；PPTX 端用 pptxgenjs shadow 对象） */
+export const CARD_SHADOW = '0 6px 18px rgba(30, 22, 14, 0.10), 0 1px 3px rgba(30, 22, 14, 0.06)';
+export const CARD_SHADOW_SOFT = '0 3px 10px rgba(30, 22, 14, 0.07)';
+
+/** c4 为夜间极暗图，作背景需强提亮；其余图片亮度正常 */
+export function imgFilter(src: string): string {
+  return src.includes('/c4.') ? 'brightness(2.05) contrast(1.12) saturate(1.15)' : 'brightness(1.06) saturate(1.05)';
+}
+
+/** c4 灯光集中在画面右下，取景靠右下避免死黑区 */
+export function imgPosition(src: string): string {
+  return src.includes('/c4.') ? 'right bottom' : 'center';
+}
+
+/** 竖幅面板用 c4 时放大裁取右下角灯光区 */
+export function imgSize(src: string, portrait: boolean): string {
+  return src.includes('/c4.') && portrait ? 'auto 170%' : 'cover';
+}

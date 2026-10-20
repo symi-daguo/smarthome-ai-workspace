@@ -1,0 +1,54 @@
+packages:
+  - 'apps/*'
+
+allowBuilds:
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  argon2: true
+  esbuild: true
+  prisma: true
+  # electron 的 postinstall 会下载对应版本的 Electron 运行时二进制（约 300MB）。
+  # 不跑这一步，apps/desktop 就起不来。国内网络可设 ELECTRON_MIRROR 走镜像源。
+  electron: true
+  # electron-winstaller 是 electron-builder 的传递依赖，只在 Windows 打 NSIS 包时
+  # 用到（需要 wine）。macOS/Linux 构建用不到，显式拒绝以免 pnpm 报
+  # ERR_PNPM_IGNORED_BUILDS 让 install 退出码变成 1。
+  'electron-winstaller': false
+  # 桌面端内嵌 PostgreSQL 的二进制包：postinstall 会按 native/pg-symlinks.json
+  # 重建库符号链接（lib/libpq.so → libpq.5.dylib 之类）。不跑这一步，
+  # 打包出来的 App 里 PG 会因为找不到库而起不来。
+  '@embedded-postgres/darwin-arm64': true
+  '@embedded-postgres/darwin-x64': true
+  '@embedded-postgres/linux-x64': true
+  '@embedded-postgres/windows-x64': true
+
+# 供应链防护：新发布版本需满 24 小时（1440 分钟）才可安装，降低 npm 投毒窗口。
+# 选 24h 而非 7 天的实测依据：本项目 Vite 8 / Rolldown 工具链迭代极快，
+# 7 天（10080）会把 @rolldown/binding-* 1.2.13、@napi-rs/canvas 1.0.11 等
+# 近 7 天发布的包全部拒掉，直接打断构建；24 小时既能挡住投毒（攻击通常数小时内被发现下架），
+# 又不误伤正常跟进。当前 lockfile 784 个条目全部通过校验。
+# 不设 minimumReleaseAgeExclude：没有无效豁免，日后装到刚发布的版本会被明确拦下并提示。
+minimumReleaseAge: 1440
+
+# 已知漏洞修复：pnpm audit（对官方 registry 报出 16 条）全部是**间接依赖**，
+# 不新增依赖，用 override 把传递依赖顶到已修复版本。
+# 用**精确版本选择器**（如 lodash@3.2.0）而不是整包覆盖：
+# 整包覆盖会把项目里已经修好的解析（如 uuid 14.0.2）一起降级，反而倒退。
+overrides:
+  # critical/high/moderate 共 5 条：mammoth>argparse 把 lodash 锁在 3.2.0（原型污染、命令注入）
+  lodash@3.2.0: 4.18.1
+  # moderate：与 lodash 同链路。审计建议的修复版 1.1.4 **并不存在**（官方 dist-tags 最新仍是 1.1.3，
+  # 已于 2023-09-11 发布后无更新），属「上游无修复」，只能顶到现存最新版，风险见 README 安全章节。
+  sprintf-js@1.0.3: 1.1.3
+  # moderate：exceljs 链路的 uuid 8.3.0（项目内另一处已是 14.0.2，不动）
+  uuid@8.3.0: 11.1.1
+  # high：pptxgenjs 读图片尺寸
+  image-size@1.2.1: 2.0.3
+  # low：@ant-design/x>mermaid 链
+  dompurify@3.4.15: 3.4.16
+  katex@0.16.47: 0.18.2
+  # moderate/low：exceljs 链
+  bl@4.0.1: 4.0.3
+  fast-csv@4.3.1: 4.3.6
+  # high：仅 devDep 链（@nestjs/cli>cli-table3>string-width>strip-ansi）
+  ansi-regex@5.0.0: 5.0.1

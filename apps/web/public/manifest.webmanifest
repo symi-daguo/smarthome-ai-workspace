@@ -1,0 +1,14 @@
+{
+  "name": "智能家居 AI 工作台",
+  "short_name": "AI 工作台",
+  "description": "面向智能家居行业的 AI 内容生成与经营工作台：方案 / 生图 / 生视频 / 接单 / 产品库 / 知识库",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f5fa",
+  "theme_color": "#5B5BF0",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

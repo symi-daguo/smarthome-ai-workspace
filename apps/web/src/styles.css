@@ -1,0 +1,54 @@
+:root {
+  /* 与 theme/fonts.ts 的 FONT_STACK_CSS 保持一致。CSS 里无法 import TS 常量，
+     这里是唯一的手写副本 —— 改动请两边同步（smoke 有断言比对）。 */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* iOS 刘海屏/Home 指示条安全区：viewport-fit=cover 下为顶栏/侧栏与底部留位。
+   仅在 PWA standalone（添加到主屏幕）下生效，普通浏览器内不产生多余空白。 */
+@media (display-mode: standalone) {
+  @supports (padding: env(safe-area-inset-top)) {
+    .ant-layout-header {
+      padding-top: env(safe-area-inset-top);
+      min-height: calc(64px + env(safe-area-inset-top));
+      height: auto;
+    }
+    .ant-layout-sider {
+      padding-top: env(safe-area-inset-top);
+      padding-left: env(safe-area-inset-left);
+    }
+    body {
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+  }
+}
+
+/* 客户分享方案页打印：隐藏操作按钮，方案页整页输出 */
+@media print {
+  .plan-print-bar {
+    display: none !important;
+  }
+  .plan-share-page {
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .plan-share-page section {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+}
