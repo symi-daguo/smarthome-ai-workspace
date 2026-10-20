@@ -86,6 +86,11 @@ jobs:
         # 这四类在编辑器里看不出来，渲染到 GitHub 上才发现
         run: pnpm check:docs
 
+      - name: 品牌与合规检查
+        # 第三方商标标记 / 公司名 / 本机绝对路径 / 未登记外链域名 ——
+        # 公开仓库必须持续证明「没有别人的东西」，不能靠人记得检查
+        run: pnpm check:brand
+
       - name: 构建
         run: pnpm --filter @app/api build && pnpm --filter @app/web build
 

@@ -8,7 +8,8 @@
  * 只要内嵌一个监听 127.0.0.1 的真实 postgres，**全部 Prisma 查询零改动**，
  * 只动态生成 `DATABASE_URL` 即可。
  *
- * 已在 PostgreSQL 18.4 上实测：initdb → migrate deploy → seed → 全量 smoke 454/454 通过。
+ * 已在 PostgreSQL 18.4 上实测：initdb → migrate deploy → seed → 全量 smoke 456/456 通过
+ *（且不配任何真实模型 Key —— 这正是桌面端首启后的真实状态）。
  */
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';

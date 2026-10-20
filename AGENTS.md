@@ -9,7 +9,7 @@
 ## 提交前检查
 
 ```bash
-pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs
+pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs && pnpm check:brand
 ```
 
 **不要把这些命令接 `| tail -N`**：管道会缓冲输出并吃掉 pnpm 的退出码，
@@ -28,6 +28,13 @@ pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs
 这四类在编辑器里完全看不出来，渲染到 GitHub 上才发现。
 写文档时用**仓库相对路径**（`apps/api/src/...`），
 **不要写 `file:///Volumes/...` 这类本机绝对路径** —— GitHub 上点不开，还公开本机目录结构。
+
+**`pnpm check:brand` 查第三方品牌痕迹**（`scripts/check-brand.mjs`）：
+注册商标标记、第三方公司名、本机绝对路径链接、未登记的外链域名。
+只扫 git 已跟踪文件（`git ls-files`），与 CI 口径一致。
+**新增外链域名必须人工确认后加进脚本里的 `ALLOWED_DOMAINS`** ——
+白名单只放公开服务（模型厂商 API / 包镜像 / 官方文档），第三方商业平台域名一律不进。
+背景与完整证据见 [COMPLIANCE.md](./COMPLIANCE.md)。
 
 ## 前端纯逻辑回归（零新增依赖）
 

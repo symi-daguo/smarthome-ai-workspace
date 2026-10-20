@@ -16,6 +16,7 @@
     "build": "pnpm -r build",
     "check:templates": "pnpm --filter @app/web check:templates",
     "check:docs": "node scripts/check-docs.mjs",
+    "check:brand": "node scripts/check-brand.mjs",
     "typecheck": "pnpm -r typecheck",
     "smoke": "pnpm --filter @app/api smoke",
     "db:migrate": "pnpm --filter @app/api prisma:migrate",

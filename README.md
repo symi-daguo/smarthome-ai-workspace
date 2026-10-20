@@ -161,7 +161,8 @@ docker compose up -d --build  # web 5173、api 3080
 
 ### 装与用
 
-1. 下载 `智能家居AI工作台-1.0.0-arm64.dmg`
+1. 到 [Releases 页面](https://github.com/symi-daguo/smart-home-ai-saas/releases) 下载
+   `智能家居AI工作台-1.0.0-arm64.dmg`（约 216MB，Apple 公证已通过，双击即装，无需命令行）
 2. 双击挂载，把「智能家居AI工作台」拖进「应用程序」
 3. 首次启动会自动初始化本地数据库（内嵌 PostgreSQL，数据全部留在你自己电脑上），并弹窗给出默认管理员账号
 4. 用下面的默认账号登录
@@ -172,6 +173,7 @@ docker compose up -d --build  # web 5173、api 3080
 |---|---|
 | 默认管理员手机号 | `13800000000` |
 | 默认管理员密码 | `Admin@123456` |
+| 适用系统 | macOS 11+，Apple Silicon（arm64） |
 
 > 这两个账号只用于第一次登录，弹窗里也会提醒你改密。
 > 本应用**不内置任何模型额度**（开源定位），AI 功能需要你自己填模型 API Key。
@@ -529,6 +531,18 @@ canvas 绘制与 PPTX 导出引用，保证单一来源。系统字体名在前�
 > ⚠️ **未采用**：Zitadel / Plane / AppFlowy（AGPL-3.0）、Directus（MSCL-1.0-GPL）、
 > NocoDB / Outline / Twenty（非 OSI 的 Sustainable Use License）。按 AGENTS.md 规约
 > 这些项目的代码与文案一律不碰，只借鉴 MIT / Apache-2.0 / BSD / ISC / OFL 项目。
+
+### 这个仓库里有没有别人的东西？
+
+没有。本项目是 **clean-room 独立实现**：参考了一款同类商业产品的**功能与交互模式**
+（著作权保护「表达」，不保护「想法 / 方法 / 功能」），但没有取用对方的代码、界面素材、
+成段文案、品牌标识与商标。
+
+完整证据（每条都附可复现的核查命令）、依赖许可证清单、残余风险边界，
+见 **[COMPLIANCE.md](./COMPLIANCE.md)**。
+
+其中「有没有漏进第三方品牌痕迹」已做成机器闸门 `pnpm check:brand`，
+随每次提交与 CI 自动执行 —— 新增外链域名必须人工确认后才能加白名单。
 
 ## 头像与工作台名称
 
