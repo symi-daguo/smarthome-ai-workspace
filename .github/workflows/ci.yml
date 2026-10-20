@@ -50,15 +50,17 @@ jobs:
       RATE_LIMIT_AUTH: 1000
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # 版本取自 package.json 的 packageManager 字段（pnpm@11.28.6），不手写，避免两处漂移
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      # pnpm/setup 是 pnpm/action-setup 的**官方后继者**（后者已标记为只服务 pnpm v10 及更早）。
+      # 它一个步骤装好 pnpm + Node 运行时 + store 缓存，不再需要单独的 setup-node。
+      # version 省略 → 读 package.json 的 packageManager 字段（pnpm@11.28.6），避免两处漂移。
+      # install: false → 安装步骤由我们自己控制（要按 filter 只装需要的包）。
+      - uses: pnpm/setup@v3
         with:
-          node-version: 24
-          cache: pnpm
+          runtime: node@24
+          cache: true
+          install: false
 
       - name: 安装依赖
         # 只装门禁要用的两个包：desktop 的依赖里含内嵌 PostgreSQL 的四个平台二进制，
@@ -100,12 +102,12 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: 1
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
         with:
-          node-version: 24
-          cache: pnpm
+          runtime: node@24
+          cache: true
+          install: false
 
       - name: 安装依赖
         # 这里不能用 gate 那样的 filter：desktop 自己的依赖里就有 electron 与
