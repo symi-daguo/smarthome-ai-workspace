@@ -9,29 +9,37 @@
  *   3. 代码块是否成对闭合（漏一个 ``` 后面全文都变成代码块）
  *   4. 标题层级是否跳跃（h1 → h3，中间没有 h2）
  *
- * 用法：node scripts/check-docs.mjs [仓库根目录]
+ * **只检查 git 已跟踪的 md 文件**（用 `git ls-files`），不扫工作区。
+ * 原因：工作区里可能有已被 .gitignore 排除的文件（比如本地留存的采集记录），
+ * 扫工作区会以为那些链接有效 —— 而干净克隆（= CI 与别人克隆下来）里根本没有那些文件，
+ * 链接必然失效。这个口径差真实发生过：本地全绿，CI 第一次跑就红了 9 处。
+ *
+ * 用法：node scripts/check-docs.mjs
  */
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = process.argv[2] ?? resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let problems = 0;
 const report = (file, msg) => {
   problems += 1;
   console.log(`FAIL ${file}: ${msg}`);
 };
 
-/** 递归收集所有 md（跳过依赖与产物目录）；只收 git 已跟踪的，保证检查的就是会入库的那批 */
-function collect(dir, out = []) {
-  for (const name of readdirSync(dir)) {
-    if (['node_modules', '.git', 'dist', 'release', 'runtime', '.next', 'coverage', 'replica'].includes(name)) continue;
-    const p = join(dir, name);
-    const st = statSync(p);
-    if (st.isDirectory()) collect(p, out);
-    else if (name.endsWith('.md')) out.push(p);
+/** 取 git 已跟踪的 md 文件（与 CI / 干净克隆看到的内容一致） */
+function trackedMarkdowns() {
+  try {
+    const out = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files', '*.md'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    return out.split('\n').filter(Boolean);
+  } catch {
+    // 不在 git 仓库里（被打包进镜像等）时退回扫工作区
+    return [];
   }
-  return out;
 }
 
 /** 取 markdown 里所有链接的目标（跳过 http/mailto/锚点） */
@@ -54,7 +62,26 @@ function slug(text) {
     .replace(/\s+/g, '-');
 }
 
-for (const file of collect(ROOT)) {
+const tracked = trackedMarkdowns();
+const files = tracked.length
+  ? tracked.map((rel) => join(ROOT, rel))
+  : // 兜底：不在 git 仓库里时扫工作区
+    (() => {
+      const out = [];
+      const walk = (dir) => {
+        for (const name of readdirSync(dir)) {
+          if (['node_modules', '.git', 'dist', 'release', 'runtime', 'coverage', 'replica'].includes(name)) continue;
+          const p = join(dir, name);
+          if (statSync(p).isDirectory()) walk(p);
+          else if (name.endsWith('.md')) out.push(p);
+        }
+      };
+      walk(ROOT);
+      return out;
+    })();
+
+for (const file of files) {
+  if (!existsSync(file)) continue;
   const rel = file.replace(`${ROOT}/`, '');
   const text = readFileSync(file, 'utf8');
   const lines = text.split('\n');
