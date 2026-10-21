@@ -30,7 +30,7 @@ export async function parseWebPage(rawUrl: string): Promise<NormalizedText> {
     redirect: 'follow',
     signal: AbortSignal.timeout(15_000),
     headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; SmartHomeSaaS-Bot/0.1; +content-extraction)',
+      'User-Agent': 'Mozilla/5.0 (compatible; SmartHomeWorkspace-Bot/0.1; +content-extraction)',
       Accept: 'text/html,application/xhtml+xml',
     },
   });

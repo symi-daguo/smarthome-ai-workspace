@@ -55,7 +55,7 @@ export function ThemeProvider({ children }: { children: ReactNode }): ReactNode 
           token: {
             // 品牌主色：靛蓝系，明暗两套由算法自动派生
             colorPrimary: '#4F46E5',
-            // 转角比常规 SaaS 更圆一档，配合自有阴影形成独立的视觉语言
+            // 转角比常规后台系统更圆一档，配合自有阴影形成独立的视觉语言
             borderRadius: 12,
             fontFamily: FONT_STACK_CSS,
           },

@@ -304,7 +304,7 @@ export function DeviceLayout(): ReactNode {
    * 不存底图二进制 —— 底图来自用户上传的文件，刷新后重新选即可，
    * 把 base64 塞进 localStorage 很快会撑爆 5MB 配额。
    */
-  const WIFI_DRAFT_KEY = 'saas_wifi_draft_v1';
+  const WIFI_DRAFT_KEY = 'workspace_wifi_draft_v1';
   useEffect(() => {
     if (mode !== 'wifi') return;
     const t = setTimeout(() => {

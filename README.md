@@ -223,7 +223,7 @@ docker compose up -d --build  # web 5173、api 3080
 
 ### 装与用
 
-1. 到 [Releases 页面](https://github.com/symi-daguo/smart-home-ai-saas/releases) 下载
+1. 到 [Releases 页面](https://github.com/symi-daguo/smarthome-ai-workspace/releases) 下载
    `智能家居AI工作台-1.0.0-arm64.dmg`（约 216MB，Apple 公证已通过，双击即装，无需命令行）
 2. 双击挂载，把「智能家居AI工作台」拖进「应用程序」
 3. 首次启动会自动初始化本地数据库（内嵌 PostgreSQL，数据全部留在你自己电脑上），并弹窗给出默认管理员账号

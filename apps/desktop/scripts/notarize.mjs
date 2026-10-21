@@ -252,6 +252,7 @@ if (apps.length === 0) {
 }
 const APP = join(APP_PATH, apps[0]);
 const PRODUCT = apps[0].replace(/\.app$/, '');
+const VERSION = JSON.parse(readFileSync(join(DESKTOP_DIR, 'package.json'), 'utf8')).version;
 log(`目标应用：${APP}`);
 
 // ---------------------------------------------------------------- 2. 确认已签名
@@ -288,15 +289,37 @@ const TMP = join(OUT_DIR, '.notarize-tmp');
 rmSync(TMP, { recursive: true, force: true });
 mkdirSync(TMP, { recursive: true });
 
-const APP_ZIP = join(TMP, `${PRODUCT}.zip`);
-// app zip 已有 Accepted 提交就别再压一遍、传一遍：
+// 临时 zip 的文件名**必须带版本号**。
+//
+// 踩过的坑：原来固定叫「智能家居AI工作台.zip」，而 notarytool 的提交历史是按
+// **文件名**匹配的，于是上一版本公证过的同名记录会被当成本次「已公证」——
+// 但那张 ticket 对应的是**旧字节**（旧代码打出来的 app）。
+// 后果是：跳过压缩提交 → 拿旧 ticket 装订新 app → stapler 报
+// 「Could not find base64 encoded ticket」直接失败。
+// 带版本号后，各版本的提交记录天然分开，不会串。
+const APP_ZIP = join(TMP, `${PRODUCT}-${VERSION}.zip`);
+// 已有 Accepted 提交也别再压一遍、传一遍：
 // 压缩产物每次都不一样（时间戳、压缩流），重传只会让 Apple 多扫一次，
 // 而且「已公证的那一份」与「刚压出来的这一份」对不上号。
 // 崩溃后重跑脚本时，这一步能省掉 25 分钟上传。
-const appPrior = latestSubmission(`${PRODUCT}.zip`);
-if (appPrior && appPrior.status === 'Accepted') {
-  log(`app zip 已有 Accepted 提交（${appPrior.id}），跳过压缩与提交`);
+//
+// 但「同名的 Accepted 记录」**不能单独作为复用的理由** —— 必须再确认
+// 当前这份 app 确实已经带上了电子签章（stapler validate 通过）。
+// 只有这两条同时成立，才说明「公证的就是现在这份字节」。
+const appPrior = latestSubmission(`${PRODUCT}-${VERSION}.zip`);
+let appAlreadyStapled = false;
+try {
+  run('xcrun', ['stapler', 'validate', APP]);
+  appAlreadyStapled = true;
+} catch {
+  appAlreadyStapled = false;
+}
+if (appPrior && appPrior.status === 'Accepted' && appAlreadyStapled) {
+  log(`app zip 已有 Accepted 提交（${appPrior.id}）且当前 app 已带有效电子签章，跳过压缩与提交`);
 } else {
+  if (appPrior && appPrior.status === 'Accepted') {
+    log(`注意：历史里有同名的 Accepted 提交（${appPrior.id}），但当前 app 未带电子签章 —— 说明那份 ticket 对应的是别的字节，按未公证处理`);
+  }
   log('压缩 .app（notarytool 不接受 .app，只接受 zip/dmg/pkg）');
   run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP, APP_ZIP]);
 
@@ -313,7 +336,6 @@ run('node', [join(HERE, 'verify-signature.mjs'), APP]);
 // ---------------------------------------------------------------- 5. 用装订后的 .app 重打 dmg
 
 const ARCH = macDirs[0].replace('mac-', '');
-const VERSION = JSON.parse(readFileSync(join(DESKTOP_DIR, 'package.json'), 'utf8')).version;
 const DMG = join(OUT_DIR, `${PRODUCT}-${VERSION}-${ARCH}.dmg`);
 const ZIP_OUT = join(OUT_DIR, `${PRODUCT}-${VERSION}-${ARCH}-mac.zip`);
 
@@ -327,7 +349,8 @@ mkdirSync(STAGE, { recursive: true });
 // 那一份不是同一个东西 —— 拿旧票据去装订新文件会失败，或者装订成功但
 // 与实际公证内容对不上。重跑脚本时这是最容易踩的坑。
 const priorSubmission = latestSubmission(basename(DMG));
-const reuseDmg = Boolean(priorSubmission) && existsSync(DMG);
+// 只有「已 Accepted」才能复用：In Progress 时 ticket 还没下来，复用会导致装订失败
+const reuseDmg = priorSubmission?.status === 'Accepted' && existsSync(DMG);
 if (reuseDmg) {
   log(`复用已提交的 dmg（${basename(DMG)}，提交号 ${priorSubmission.id} / ${priorSubmission.status}），不重打`);
 } else {
