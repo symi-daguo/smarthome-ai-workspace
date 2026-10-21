@@ -1,6 +1,6 @@
 # Agent 接入指南
 
-面向任何能发 HTTP 请求的外部 AI Agent（豆包、Trae、MiniMax、Claude Code、WorkBuddy、自研脚本……）。
+面向任何能发 HTTP 请求的外部 AI Agent（桌面助手、命令行工具、云端大模型平台、自研脚本……）。
 本文只讲**怎么把本系统接进来并安全地用起来**；具体有哪些能力由
 `GET /api/agent/manifest` 自描述，接入方不必照搬本文。
 
@@ -10,7 +10,7 @@
 
 | 方式 | 端点 | 适合 |
 |---|---|---|
-| **能力清单**（推荐起点） | `GET /api/agent/manifest` | 所有平台。返回 18 组、150 条操作、权限、风险等级与用法说明 |
+| **能力清单**（推荐起点） | `GET /api/agent/manifest` | 所有平台。返回 19 组、161 条操作、权限、风险等级与用法说明 |
 | **OpenAPI** | `GET /api/docs`（页面）<br>`GET /api/docs-json`（机器可读） | 需要自动生成客户端 / 补全 / 调试台。**生产环境（`NODE_ENV=production`）已关闭 Swagger**，这两个端点只在开发环境可用 |
 | **REST** | `http://<host>:3080/api/*` | 一切。API Key 即 Bearer token |
 
@@ -44,7 +44,7 @@ API Key **本身就是一枚 JWT**，不需要再换 token。
 
 ## 3. 权限模型
 
-- 20 个 permission action，**读与写分离**（`content:read` / `content:generate`…）
+- 22 个 permission action，**读与写分离**（`content:read` / `content:generate`…）
 - 清单支持 `?effective=1`：**按调用者权限过滤**，只返回这把 Key 真的能调的操作。
   - 只读 Key 拿到的清单里不会出现"删除产品"，Agent 不会照着错的能力反复撞 403
 - 任务中心、团队等高危域对普通成员隐藏，与角色模板承诺一致
@@ -117,13 +117,13 @@ POST /api/agent/snapshots {label}          → 拿 snapshotId
 
 ---
 
-## 7. 各平台接入要点
+## 7. 按接入形态的要点
 
 平台差异只在"怎么写 HTTP 请求"，认证与幂等完全一致。
 
-- **Trae / Claude Code / Cursor**：直接用 REST + 能力清单；也可把 `?index=1` 的 JSON
-  存成 skill 文档，让模型按清单自选工具
-- **豆包 / MiniMax 等带 MCP 的平台**：本项目目前提供 REST 与 OpenAPI；
+- **通用 REST 客户端**（脚本、命令行工具、桌面助手）：直接用 REST + 能力清单；
+  也可把 `?index=1` 的 JSON 存成 skill 文档，让模型按清单自选工具
+- **只接受 MCP 的平台**：本项目目前提供 REST 与 OpenAPI；
   若平台强制要 MCP，可用一个薄 MCP server 包一层
   （清单已经自描述，映射是机械工作，不涉及业务逻辑）
 - **自研脚本 / 定时任务**：务必用**服务账号 + API Key**，并遵守第 4 节的幂等约定
@@ -135,7 +135,7 @@ POST /api/agent/snapshots {label}          → 拿 snapshotId
 接入完成后跑一遍这三件事，就能确认是通的：
 
 ```bash
-# 1) 认证 + 拿到清单（应看到 18 组、150 条、23 个破坏性操作）
+# 1) 认证 + 拿到清单（应看到 19 组、161 条、25 个破坏性操作）
 curl -s "$API/api/agent/manifest?index=1" -H "Authorization: Bearer $KEY"
 
 # 2) 权限感知（换一把只读 Key 再跑，结果应明显变少）

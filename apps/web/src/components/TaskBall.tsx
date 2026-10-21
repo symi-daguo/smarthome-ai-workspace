@@ -1,8 +1,9 @@
-import { ClearOutlined, RobotOutlined } from '@ant-design/icons';
+import { ClearOutlined } from '@ant-design/icons';
 import { Badge, Button, Popover, Typography, theme } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../store/ChatStore';
+import { AgentOrbIcon } from './AgentOrbIcon';
 import { api } from '../lib/api';
 
 const { Text } = Typography;
@@ -174,6 +175,10 @@ export function TaskBall(): ReactNode {
     const dy = e.clientY - drag.startY;
     if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
     if (drag.moved) {
+      // 拖动中把光标切成 grabbing：否则按住拖的时候还显示 grab，手感像没按住
+      if (ballRef.current && ballRef.current.style.cursor !== 'grabbing') {
+        ballRef.current.style.cursor = 'grabbing';
+      }
       setPos({
         x: Math.min(Math.max(8, drag.originX + dx), window.innerWidth - BALL_SIZE - 8),
         y: Math.min(Math.max(8, drag.originY + dy), window.innerHeight - BALL_SIZE - 8),
@@ -184,6 +189,7 @@ export function TaskBall(): ReactNode {
   const onPointerUp = (): void => {
     const drag = dragRef.current;
     dragRef.current = null;
+    if (ballRef.current) ballRef.current.style.cursor = 'grab';
     if (drag?.moved) {
       setPos((cur) => {
         const next = cur ?? defaultPos();
@@ -294,7 +300,7 @@ export function TaskBall(): ReactNode {
           ))}
         </div>
       )}
-      <Button type="link" size="small" style={{ padding: 0, marginTop: 8 }} onClick={() => navigate('/')}>
+      <Button type="link" size="small" style={{ padding: 0, marginTop: 8 }} onClick={() => navigate('/works')}>
         查看全部历史
       </Button>
     </div>
@@ -318,6 +324,7 @@ export function TaskBall(): ReactNode {
         <Badge count={unreadDone} size="small" offset={[-2, 2]}>
           <div
             role="button"
+            className="task-orb-ball"
             aria-label={`生成任务，${running.length}条进行中，共${merged.length}条，${open ? '收起' : '展开'}`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -326,17 +333,22 @@ export function TaskBall(): ReactNode {
               width: BALL_SIZE,
               height: BALL_SIZE,
               borderRadius: '50%',
-              background: '#151515',
+              // 渐变 + 细高光边：纯色圆球在深色背景上像一块贴纸，加一点立体感才像浮在页面上
+              background: 'linear-gradient(145deg, #303038 0%, #141417 56%, #070708 100%)',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
               color: '#ffffff',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               cursor: 'grab',
-              boxShadow: token.boxShadowSecondary,
+              // 面板展开时外圈加一圈亮环：告诉用户「它现在是打开的」
+              boxShadow: open
+                ? `0 0 0 2px rgba(255, 255, 255, 0.18), ${token.boxShadowSecondary}`
+                : `0 0 0 1px rgba(255, 255, 255, 0.08), ${token.boxShadowSecondary}`,
               userSelect: 'none',
             }}
           >
-            <RobotOutlined style={{ fontSize: 24 }} />
+            <AgentOrbIcon size={26} running={running.length > 0} />
           </div>
         </Badge>
       </Popover>

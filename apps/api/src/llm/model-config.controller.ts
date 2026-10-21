@@ -7,6 +7,7 @@ import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
 import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { LlmService } from './llm.service.js';
+import { DEFAULT_CHAT_MODEL } from './llm.constants.js';
 import { ModelConfigService, type ConfigScope } from './model-config.service.js';
 import { chatConfigSchema, imageConfigSchema, videoConfigSchema, type ChatConfigDto, type ImageConfigDto, type VideoConfigDto } from './model-config.schemas.js';
 import { describeUpstreamError } from '../common/upstream-timeout.js';
@@ -71,7 +72,7 @@ export class ModelConfigController {
         provider: chat.baseUrl.includes('minimax') ? 'MiniMax（OpenAI 兼容）' : 'OpenAI 兼容端点',
         providerKey: 'openai-compatible',
         baseUrl: chat.baseUrl,
-        model: chat.model ?? '（跟随请求，默认 MiniMax-M3）',
+        model: chat.model ?? `（跟随请求，默认 ${DEFAULT_CHAT_MODEL}）`,
         keyConfigured: Boolean(chat.apiKey),
         keyMasked: maskKey(chat.apiKey),
         source: chat.source,
@@ -166,7 +167,7 @@ export class ModelConfigController {
   }
 
   /**
-   * Agent 集成技能包：一键复制给外部智能体（Claude / GPT / Trae / Cursor 等）使用的接入说明。
+   * Agent 集成技能包：一键复制给外部智能体（任意具备 HTTP 调用能力的 AI 助手）使用的接入说明。
    * 纯静态模板 + 当前生效配置摘要（不含任何 Key），供「模型配置」页复制按钮使用。
    */
   @RequirePermissions('platform:billing:manage')
@@ -180,7 +181,7 @@ export class ModelConfigController {
     const origin = this.configOrigin();
     const text = `# 智能家居 AI 工作台 · Agent 接入技能包（Skill Pack）
 
-你可以通过 HTTP API 驱动本工作台的全部 AI 能力。以下协议对任意智能体（Claude / GPT / Trae / Cursor / 自建 Agent）通用。
+你可以通过 HTTP API 驱动本工作台的全部 AI 能力。以下协议对任意智能体（桌面助手、命令行工具、云端大模型平台、自建 Agent）通用。
 
 ## 1. 认证
 所有请求携带 JWT Bearer Token（在工作台「个人中心」登录后获取，或调用登录接口）：
@@ -195,7 +196,20 @@ curl -X POST ${origin}/api/auth/login \\
 
 后续请求统一加：\`-H "Authorization: Bearer $TOKEN"\`
 
-## 2. 核心能力端点
+## 2. 先拿能力清单（强烈建议第一步）
+能力清单是自描述的：返回全部可调用操作的路径、所需权限、风险等级与注意事项，
+Agent 读它就知道自己能做什么、哪些操作会删数据，不必硬编码端点。
+
+\`\`\`bash
+# 索引模式：体积极小（几百 token），列出分组与操作摘要
+curl -s "${origin}/api/agent/manifest?index=1" -H "Authorization: Bearer $TOKEN"
+# 单组详情：按需拉某一组的完整操作说明
+curl -s "${origin}/api/agent/manifest?group=products" -H "Authorization: Bearer $TOKEN"
+# 权限感知：只返回这把 Key 真的调得动的操作（换只读 Key 结果会明显变少）
+curl -s "${origin}/api/agent/manifest?effective=1" -H "Authorization: Bearer $TOKEN"
+\`\`\`
+
+## 3. 核心能力端点
 
 | 能力 | 方法与路径 | 请求体 | 说明 |
 |---|---|---|---|
@@ -212,15 +226,25 @@ curl -X POST ${origin}/api/auth/login \\
 | 我的产品 | POST /api/products/mine | {name, category, brand?, model?, sku?, barcode?, snRule?, spec?, warranty?, priceRetail?, priceDealer?, priceProject?, rebateL1?, rebateL2?, rebateDesigner?} | 标准主数据：三级价格（指导/工程/经销，元）+ 三级返利（百分比 0-100）；保存三级价自动同步参考区间 |
 | 产品编辑 | PATCH /api/products/:id | 同上（字段可选） | 仅本租户行；公共库行仅允许 PATCH imageUrl |
 | 产品批量处理 | POST /api/products/ai-process | {ids:[...]} | agent 补文案+批量生成产品主图 |
-| 设备点位图 | POST /api/layouts | JSON（见 §3.1） | 智能体可直接把产品按坐标布到户型图上 |
+| 设备点位图 | POST /api/layouts | JSON（见 §4.1） | 智能体可直接把产品按坐标布到户型图上 |
 | 图纸列表 | GET /api/layouts | - | 已保存的点位图（含 points 设备坐标清单） |
 | 知识库检索 | POST /api/knowledge/external/search | {query} | 外部 RAG（WeKnora/Obsidian） |
 | 内容提取 | POST /api/content/extractions/upload | multipart file+docType | 产品资料→结构化入库并同步产品库 |
+| 对标账号 | GET/POST /api/benchmark/accounts | {platform, accountName, homeUrl, groupTag?} | 配置要盯的对标账号（平台名自填，不限具体站点） |
+| 采集契约 | GET /api/benchmark/collect-spec | - | 要采哪些字段、怎么算热度、怎么排序、保留多久 —— **Agent 按这份契约采，不要自己拍字段** |
+| 提交采集内容 | POST /api/benchmark/contents | {items:[{accountId,title,text,sourceUrl,play?,like?,comment?,collect?,share?,publishedAt?}]} | 同一 sourceUrl 幂等（只更新不重复入库） |
+| 热门内容 | GET /api/benchmark/contents | ?accountId=&sort=hotScore\|engagement\|views\|published | 四个排序维度可切换 |
+| 映射分析 | POST /api/benchmark/analyze | {accountId?, topN?} | 把热门内容映射到自家业务，产出风格画像、场景卖点与差距清单，并投影进知识库供检索 |
 | 产物库 | GET /api/media/assets | - | 我的资料库全部图片/视频产物 |
 | 文件上传 | POST /api/media/uploads | multipart file | 图片落盘并返回 {id,url} |
 | 额度查询 | GET /api/tenants/current/tokens | - | 调计费能力前自查余额（响应 402=额度不足），账本 GET /api/tenants/current/tokens/ledger |
 
-## 3. 模型方案切换（不同任务用不同模型）
+> **关于对标情报的分工**：服务端**不代抓网站**（不做无头浏览器、不接管登录态）。
+> 采集由**你这个 Agent** 用自带的浏览器能力完成，再按上面的采集契约把元数据 POST 回来。
+> 服务端负责三件事：给字段契约、算热度与排序、把内容映射到客户自家业务并投影进知识库。
+> 只采元数据与文案，不下载视频本体。
+
+## 4. 模型方案切换（不同任务用不同模型）
 
 \`\`\`bash
 curl ${origin}/api/admin/model-config/profiles -H "Authorization: Bearer $TOKEN"
@@ -228,7 +252,7 @@ curl ${origin}/api/admin/model-config/profiles -H "Authorization: Bearer $TOKEN"
 curl -X POST ${origin}/api/admin/model-config/profiles/<id>/activate -H "Authorization: Bearer $TOKEN"
 \`\`\`
 
-### 3.1 智能体自动布点（把产品放到户型平面图需要的位置）
+### 4.1 智能体自动布点（把产品放到户型平面图需要的位置）
 
 坐标为相对户型图的归一化比例（左上角 0,0，右下角 1,1），跨分辨率稳定；productId 必须来自 GET /api/products。
 
@@ -253,19 +277,26 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
   }'
 \`\`\`
 
-## 4. 规则与边界
+## 5. 规则与边界
 - 计费：所有 AI 端点按额度扣费（响应 402 = 额度不足）；校验失败不扣费
 - 权限：需 content:generate（生成类）/ knowledge:manage（知识库）等平台权限；越权返回 403
 - 数据隔离：所有读写自动限定在当前租户；公共库产品只读（可复制到我的库）
 - 审计：agent 触发的检索/批量处理均写入操作留痕（AuditLog）
 - 限流：全局 ${process.env.RATE_LIMIT_GLOBAL ?? 300} 次/分钟/IP，认证接口 ${process.env.RATE_LIMIT_AUTH ?? 10} 次/分钟
 
-## 5. 典型工作流（复制给智能体作为 system prompt 片段）
+## 6. 典型工作流（复制给智能体作为 system prompt 片段）
 「你是智能家居门店运营助手。用上面的 API 完成：1) 把客户资料 POST /api/orders/intake 建档；
 2) 用 GET /api/products 选品；3) 需要图时用 POST /api/media/images 生成；
 4) 做平面图设计时，先 POST /api/media/uploads 上传户型图，再 POST /api/layouts 把选好的
 产品按房间语义坐标（归一化 0-1）布到对应位置（网关居中高处、门锁在入户门、水浸在厨房/卫生间低点等）；
-5) 全部产物自动落库到「我的资料库」，无需本地保存。」`;
+5) 全部产物自动落库到「我的资料库」，无需本地保存。」
+
+「你是内容情报助手。1) GET /api/benchmark/collect-spec 拿到采集契约（字段、热度公式、排序维度、保留期）；
+2) 用你自带的浏览器能力打开对标账号主页，滚动加载拿到热门内容的标题、正文与互动数；
+3) POST /api/benchmark/contents 提交（带 accountId 与 sourceUrl，同一链接重复提交只更新不重复入库）；
+4) GET /api/benchmark/contents?sort=hotScore 取当前最热的一批；
+5) POST /api/benchmark/analyze 让系统把内容映射到门店自家业务，产出风格画像、场景卖点与差距清单；
+6) 结论已自动进知识库，后续可用 POST /api/knowledge/search 检索。」`;
     return { text };
   }
 
@@ -280,7 +311,7 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
   async testChat(): Promise<{ ok: boolean; model?: string; latencyMs?: number; error?: string }> {
     try {
       const r = await this.llm.chat({
-        model: 'MiniMax-M3',
+        model: DEFAULT_CHAT_MODEL,
         prompt: 'ping',
         systemPrompt: '只回复 pong 两个字母，不要其他内容。',
         maxTokens: 16,
@@ -349,7 +380,7 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
       const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-        body: JSON.stringify({ model: 'MiniMax-M3', messages: [{ role: 'user', content: 'ping' }], max_tokens: 4 }),
+        body: JSON.stringify({ model: DEFAULT_CHAT_MODEL, messages: [{ role: 'user', content: 'ping' }], max_tokens: 4 }),
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) return { ok: false, error: `MiniMax 返回 ${res.status}，请检查 Key 与账户状态` };

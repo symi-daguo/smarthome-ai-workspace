@@ -1,7 +1,14 @@
 import { z } from 'zod';
 
 export const llmTestSchema = z.object({
-  model: z.string().min(1).max(64),
+  /**
+   * 模型名可省：省了就用 llm.constants.ts 里的默认模型。
+   *
+   * 此前这里是必填，与服务层 `model ?? DEFAULT_CHAT_MODEL` 的兜底逻辑自相矛盾——
+   * Agent / curl 按「跟随默认」调用却拿到 400，只能被迫硬写一个模型名，
+   * 写错就是 "unknown model"，反而更难懂。契约按真实能力放宽。
+   */
+  model: z.string().min(1).max(64).optional(),
   prompt: z.string().min(1).max(2000),
   systemPrompt: z.string().max(1000).optional(),
   /**

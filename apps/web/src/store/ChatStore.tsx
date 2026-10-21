@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { useActiveConfig } from '../lib/configStore';
+import { DEFAULT_CHAT_MODEL } from '../theme/tokens';
 
 export interface ChatMessage {
   id: string;
@@ -199,7 +200,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
       api<{ reply: string }>('/api/llm/chat', {
         method: 'POST',
         body: JSON.stringify({
-          model: config.chatModel || 'MiniMax-M3',
+          model: config.chatModel || DEFAULT_CHAT_MODEL,
           prompt: content,
           systemPrompt: effPrompt ?? systemPromptFor(effAgent),
           // 附件真内容随请求上行；此前只把「文件名(类型,大小)」拼进 prompt，

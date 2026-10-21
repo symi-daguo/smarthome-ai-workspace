@@ -14,6 +14,7 @@ import {
   MenuFoldOutlined,
   MoreOutlined,
   PictureOutlined,
+  PlusOutlined,
   RightOutlined,
   RobotOutlined,
   SettingOutlined,
@@ -272,10 +273,25 @@ export function MainLayout(): ReactNode {
     return [creation, toolbox, system];
   }, [canManageModels]);
 
+  /**
+   * 折叠态侧栏用的扁平菜单。
+   * 分组标题（「AI 超能力」等）在 48px 宽度里会被压成省略号，所以这里摊平成分隔线分组：
+   * 图标保留，文字转成 antd 内置的悬停提示。
+   */
+  const collapsedMenuItems: MenuProps['items'] = useMemo(() => {
+    const flat: NonNullable<MenuProps['items']> = [];
+    (menuItems ?? []).forEach((group, index) => {
+      if (index > 0) flat.push({ type: 'divider' });
+      const children = (group as { children?: NonNullable<MenuProps['items']> }).children;
+      if (children) flat.push(...children);
+    });
+    return flat;
+  }, [menuItems]);
+
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
-    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/materials', '/treasure', '/products', '/knowledge', '/works', '/content', '/team', '/tokens', '/model-config', '/lighting', '/lighting-diagnosis', '/feedback', '/quota']) {
+    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/treasure', '/products', '/knowledge', '/works', '/benchmark', '/content', '/team', '/tokens', '/model-config', '/lighting', '/lighting-diagnosis', '/feedback', '/quota']) {
       if (p.startsWith(k)) return k;
     }
     return '/';
@@ -609,11 +625,30 @@ export function MainLayout(): ReactNode {
               height: '100vh',
               background: token.colorBgContainer,
               borderInlineEnd: `1px solid ${token.colorBorderSecondary}`,
+              overflow: 'hidden',
             }}
           >
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 14, gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', paddingTop: 14, gap: 10, overflow: 'hidden' }}>
               <Button type="text" icon={<RightOutlined />} aria-label="展开侧栏" onClick={() => setCollapsed(false)} />
               <BrandMark size={28} />
+              <Tooltip title="新对话" placement="right">
+                <Button type="text" icon={<PlusOutlined />} aria-label="新对话" onClick={() => { createNew(); go('/'); }} />
+              </Tooltip>
+              <Tooltip title="短视频工作台" placement="right">
+                <Button type="text" icon={<VideoCameraOutlined />} aria-label="短视频工作台" onClick={() => go('/biography')} />
+              </Tooltip>
+              {/* 折叠后仍要能直接跳页：图标竖排 + 悬停出中文名 */}
+              <div style={{ width: '100%', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+                <Menu
+                  theme="light"
+                  mode="inline"
+                  inlineCollapsed
+                  selectedKeys={[selectedKey]}
+                  items={collapsedMenuItems}
+                  onClick={({ key }) => go(key)}
+                  style={{ borderInlineEnd: 0, padding: 0 }}
+                />
+              </div>
             </div>
           </Layout.Sider>
         )

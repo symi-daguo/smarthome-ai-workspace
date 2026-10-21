@@ -1,21 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.module.js';
 import { ModelConfigService } from '../llm/model-config.service.js';
-import { formatKnowledgeContext, pingExternalKnowledge, searchExternalKnowledge, type KnowledgeChunk } from './knowledge-adapter.js';
+import { pingExternalKnowledge, searchExternalKnowledge, type KnowledgeChunk } from './knowledge-adapter.js';
 
 /**
- * 外部知识库服务：检索 + 操作留痕（AuditLog）。
- * retrieveContext() 供各板块 agent 联动调用：未启用/检索失败返回空串（降级不阻塞主链路），
- * 失败原因记日志与审计，成功检索记审计（action=knowledge.search）。
+ * 外部知识库服务：配置读写 + 检索 + 检索留痕（运行日志）。
+ *
+ * 对话时的 RAG 上下文拼装在 LlmService.ragContext 里（外部库不可达则回落本地资料库），
+ * 本服务只负责「管理端手动检索」这一条路径。
  */
 @Injectable()
 export class KnowledgeService {
   private readonly logger = new Logger(KnowledgeService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly modelConfig: ModelConfigService,
-  ) {}
+  constructor(private readonly modelConfig: ModelConfigService) {}
 
   async status() {
     const cfg = await this.modelConfig.knowledgeConfig();
@@ -44,38 +41,21 @@ export class KnowledgeService {
   }
 
   /** 管理端手动检索（知识库页演示用） */
-  async search(tenantId: string, userId: string, query: string): Promise<KnowledgeChunk[]> {
+  async search(query: string): Promise<KnowledgeChunk[]> {
     const cfg = await this.modelConfig.knowledgeConfig();
     const chunks = await searchExternalKnowledge(cfg, query);
-    await this.audit(tenantId, userId, query, chunks.length, true);
+    this.audit(query, chunks.length, true);
     return chunks;
   }
 
-  /**
-   * agent 联动入口：返回可直接拼进 system prompt 的参考上下文。
-   * 任何异常降级为空串（主链路不因外部知识库不可用而中断），并留痕。
-   */
-  async retrieveContext(tenantId: string, userId: string | undefined, scene: string, query: string): Promise<string> {
-    try {
-      const cfg = await this.modelConfig.knowledgeConfig();
-      if (!cfg.enabled || cfg.provider === 'none') return '';
-      const chunks = await searchExternalKnowledge(cfg, query.slice(0, 300));
-      await this.audit(tenantId, userId ?? null, `${scene}:${query.slice(0, 60)}`, chunks.length, true);
-      return formatKnowledgeContext(chunks);
-    } catch (e) {
-      this.logger.warn(`知识库检索降级（${scene}）: ${e instanceof Error ? e.message : String(e)}`);
-      await this.audit(tenantId, userId ?? null, `${scene}:failed`, 0, false);
-      return '';
-    }
-  }
-
-  private async audit(tenantId: string, actorId: string | null, target: string, hits: number, ok: boolean): Promise<void> {
-    try {
-      await this.prisma.auditLog.create({
-        data: { tenantId, actorId, action: 'knowledge.search', target: `${target} -> ${ok ? `${hits} hits` : 'degraded'}` },
-      });
-    } catch {
-      // 留痕失败不阻塞业务
-    }
+  private audit(target: string, hits: number, ok: boolean): void {
+    // 检索留痕走日志，不写审计表。
+    //
+    // 审计表回答的是「谁改了什么」，只记写操作（见 agent/audit.interceptor.ts）。
+    // 检索是读操作，而且常由一次写请求内部触发（例如对话时拼 RAG 上下文），
+    // 写进审计表既与拦截器记的那条写请求重复，又因为 service 层拿不到 HTTP 上下文
+    // 而缺 method/path/requestId —— 半截记录反而让审计无法按 requestId 串联。
+    // 检索明细属于运行日志的范畴。
+    this.logger.log(`知识库检索 ${target} -> ${ok ? `${hits} hits` : 'degraded'}`);
   }
 }

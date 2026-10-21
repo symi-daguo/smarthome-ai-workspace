@@ -199,9 +199,6 @@ export class TeamService {
     if (existing) await this.prisma.user.update({ where: { id: existing.id }, data: { displayName: dto.displayName } });
 
     await this.prisma.membership.create({ data: { userId: user.id, tenantId, roleId: role.id } });
-    void this.prisma.auditLog.create({
-      data: { tenantId, actorId: operatorId, actorKind: 'USER', action: 'POST /api/team/members', target: user.id },
-    }).catch(() => undefined);
     return { id: user.id, phone: user.phone, displayName: user.displayName, roleKey: role.key };
   }
 
@@ -234,13 +231,6 @@ export class TeamService {
     }
 
     await this.prisma.membership.update({ where: { id: membership.id }, data: { roleId: role.id } });
-    void this.prisma.auditLog.create({
-      data: {
-        tenantId, actorId: operatorId, actorKind: 'USER',
-        action: 'PATCH /api/team/members', target: userId,
-        payloadDigest: null, ok: true,
-      },
-    }).catch(() => undefined);
     // 自定义角色对外用 id 引用，但 key 也一并返回 —— 否则调用方无从判断该存哪个
     return { id: userId, roleKey: role.key, roleId: role.id };
   }
@@ -268,9 +258,6 @@ export class TeamService {
     // 离开租户后其 Key 不该继续可用
     await this.prisma.apiKey.updateMany({ where: { tenantId, userId, revokedAt: null }, data: { revokedAt: new Date() } });
     await this.prisma.membership.delete({ where: { id: membership.id } });
-    void this.prisma.auditLog.create({
-      data: { tenantId, actorId: operatorId, actorKind: 'USER', action: 'DELETE /api/team/members', target: userId },
-    }).catch(() => undefined);
     return { ok: true };
   }
 
@@ -308,9 +295,6 @@ export class TeamService {
       await this.prisma.apiKey.deleteMany({ where: { userId } });
       await this.prisma.user.delete({ where: { id: userId } });
     }
-    void this.prisma.auditLog.create({
-      data: { tenantId, actorId: userId, actorKind: 'USER', action: 'DELETE /api/team/service-accounts', target: userId },
-    }).catch(() => undefined);
     return { ok: true };
   }
 

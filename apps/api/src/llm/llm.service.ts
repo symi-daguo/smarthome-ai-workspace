@@ -1,5 +1,6 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ModelConfigService } from './model-config.service.js';
+import { DEFAULT_CHAT_MODEL } from './llm.constants.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { formatKnowledgeContext, searchExternalKnowledge } from '../knowledge/knowledge-adapter.js';
 import { rankLocalChunks } from '../knowledge/knowledge-doc.service.js';
@@ -142,7 +143,7 @@ export class LlmService {
       const cfg = await this.modelConfig.knowledgeConfig();
       if (cfg.enabled && cfg.provider !== 'none' && cfg.baseUrl) {
         const chunks = await searchExternalKnowledge(cfg, query);
-        await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${chunks.length} hits (${cfg.provider})`);
+        this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${chunks.length} hits (${cfg.provider})`);
         return formatKnowledgeContext(chunks);
       }
     } catch (e) {
@@ -155,7 +156,7 @@ export class LlmService {
         select: { title: true, content: true },
       });
       const local = rankLocalChunks(docs, query);
-      await this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${local.length} hits (local)`);
+      this.audit(rag, `${(rag.query ?? fallbackQuery).slice(0, 60)} -> ${local.length} hits (local)`);
       return formatKnowledgeContext(local);
     } catch (e) {
       this.logger.warn(`本地资料库检索降级（${rag.scene}）: ${e instanceof Error ? e.message : String(e)}`);
@@ -163,18 +164,15 @@ export class LlmService {
     }
   }
 
-  private async audit(rag: RagContext, target: string): Promise<void> {
-    try {
-      await this.prisma.auditLog.create({
-        data: { tenantId: rag.tenantId, actorId: rag.userId ?? null, action: 'knowledge.search', target: `${rag.scene}:${target}` },
-      });
-    } catch {
-      // 留痕失败不阻塞业务
-    }
+  private audit(rag: RagContext, target: string): void {
+    // 同 knowledge.service：检索明细进日志，不写审计表（审计表只记写操作，且由拦截器统一落库）。
+    // 这里若也写审计，会与拦截器记的「POST /api/llm/chat」重复，且缺 requestId 无法串联。
+    this.logger.log(`知识库检索 ${rag.scene}:${target}`);
   }
 
   async chat(input: {
-    model: string;
+    /** 模型名可省：省了就用 llm.constants.ts 的默认模型（数据库里配了则优先用数据库的） */
+    model?: string;
     prompt: string;
     systemPrompt?: string;
     maxTokens?: number;
@@ -199,7 +197,7 @@ export class LlmService {
     if (system.trim()) messages.push({ role: 'system', content: system.trim() });
     messages.push({ role: 'user', content: buildUserContent(input.prompt, input.attachments) });
 
-    const model = cfg.model ?? input.model;
+    const model = cfg.model ?? input.model ?? DEFAULT_CHAT_MODEL;
     const start = Date.now();
     const response = await fetchUpstream(
       `${cfg.baseUrl}/chat/completions`,
@@ -235,7 +233,7 @@ export class LlmService {
       choices?: { message?: { content?: string } }[];
       model?: string;
     };
-    // 推理模型（MiniMax-M3、DeepSeek-R1 等）可能把思考过程包在  内一并返回，剥离后再交付
+    // 推理模型（MiniMax-M3.1-Flash、DeepSeek-R1 等）可能把思考过程包在  内一并返回，剥离后再交付
     const reply = (data.choices?.[0]?.message?.content ?? '').replace(/[\s\S]*?<\/think>\s*/g, '').trim();
     return { reply, model: data.model ?? model, latencyMs };
   }
@@ -261,7 +259,7 @@ export class LlmService {
     rag?: RagContext;
   }): Promise<T> {
     const { reply } = await this.chat({
-      model: input.model ?? 'MiniMax-M3',
+      model: input.model ?? DEFAULT_CHAT_MODEL,
       maxTokens: 2048,
       rag: input.rag,
       systemPrompt: `${input.systemPrompt}\n只返回一个 JSON 对象，不要输出 markdown 代码块、解释或多余文字。值为字符串，无法识别的字段给空字符串。`,
@@ -302,7 +300,7 @@ export class LlmService {
     rag?: RagContext;
   }): Promise<T> {
     const { reply } = await this.chat({
-      model: input.model ?? 'MiniMax-M3',
+      model: input.model ?? DEFAULT_CHAT_MODEL,
       maxTokens: input.maxTokens ?? 8192,
       timeoutMs: input.timeoutMs,
       rag: input.rag,

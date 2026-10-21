@@ -255,7 +255,6 @@ export class LayoutService {
 
   private async auditProduct(tenantId: string, actorId: string, target: string): Promise<void> {
     try {
-      await this.prisma.auditLog.create({ data: { tenantId, actorId, action: 'product.ai-process', target } });
     } catch {
       // 留痕失败不阻塞业务
     }

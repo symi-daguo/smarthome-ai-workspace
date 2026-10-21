@@ -35,7 +35,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../store/AuthContext';
 import { PageHeader } from '../components/PageHeader';
-import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
+import { BRAND_GRADIENT, DEFAULT_CHAT_MODEL, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
 
@@ -113,7 +113,7 @@ const CLOUD_PROVIDERS = [
   { name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus', keyUrl: 'https://open.bigmodel.cn' },
   { name: 'Kimi 月之暗面', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', keyUrl: 'https://platform.moonshot.cn' },
   { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', keyUrl: 'https://platform.openai.com/api-keys' },
-  { name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', model: 'MiniMax-M3', keyUrl: 'https://platform.minimaxi.com' },
+  { name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', model: DEFAULT_CHAT_MODEL, keyUrl: 'https://platform.minimaxi.com' },
 ];
 
 /** 本地大模型 provider（OpenAI 兼容，key 填任意占位串） */
@@ -461,7 +461,7 @@ export function ModelConfig(): ReactNode {
               <Form.Item name="apiKey" label="API Key" extra={status.chat.keyConfigured ? `已保存（${status.chat.keyMasked}），留空则保持不变` : '本地 Ollama / LM Studio 填任意占位串即可'}>
                 <Input.Password placeholder="sk-…" autoComplete="off" allowClear />
               </Form.Item>
-              <Form.Item name="model" label="模型" extra="可选：锁定全局模型；留空则跟随各功能默认（对话默认 MiniMax-M3）">
+              <Form.Item name="model" label="模型" extra={`可选：锁定全局模型；留空则跟随各功能默认（对话默认 ${DEFAULT_CHAT_MODEL}）`}>
                 <Input placeholder="deepseek-chat / qwen-plus / qwen3 …" allowClear />
               </Form.Item>
             </Form>
@@ -567,9 +567,9 @@ export function ModelConfig(): ReactNode {
             styles={{ body: { padding: 18 } }}
           >
             <Text type="secondary">
-              一键复制完整接入文档（API 端点清单 + JWT 认证 + 计费/权限/限流规则 + 典型工作流提示词），
-              粘贴给 Claude / GPT / Trae / Cursor 等任意智能体，即可让外部 Agent 直接驱动本工作台的对话、生图、生视频、方案、接单、产品库与知识库全部能力，
-              操作自动按租户隔离并留痕。
+              一键复制完整接入文档（能力清单入口 + JWT 认证 + 端点清单 + 计费/权限/限流规则 + 典型工作流提示词），
+              粘贴给任意具备 HTTP 调用能力的智能体，即可让外部 Agent 直接驱动本工作台的对话、生图、生视频、
+              方案、接单、产品库、知识库与对标情报全部板块，操作自动按租户隔离并留痕。
             </Text>
             <div style={{ marginTop: 12 }}>
               <Button type="primary" icon={<CopyOutlined />} loading={skillBusy} onClick={() => void copySkillPack()} style={{ background: BRAND_GRADIENT, border: 'none' }}>

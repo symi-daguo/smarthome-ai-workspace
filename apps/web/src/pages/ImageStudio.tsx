@@ -28,7 +28,7 @@ import { newRequestId } from '../lib/request-id';
 import { IMAGE_SCENE_LABELS, IMAGE_SCENE_PROMPTS } from '../data/imageScenes.js';
 import { RegionSelector, type RegionSelection } from '../components/RegionSelector';
 import { useActiveConfig } from '../lib/configStore';
-import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
+import { DEFAULT_CHAT_MODEL, INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 
@@ -251,7 +251,7 @@ export function ImageStudio(): ReactNode {
       const r = await api<{ reply: string }>('/api/llm/chat', {
         method: 'POST',
         body: JSON.stringify({
-          model: config.chatModel || 'MiniMax-M3',
+          model: config.chatModel || DEFAULT_CHAT_MODEL,
           systemPrompt: req.systemPrompt,
           prompt: req.prompt,
         }),

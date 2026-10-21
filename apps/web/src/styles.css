@@ -52,3 +52,61 @@ body,
     box-shadow: none !important;
   }
 }
+
+/* ---------- 右下角任务球 ---------- */
+
+/* 轨道旋转：只在有任务在跑时加（有 CSS 类才转），提示「它还在干活」 */
+@keyframes task-orb-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 核心呼吸：运行中时轻微明暗交替，避免静止的图标让人以为卡住了 */
+@keyframes task-orb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.task-orb-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: task-orb-spin 2.8s linear infinite;
+}
+
+.task-orb-core {
+  animation: task-orb-breathe 1.8s ease-in-out infinite;
+}
+
+/* 浮球本体：悬停微微放大、按下略缩，拖动时换光标 */
+.task-orb-ball {
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.3, 0.64, 1),
+    box-shadow 0.18s ease;
+}
+
+.task-orb-ball:hover {
+  transform: scale(1.06);
+}
+
+.task-orb-ball:active {
+  transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-orb-ring,
+  .task-orb-core {
+    animation: none;
+  }
+  .task-orb-ball {
+    transition: none;
+  }
+}

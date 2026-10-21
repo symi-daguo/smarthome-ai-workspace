@@ -15,6 +15,14 @@ export const BRAND_GRADIENT = 'linear-gradient(135deg, #4F46E5 0%, #6D3BEF 100%)
 export const ACCENT_TEAL = '#0FB5A5';
 export const ACCENT_TEAL_BG = '#E6F9F6';
 
+/**
+ * 默认对话模型（与后端 apps/api/src/llm/llm.constants.ts 保持一致）。
+ *
+ * 只是「客户还没在「模型配置」页填自己的模型」时的兜底展示与请求默认值；
+ * 客户自部署时换成自己的云端或本地模型（Ollama / LM Studio / vLLM 等 OpenAI 兼容端点）即可。
+ */
+export const DEFAULT_CHAT_MODEL = 'MiniMax-M3.1-Flash';
+
 /** 正文墨色：比纯黑柔和，长文阅读更舒适 */
 export const INK_BLACK = '#1C1B2E';
 

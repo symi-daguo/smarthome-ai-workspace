@@ -1080,6 +1080,33 @@ async function main(): Promise<void> {
   check('非当前方案可删除', delInactive.status === 200);
   const skillPack = await request<{ text: string }>(base, '/api/admin/model-config/agent-skillpack', authA);
   check('Agent 技能包端点返回完整文档且不含明文 Key', skillPack.status === 200 && skillPack.body.text.includes('/api/media/images') && !skillPack.body.text.includes('sk-profile'));
+  {
+    // 技能包是给外部智能体看的「说明书」，漏了新板块的端点，客户就得自己猜接口。
+    // 新增板块时忘了同步技能包，这里会当场抓住。
+    const pack = skillPack.body.text;
+    const required = [
+      '/api/agent/manifest',
+      '/api/benchmark/accounts',
+      '/api/benchmark/collect-spec',
+      '/api/benchmark/contents',
+      '/api/benchmark/analyze',
+      '/api/orders/intake',
+      '/api/products',
+      '/api/layouts',
+      '/api/media/videos',
+    ];
+    const missing = required.filter((r) => !pack.includes(r));
+    check(
+      `技能包覆盖全部主要板块的端点（缺 ${missing.length} 个）`,
+      missing.length === 0,
+      missing.join(','),
+    );
+    // 技能包是公开文档，不能出现第三方 AI 工具品牌名
+    check(
+      '技能包不含第三方 AI 工具品牌名',
+      !/Claude|Trae|Cursor|Copilot|ChatGPT|豆包|WorkBuddy/.test(pack),
+    );
+  }
 
   // ---------- JWT 刷新：旧 token 换新 token ----------
   const refreshed = await request<{ token: string }>(base, '/api/auth/refresh', { ...authA, method: 'POST' });
@@ -2504,6 +2531,22 @@ async function main(): Promise<void> {
       body: JSON.stringify({ model: 'x', prompt: '测试', attachments: Array.from({ length: 6 }, () => ({ name: 'a.txt', dataUrl: 'data:text/plain;base64,YQ==' })) }),
     });
     check('附件超过 5 个被拒（400，防请求体失控）', badData.status === 400);
+    // 不传 model 应按默认模型跑，而不是 400（契约要与服务层兜底一致，Agent 才不用硬写模型名）
+    const noModel = await request(base, '/api/llm/chat', {
+      ...authA,
+      method: 'POST',
+      body: JSON.stringify({ prompt: '测试' }),
+    });
+    check(
+      '不传 model 不被校验拦下（走默认模型兜底）',
+      noModel.status === 400 ? !/model/.test(JSON.stringify(noModel.body)) : true,
+      `status=${noModel.status}`,
+    );
+    const schemaSrc = readFileSync(join(process.cwd(), 'src/llm/llm.schemas.ts'), 'utf8');
+    check(
+      'model 在请求 schema 里是可选的（与服务层兜底一致）',
+      /model:\s*z\.string\(\)\.min\(1\)\.max\(64\)\.optional\(\)/.test(schemaSrc),
+    );
   }
 
   // ---------- 交付前校对门禁（G-08） ----------
@@ -3474,6 +3517,12 @@ async function main(): Promise<void> {
       '审计带 requestId 可串联一次动作',
       rows.every((r) => typeof r.requestId === 'string' && r.requestId.length > 0),
     );
+    // 半截记录（method/path 为空）来自 service 层手写的审计，与拦截器记的那条重复，
+    // 且拿不到 requestId 无法串联 —— 这条断言让「不许再出现手写审计」变成机器保证。
+    check(
+      '审计记录字段完整，没有手写审计留下的半截记录',
+      rows.every((r) => Boolean(r.method) && Boolean(r.path)),
+    );
     // 自动兜底：破坏性操作没自带 X-Snapshot-Id 时应先打一份 auto 快照，并把 id 记进审计
     check(
       '破坏性操作未自带快照时自动打 auto 兜底（防误删的最后一道）',
@@ -4082,6 +4131,71 @@ async function main(): Promise<void> {
     check(
       'vite.config.ts 从根 package.json 注入版本号',
       viteCfg.includes("'../../package.json'") && viteCfg.includes('VITE_APP_VERSION'),
+    );
+  }
+
+  // ---------- 默认对话模型单一事实源（1.0.2）----------
+  {
+    // 默认模型名曾散落十余个文件手写字符串，改一处漏一处就漂（版本号就是这么漂的）。
+    // 取值依据是对 MiniMax OpenAI 兼容端点的实测：纯 'MiniMax-M3.1' 不存在（API 报
+    // unknown model），可用的是 'MiniMax-M3.1-Flash'，且支持 json_object、reasoning token 很小。
+    const apiConst = readFileSync(join(process.cwd(), 'src/llm/llm.constants.ts'), 'utf8');
+    const webConst = readFileSync(join(process.cwd(), '../web/src/theme/tokens.ts'), 'utf8');
+    const apiModel = /DEFAULT_CHAT_MODEL\s*=\s*'([^']+)'/.exec(apiConst)?.[1] ?? '';
+    const webModel = /DEFAULT_CHAT_MODEL\s*=\s*'([^']+)'/.exec(webConst)?.[1] ?? '';
+    check(
+      `默认对话模型前后端一致（api=${apiModel} web=${webModel}）`,
+      Boolean(apiModel) && apiModel === webModel,
+    );
+    check(
+      '默认对话模型是可用的 M3.1-Flash（纯 MiniMax-M3.1 在 API 上不存在）',
+      apiModel === 'MiniMax-M3.1-Flash',
+    );
+    const svc = readFileSync(join(process.cwd(), 'src/llm/llm.service.ts'), 'utf8');
+    check(
+      '运行时兜底取自常量而非手写字面量',
+      svc.includes('input.model ?? DEFAULT_CHAT_MODEL') && !/model:\s*'MiniMax-M3'/.test(svc),
+    );
+  }
+
+  // ---------- README 数字与实现对账（1.0.2）----------
+  {
+    // README 里的数字必须能对回代码：写错一个数，客户照着做就白跑一趟。
+    // 这条断言的由来：README 曾写「157 条操作」，实测能力清单是 161 条；
+    // 《Agent接入指南》同一组数字还漂在更早的 18 组/150 条。
+    const readme = readFileSync(join(process.cwd(), '../../README.md'), 'utf8');
+    const guide = readFileSync(join(process.cwd(), '../../Agent接入指南.md'), 'utf8');
+    const ops = MANIFEST_KEYS.length;
+    const groups = MANIFEST.length;
+    const destructive = destructiveOps().length;
+    const permActions = new Set(Object.values(PERMISSIONS).flat()).size;
+    check(
+      `README 的操作条数与能力清单一致（实现 ${ops} 条 / ${groups} 组）`,
+      readme.includes(`${ops} 条操作`) && readme.includes(`${groups} 个分组`),
+    );
+    check(
+      `《Agent接入指南》的清单数字与实现一致（${groups} 组 / ${ops} 条 / ${destructive} 破坏性）`,
+      guide.includes(`${groups} 组、${ops} 条`) && guide.includes(`${destructive} 个破坏性操作`),
+    );
+    check(
+      `《Agent接入指南》的权限 action 数与实现一致（${permActions} 个）`,
+      guide.includes(`${permActions} 个 permission action`),
+    );
+    // 公开文档不得出现第三方 AI 工具品牌名
+    const brandNames = /Claude|Trae|Cursor|Copilot|ChatGPT|豆包|WorkBuddy/;
+    check('《Agent接入指南》不含第三方 AI 工具品牌名', !brandNames.test(guide));
+    check('README 不含第三方 AI 工具品牌名', !brandNames.test(readme));
+
+    // 断言条数：文档写「500+ 条」而不是精确数 —— 精确数每次加断言都会漂，
+    // 漂了没人发现等于没有承诺。这里用源码里的 check 调用点数量守下限，
+    // 让「500+」这个说法始终成立。
+    const selfSrc = readFileSync(join(process.cwd(), 'test/smoke.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const declared = (selfSrc.match(/\bcheck\(/g) ?? []).length;
+    check(
+      `冒烟断言规模不低于文档承诺的 500 条（源码声明 ${declared} 条）`,
+      declared >= 500,
     );
   }
 

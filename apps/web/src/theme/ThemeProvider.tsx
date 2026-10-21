@@ -68,6 +68,8 @@ export function ThemeProvider({ children }: { children: ReactNode }): ReactNode 
               // 浅色侧栏菜单：选中项品牌紫浅底（取自 colorPrimaryBg 语义色，暗色自动适配）
               itemBg: 'transparent',
               subMenuItemBg: 'transparent',
+              // 折叠态侧栏宽度 48，与 MainLayout 的折叠 Sider 对齐（antd 默认 80 会撑破侧栏）
+              collapsedWidth: 48,
             },
           },
         }}

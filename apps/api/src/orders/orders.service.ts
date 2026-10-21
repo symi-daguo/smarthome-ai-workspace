@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { IdempotencyService } from '../common/idempotency.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { LlmService } from '../llm/llm.service.js';
+import { DEFAULT_CHAT_MODEL } from '../llm/llm.constants.js';
 import { TokenService } from '../billing/token.service.js';
 import {
   RENO_STAGES, SCENE_KEYS, SYSTEM_KEYS,
@@ -300,7 +301,7 @@ need 取 yes/no/maybe，只列客户明确提到的系统 key（${SYSTEM_KEYS.jo
     const order = await this.mustGet(tenantId, id);
     const recentNotes = order.notes.slice(-5).map((n) => n.content).join('；') || '（暂无跟进记录）';
     const { reply } = await this.llm.chat({
-      model: 'MiniMax-M3',
+      model: DEFAULT_CHAT_MODEL,
       maxTokens: 400,
       systemPrompt: '你是智能家居门店的销售教练。根据线索状态与需求，给出下一步跟进建议：1 句核心动作 + 3 条要点（含话术方向）。控制在 120 字内，中文，不要 markdown。',
       prompt: `客户：${order.customer}（${order.community || '小区未知'} ${order.area || '面积未知'} ${order.layout || ''}）\n预算：${order.budget || '未知'}\n生态：${order.ecosystem || '未知'}\n需求：${order.needs || order.rawInput.slice(0, 200)}\n当前阶段：${STATUS_LABELS[order.status]}\n最近跟进：${recentNotes}`,

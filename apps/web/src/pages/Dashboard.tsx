@@ -21,7 +21,7 @@ import { useChatStore } from '../store/ChatStore';
 import { downloadMarkdown, downloadWord } from '../lib/mdExport';
 import { useActiveConfig } from '../lib/configStore';
 import { detectIntent } from '../lib/intent';
-import { BRAND_GRADIENT } from '../theme/tokens';
+import { BRAND_GRADIENT, DEFAULT_CHAT_MODEL } from '../theme/tokens';
 
 const { Text, Title } = Typography;
 const { useToken } = theme;
@@ -310,7 +310,7 @@ export function Dashboard(): ReactNode {
 
   /** 输入区模型方案下拉：点击切到模型配置中心 */
   const modelSwitchItems = [
-    { key: 'current', label: `当前：${config.profileName || '默认（.env）'} · ${config.chatModel || 'MiniMax-M3'}`, disabled: true },
+    { key: 'current', label: `当前：${config.profileName || '默认（.env）'} · ${config.chatModel || DEFAULT_CHAT_MODEL}`, disabled: true },
     { type: 'divider' as const },
     { key: 'config', label: '去配置/切换方案', icon: <CloudServerOutlined />, onClick: () => navigate('/model-config') },
   ];
@@ -456,7 +456,9 @@ export function Dashboard(): ReactNode {
                   placeholder="描述你想做的内容…例如：给 140㎡ 为一套三居室做全屋智能方案"
                   suffix={false}
                   header={
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '4px 0' }}>
+                    // Sender 的 header 走自定义节点，不会套 antd 的 header 容器内边距，
+                    // 这里补上与输入区/底部一致的 paddingSM，「当前模型」才不会被卡片边框切到。
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '4px 12px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
                         <span style={{ fontSize: 12, color: token.colorTextTertiary, whiteSpace: 'nowrap' }}>当前模型</span>
                         <Dropdown menu={{ items: modelSwitchItems }} placement="bottomLeft">
@@ -478,7 +480,7 @@ export function Dashboard(): ReactNode {
                           >
                             <CloudServerOutlined style={{ fontSize: 12 }} />
                             <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {config.profileName || '默认（.env）'} · {config.chatModel || 'MiniMax-M3'}
+                              {config.profileName || '默认（.env）'} · {config.chatModel || DEFAULT_CHAT_MODEL}
                             </span>
                           </Button>
                         </Dropdown>

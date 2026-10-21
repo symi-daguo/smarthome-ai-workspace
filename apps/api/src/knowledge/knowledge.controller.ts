@@ -53,10 +53,9 @@ export class KnowledgeController {
   @RequirePermissions('knowledge:manage')
   @Post('search')
   async search(
-    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
     @Body(new ZodValidationPipe(searchSchema)) dto: { query: string },
   ): Promise<{ chunks: unknown[] }> {
-    const chunks = await this.knowledge.search(user.activeTenantId as string, user.id, dto.query);
+    const chunks = await this.knowledge.search(dto.query);
     return { chunks };
   }
 
