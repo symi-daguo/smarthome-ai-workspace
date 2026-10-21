@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Alert, App as AntApp, Button, Card, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Slider, Space, Steps, Switch, Tag, Tooltip, Typography, Upload, theme } from 'antd';
 import { InboxOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
-import { api, fileUrl } from '../lib/api';
+import { api, fileUrl, VIDEO_TIMEOUT_MS } from '../lib/api';
 import { downloadCsv } from '../lib/download';
 import { compressImage } from '../lib/compress';
 import { PageHeader } from '../components/PageHeader';
@@ -417,6 +417,7 @@ export function LightingStudio(): ReactNode {
       const id = await persist();
       const r = await api<{ url: string }>('/api/media/videos', {
         method: 'POST',
+        timeoutMs: VIDEO_TIMEOUT_MS,
         body: JSON.stringify({ prompt: buildVideoPrompt(fixtures, timeline), firstFrameAssetId: assetId, durationSec }),
       });
       await api(`/api/lighting/${id}`, { method: 'PATCH', body: JSON.stringify({ videoAssetId: r.url, status: 'ready' }) });

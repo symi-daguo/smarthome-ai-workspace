@@ -525,10 +525,26 @@ export class PlansService {
         break;
       } catch (e) {
         lastError = e as Error;
+        // 超时不再重试：一次就要等满上限，重试等于让门店白等两倍时间，
+        // 而同一个慢响应第二次几乎还是慢。快速失败（格式异常等）才值得再试一次。
+        const code = (e as { getResponse?: () => { code?: string } }).getResponse?.()?.code;
+        if (typeof code === 'string' && code.endsWith('_TIMEOUT')) {
+          this.logger.warn(`方案生成超时（不再重试）: ${lastError.message}`);
+          break;
+        }
         this.logger.warn(`方案生成失败（第 ${attempt} 次尝试）: ${lastError.message}`);
       }
     }
     if (!pages) {
+      // 失败原因要如实反映：网络不通、超时、返回格式异常是三件不同的事。
+      // 统一报「格式异常，请调整描述」会把人引到错误的操作上 ——
+      // 网络不通时该做的是检查网络，重试或改描述都没用。
+      const resp = (lastError as { getResponse?: () => unknown } | null)?.getResponse?.() as
+        | { code?: string; message?: string }
+        | undefined;
+      if (resp?.code) {
+        throw new ServiceUnavailableException({ code: resp.code, message: resp.message ?? '方案生成失败，请重试' });
+      }
       throw new ServiceUnavailableException({
         code: 'PLAN_GEN_FAILED',
         message: '方案生成失败（模型返回格式异常），请重试或调整描述',

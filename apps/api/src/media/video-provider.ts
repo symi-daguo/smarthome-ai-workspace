@@ -1,4 +1,5 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
+import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../common/upstream-timeout.js';
 
 /**
  * 生视频 provider 适配层：
@@ -60,19 +61,25 @@ export async function generateViaMinimaxVideo(opts: {
   } else {
     logger.log(`使用配置的视频模型 ${model}`);
   }
-  const submit = await fetch(`${baseUrl}/video_generation`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      prompt: params.prompt,
-      ...(params.firstFrameImage ? { first_frame_image: params.firstFrameImage } : {}),
-      duration: Number(params.duration),
-      resolution: opts.resolutionMap[params.resolution] ?? '720P',
-      fps: 24,
-      aspect_ratio: opts.ratioMap[params.ratio] ?? '16:9',
-    }),
-  });
+  const submit = await fetchUpstream(
+    `${baseUrl}/video_generation`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        prompt: params.prompt,
+        ...(params.firstFrameImage ? { first_frame_image: params.firstFrameImage } : {}),
+        duration: Number(params.duration),
+        resolution: opts.resolutionMap[params.resolution] ?? '720P',
+        fps: 24,
+        aspect_ratio: opts.ratioMap[params.ratio] ?? '16:9',
+      }),
+    },
+    UPSTREAM_TIMEOUT_MS.videoSubmit,
+    'VIDEO',
+    '视频任务提交',
+  );
   const submitData = (await submit.json().catch(() => null)) as {
     task_id?: string;
     base_resp?: { status_code?: number; status_msg?: string };
@@ -84,22 +91,34 @@ export async function generateViaMinimaxVideo(opts: {
     throw new ServiceUnavailableException({ code: 'VIDEO_SUBMIT_FAILED', message: `视频任务提交失败：${msg}` });
   }
 
-  // 轮询：最长约 5 分钟
+  // 轮询：总时长受预算约束（不只看次数）——单次请求再慢，整体也到点就停
   let fileUrl = '';
+  const pollStartedAt = Date.now();
   for (let i = 0; i < 100; i += 1) {
+    if (Date.now() - pollStartedAt > UPSTREAM_TIMEOUT_MS.videoPollBudget) break;
     await new Promise((r) => setTimeout(r, 3000));
-    const q = await fetch(`${baseUrl}/query/video_generation?task_id=${taskId}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
+    // 单次轮询失败（网络抖动/上游超时）不中断整体轮询，继续下一轮
+    const q = await fetchUpstream(
+      `${baseUrl}/query/video_generation?task_id=${taskId}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+      UPSTREAM_TIMEOUT_MS.poll,
+      'VIDEO',
+      '视频进度查询',
+    ).catch(() => null);
+    if (!q) continue;
     const qd = (await q.json().catch(() => null)) as {
       status?: string;
       file_id?: string | number;
       base_resp?: { status_msg?: string };
     } | null;
     if (qd?.status === 'Success' && qd.file_id) {
-      const f = await fetch(`${baseUrl}/files/retrieve?file_id=${qd.file_id}`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
+      const f = await fetchUpstream(
+        `${baseUrl}/files/retrieve?file_id=${qd.file_id}`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+        UPSTREAM_TIMEOUT_MS.poll,
+        'VIDEO',
+        '视频文件信息查询',
+      );
       const fd = (await f.json().catch(() => null)) as { file?: { download_url?: string } } | null;
       fileUrl = fd?.file?.download_url ?? '';
       break;
@@ -110,7 +129,7 @@ export async function generateViaMinimaxVideo(opts: {
   }
   if (!fileUrl) throw new ServiceUnavailableException({ code: 'VIDEO_TIMEOUT', message: '视频生成超时，任务仍在后台处理' });
 
-  const dl = await fetch(fileUrl);
+  const dl = await fetchUpstream(fileUrl, {}, UPSTREAM_TIMEOUT_MS.download, 'DOWNLOAD', '视频下载');
   if (!dl.ok) throw new ServiceUnavailableException({ code: 'ASSET_DOWNLOAD_FAILED', message: `视频下载失败 ${dl.status}` });
   return { buffer: Buffer.from(await dl.arrayBuffer()), mimeType: dl.headers.get('content-type') ?? 'video/mp4', ext: 'mp4' };
 }
@@ -131,16 +150,22 @@ export async function generateViaOpenaiVideo(opts: {
   params: VideoGenParams;
 }): Promise<GeneratedVideo> {
   const { baseUrl, apiKey, model, params } = opts;
-  const submit = await fetch(`${baseUrl}/videos`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      prompt: params.prompt,
-      seconds: String(Number(params.duration) || 4),
-      size: soraSize(params.resolution, params.ratio),
-    }),
-  });
+  const submit = await fetchUpstream(
+    `${baseUrl}/videos`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        prompt: params.prompt,
+        seconds: String(Number(params.duration) || 4),
+        size: soraSize(params.resolution, params.ratio),
+      }),
+    },
+    UPSTREAM_TIMEOUT_MS.videoSubmit,
+    'VIDEO',
+    '视频任务提交',
+  );
   const created = (await submit.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
   if (!submit.ok || !created?.id) {
     const msg = created?.error?.message ?? `HTTP ${submit.status}`;
@@ -148,10 +173,21 @@ export async function generateViaOpenaiVideo(opts: {
     throw new ServiceUnavailableException({ code: 'VIDEO_SUBMIT_FAILED', message: `视频任务提交失败：${msg}` });
   }
 
-  // 轮询任务状态：最长约 8 分钟
+  // 轮询任务状态：同样受总预算约束，到点按超时处理
+  const pollStartedAt = Date.now();
   for (let i = 0; i < 96; i += 1) {
+    if (Date.now() - pollStartedAt > UPSTREAM_TIMEOUT_MS.videoPollBudget) {
+      throw new ServiceUnavailableException({ code: 'VIDEO_TIMEOUT', message: '视频生成超时，任务仍在后台处理' });
+    }
     await new Promise((r) => setTimeout(r, 5000));
-    const q = await fetch(`${baseUrl}/videos/${created.id}`, { headers: { Authorization: `Bearer ${apiKey}` } });
+    const q = await fetchUpstream(
+      `${baseUrl}/videos/${created.id}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+      UPSTREAM_TIMEOUT_MS.poll,
+      'VIDEO',
+      '视频进度查询',
+    ).catch(() => null);
+    if (!q) continue;
     const job = (await q.json().catch(() => null)) as { status?: string; error?: { message?: string } } | null;
     if (job?.status === 'completed') break;
     if (job?.status === 'failed') {
@@ -160,7 +196,13 @@ export async function generateViaOpenaiVideo(opts: {
     if (i === 95) throw new ServiceUnavailableException({ code: 'VIDEO_TIMEOUT', message: '视频生成超时，任务仍在后台处理' });
   }
 
-  const content = await fetch(`${baseUrl}/videos/${created.id}/content`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  const content = await fetchUpstream(
+    `${baseUrl}/videos/${created.id}/content`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+    UPSTREAM_TIMEOUT_MS.download,
+    'DOWNLOAD',
+    '视频下载',
+  );
   if (!content.ok) throw new ServiceUnavailableException({ code: 'ASSET_DOWNLOAD_FAILED', message: `视频下载失败 ${content.status}` });
   return { buffer: Buffer.from(await content.arrayBuffer()), mimeType: content.headers.get('content-type') ?? 'video/mp4', ext: 'mp4' };
 }

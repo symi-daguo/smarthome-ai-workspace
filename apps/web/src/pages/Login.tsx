@@ -158,7 +158,7 @@ export function Login(): ReactNode {
             >
               <ThunderboltFilled style={{ color: '#fff', fontSize: 20 }} />
             </div>
-            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>智能家居 AI SaaS</Text>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>智能家居 AI 工作台</Text>
           </Space>
 
           <div>
@@ -201,7 +201,7 @@ export function Login(): ReactNode {
                 >
                   <ThunderboltFilled style={{ color: '#fff', fontSize: 20 }} />
                 </div>
-                <Text strong style={{ fontSize: 18 }}>智能家居 AI SaaS</Text>
+                <Text strong style={{ fontSize: 18 }}>智能家居 AI 工作台</Text>
               </Space>
             </div>
           ) : null}

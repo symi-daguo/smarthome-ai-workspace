@@ -18,6 +18,7 @@ import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
 import { PERMISSIONS, WRITE_IMPLIES_READ } from '../src/rbac/permissions.js';
 import { rankLocalChunks } from '../src/knowledge/knowledge-doc.service.js';
+import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../src/common/upstream-timeout.js';
 
 const MANIFEST_KEYS = MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
 
@@ -921,6 +922,23 @@ async function main(): Promise<void> {
     check('恢复动作写入统一审计且带 requestId（可按一次动作串联）',
       Boolean(auditRow) && typeof auditRow?.requestId === 'string' && auditRow.requestId.length > 0);
     await prisma.planProject.delete({ where: { id: rPlan.id } });
+
+    // 审计里的**失败状态码**必须是真实值：之前一律记 500，
+    // 于是「参数写错了（改一下就能成）」与「服务端坏了（要找运维）」在审计里长得一模一样，
+    // Agent 没法据此判断该重试还是该改参数。
+    const badAudit = await request(base, '/api/feedback', {
+      ...authA, method: 'POST',
+      body: JSON.stringify({ category: '不存在的分类', title: '审计状态码校验', detail: 'x' }),
+    });
+    check('非法分类的反馈被拒(400)', badAudit.status === 400, `http=${badAudit.status}`);
+    // 审计是异步落库的（不阻塞业务响应），稍等再查
+    await new Promise((r) => setTimeout(r, 600));
+    const badRow = await prisma.auditLog.findFirst({
+      where: { path: '/api/feedback' }, orderBy: { createdAt: 'desc' },
+    });
+    check('审计里记的是真实状态码 400（不再一律 500）',
+      badRow?.statusCode === 400 && badRow?.ok === false,
+      `审计记的是 ${badRow?.statusCode} ok=${badRow?.ok}`);
 
     // 越权：降级成 designer 后再恢复。
     // 不能用 authB —— 它是自助注册账号，注册即租户管理员，本来就该被允许。
@@ -2427,6 +2445,37 @@ async function main(): Promise<void> {
     !vcfg.model.includes('/') || vcfg.provider === 'openai',
   );
 
+  // —— 外部模型调用必须有超时闸门 ——
+  // 此前对外部模型的调用一个超时都没有：一次实测里模型侧响应变慢，
+  // POST /api/plans 挂住 5 分钟不返回，界面一直转圈，用户看不到原因也走不掉，
+  // 而额度已经预扣了。这里用一个「接受连接但不回数据」的黑洞服务复现，
+  // 确认到点就失败、并且说清楚是谁超时。
+  {
+    const blackhole = createServer(() => {
+      // 故意不响应：连接保持打开，客户端只能等到超时
+    });
+    await new Promise<void>((resolve) => blackhole.listen(0, '127.0.0.1', () => resolve()));
+    const port = (blackhole.address() as AddressInfo).port;
+    const started = Date.now();
+    let code = '';
+    let status = 0;
+    try {
+      await fetchUpstream(`http://127.0.0.1:${port}/`, {}, 300, 'LLM', '测试调用');
+    } catch (e) {
+      // Nest 的异常体放在 getResponse() 里，不是实例上的 code 字段 —— 直接读 e.code 永远读到空
+      const err = e as { code?: string; status?: number; getResponse?: () => unknown };
+      const resp = typeof err.getResponse === 'function' ? (err.getResponse() as { code?: string }) : {};
+      code = resp.code ?? err.code ?? '';
+      status = err.status ?? 0;
+    }
+    await new Promise<void>((resolve) => blackhole.close(() => resolve()));
+    const elapsed = Date.now() - started;
+    check('外部调用超时会按时失败并给出明确错误码（不是一直挂着）', code === 'LLM_TIMEOUT' && status === 503, `code=${code} status=${status} 耗时=${elapsed}ms`);
+    check('外部调用超时不会明显超出设定上限', elapsed < 5000, `耗时=${elapsed}ms`);
+  }
+  // 超时上限必须彼此自洽：方案生成要调模型，它的上限必须大于模型调用的上限
+  check('方案生成的等待上限大于模型调用上限', UPSTREAM_TIMEOUT_MS.llm > 0 && UPSTREAM_TIMEOUT_MS.llm <= 300_000, `llm=${UPSTREAM_TIMEOUT_MS.llm}ms`);
+
   // ---------- 局部重绘：mask 参数的诚实性与校验 ----------
   const maskOnly = await request(base, '/api/media/images', {
     ...authA, method: 'POST', body: JSON.stringify({ prompt: '局部重绘测试用提示词', maskDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
@@ -3438,6 +3487,39 @@ async function main(): Promise<void> {
     check(
       `图标调用点不再写死尺寸（发现 ${stray.length} 处：${stray.join(',') || '无'}）`,
       stray.length === 0,
+    );
+  }
+
+  // ---------- 等待上限层层自洽（1.0.1）----------
+  {
+    // 后端调模型的最坏耗时 = 单次超时上限 × 最多尝试次数（格式异常会重试一次）。
+    // 这个值必须小于前端等待上限，前端又必须小于反向代理的等待上限 ——
+    // 否则用户看到的是「卡住」或「网关超时」，而不是服务端那句明确的提示。
+    const nginxConf = readFileSync(join(process.cwd(), '../web/nginx.conf'), 'utf8');
+    const nginxSec = Number(nginxConf.match(/proxy_read_timeout\s+(\d+)s/)?.[1] ?? 0);
+    const apiSrc = readFileSync(join(process.cwd(), 'src/plans/plans.service.ts'), 'utf8');
+    const attempts = Number(apiSrc.match(/attempt\s*<=\s*(\d+)/)?.[1] ?? 1);
+    const worstSec = (UPSTREAM_TIMEOUT_MS.llm / 1000) * attempts;
+    const webApi = readFileSync(join(process.cwd(), '../web/src/lib/api.ts'), 'utf8');
+    // 数字常量里的下划线分隔符要一并吃掉：600_000 不去下划线会被读成 600（差 1000 倍）
+    const frontRaw = webApi.match(/PLAN_TIMEOUT_MS\s*=\s*([\d_]+)/)?.[1] ?? '0';
+    const frontSec = Number(frontRaw.replace(/_/g, '')) / 1000;
+    check(
+      '等待上限层层自洽（后端最坏耗时 < 前端等待 < 反向代理等待）',
+      worstSec > 0 && worstSec < frontSec && frontSec < nginxSec,
+      `后端最坏=${worstSec}s（超时${UPSTREAM_TIMEOUT_MS.llm / 1000}s × ${attempts}次）前端=${frontSec}s 反向代理=${nginxSec}s`,
+    );
+    // 生视频是另一条更长的链路：提交 + 轮询总预算 + 下载，三段都要算进去
+    const videoRaw = webApi.match(/VIDEO_TIMEOUT_MS\s*=\s*([\d_]+)/)?.[1] ?? '0';
+    const videoFrontSec = Number(videoRaw.replace(/_/g, '')) / 1000;
+    const videoWorstSec =
+      UPSTREAM_TIMEOUT_MS.videoSubmit / 1000
+      + UPSTREAM_TIMEOUT_MS.videoPollBudget / 1000
+      + UPSTREAM_TIMEOUT_MS.download / 1000;
+    check(
+      '生视频最坏耗时（提交+轮询+下载）也在前端等待之内',
+      videoWorstSec < videoFrontSec && videoFrontSec < nginxSec,
+      `后端最坏=${videoWorstSec}s 前端=${videoFrontSec}s 反向代理=${nginxSec}s`,
     );
   }
 

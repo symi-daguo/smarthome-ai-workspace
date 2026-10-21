@@ -1,5 +1,6 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../common/upstream-timeout.js';
 
 /**
  * 文生图 provider 适配层：
@@ -22,17 +23,23 @@ export async function generateViaMinimax(opts: {
   prompt: string;
   aspect: string;
 }): Promise<GeneratedImage> {
-  const res = await fetch(`${opts.baseUrl}/image_generation`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
-    body: JSON.stringify({
-      model: opts.model,
-      prompt: opts.prompt,
-      aspect_ratio: opts.aspect,
-      response_format: 'url',
-      n: 1,
-    }),
-  });
+  const res = await fetchUpstream(
+    `${opts.baseUrl}/image_generation`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
+      body: JSON.stringify({
+        model: opts.model,
+        prompt: opts.prompt,
+        aspect_ratio: opts.aspect,
+        response_format: 'url',
+        n: 1,
+      }),
+    },
+    UPSTREAM_TIMEOUT_MS.image,
+    'IMAGE',
+    '生图',
+  );
   const data = (await res.json().catch(() => null)) as {
     data?: { image_urls?: string[] };
     base_resp?: { status_code?: number; status_msg?: string };
@@ -42,7 +49,7 @@ export async function generateViaMinimax(opts: {
     const msg = data?.base_resp?.status_msg ?? `HTTP ${res.status}`;
     throw new ServiceUnavailableException({ code: 'IMAGE_GEN_FAILED', message: `图片生成失败：${msg}` });
   }
-  const imgRes = await fetch(remoteUrl);
+  const imgRes = await fetchUpstream(remoteUrl, {}, UPSTREAM_TIMEOUT_MS.download, 'DOWNLOAD', '素材下载');
   if (!imgRes.ok) throw new ServiceUnavailableException({ code: 'ASSET_DOWNLOAD_FAILED', message: `素材下载失败 ${imgRes.status}` });
   const buffer = Buffer.from(await imgRes.arrayBuffer());
   return { buffer, mimeType: imgRes.headers.get('content-type') ?? 'image/jpeg', ext: 'jpg' };
@@ -56,17 +63,23 @@ export async function generateViaOpenai(opts: {
   prompt: string;
   size: string;
 }): Promise<GeneratedImage> {
-  const res = await fetch(`${opts.baseUrl}/images/generations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
-    body: JSON.stringify({
-      model: opts.model,
-      prompt: opts.prompt,
-      n: 1,
-      size: opts.size,
-      response_format: 'b64_json',
-    }),
-  });
+  const res = await fetchUpstream(
+    `${opts.baseUrl}/images/generations`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
+      body: JSON.stringify({
+        model: opts.model,
+        prompt: opts.prompt,
+        n: 1,
+        size: opts.size,
+        response_format: 'b64_json',
+      }),
+    },
+    UPSTREAM_TIMEOUT_MS.image,
+    'IMAGE',
+    '生图',
+  );
   const data = (await res.json().catch(() => null)) as {
     data?: { b64_json?: string; url?: string }[];
     error?: { message?: string };
@@ -80,7 +93,7 @@ export async function generateViaOpenai(opts: {
     return { buffer: Buffer.from(item.b64_json, 'base64'), mimeType: 'image/png', ext: 'png' };
   }
   if (item.url) {
-    const imgRes = await fetch(item.url);
+    const imgRes = await fetchUpstream(item.url, {}, UPSTREAM_TIMEOUT_MS.download, 'DOWNLOAD', '素材下载');
     if (!imgRes.ok) throw new ServiceUnavailableException({ code: 'ASSET_DOWNLOAD_FAILED', message: `素材下载失败 ${imgRes.status}` });
     return { buffer: Buffer.from(await imgRes.arrayBuffer()), mimeType: imgRes.headers.get('content-type') ?? 'image/png', ext: 'png' };
   }
@@ -115,11 +128,17 @@ export async function generateViaOpenaiEdit(opts: {
   form.append('image', new Blob([toPart(opts.image)], { type: opts.imageMime }), 'image.png');
   form.append('mask', new Blob([toPart(opts.mask)], { type: 'image/png' }), 'mask.png');
 
-  const res = await fetch(`${opts.baseUrl}/images/edits`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${opts.apiKey}` },
-    body: form,
-  });
+  const res = await fetchUpstream(
+    `${opts.baseUrl}/images/edits`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${opts.apiKey}` },
+      body: form,
+    },
+    UPSTREAM_TIMEOUT_MS.image,
+    'IMAGE',
+    '局部重绘',
+  );
   const data = (await res.json().catch(() => null)) as {
     data?: { b64_json?: string; url?: string }[];
     error?: { message?: string };
@@ -133,7 +152,7 @@ export async function generateViaOpenaiEdit(opts: {
     return { buffer: Buffer.from(item.b64_json, 'base64'), mimeType: 'image/png', ext: 'png' };
   }
   if (item.url) {
-    const imgRes = await fetch(item.url);
+    const imgRes = await fetchUpstream(item.url, {}, UPSTREAM_TIMEOUT_MS.download, 'DOWNLOAD', '素材下载');
     if (!imgRes.ok) throw new ServiceUnavailableException({ code: 'ASSET_DOWNLOAD_FAILED', message: `素材下载失败 ${imgRes.status}` });
     return { buffer: Buffer.from(await imgRes.arrayBuffer()), mimeType: imgRes.headers.get('content-type') ?? 'image/png', ext: 'png' };
   }
@@ -177,11 +196,17 @@ export async function generateViaComfyui(opts: {
 
   const clientId = randomUUID();
   const promptId = randomUUID();
-  const submit = await fetch(`${opts.baseUrl}/prompt`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify({ prompt: graph, client_id: clientId, prompt_id: promptId }),
-  });
+  const submit = await fetchUpstream(
+    `${opts.baseUrl}/prompt`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ prompt: graph, client_id: clientId, prompt_id: promptId }),
+    },
+    UPSTREAM_TIMEOUT_MS.image,
+    'IMAGE',
+    'ComfyUI 提交',
+  );
   if (!submit.ok) {
     const errText = await submit.text().catch(() => '');
     if (submit.status === 401 || submit.status === 403) {
@@ -193,7 +218,7 @@ export async function generateViaComfyui(opts: {
   // 轮询 history 直到产出（最长 3 分钟）
   for (let i = 0; i < 90; i += 1) {
     await new Promise((r) => setTimeout(r, 2000));
-    const h = await fetch(`${opts.baseUrl}/history/${promptId}`, { headers }).catch(() => null);
+    const h = await fetchUpstream(`${opts.baseUrl}/history/${promptId}`, { headers }, UPSTREAM_TIMEOUT_MS.poll, 'IMAGE', 'ComfyUI 轮询').catch(() => null);
     if (!h?.ok) continue;
     const hist = (await h.json().catch(() => null)) as Record<
       string,
@@ -204,7 +229,7 @@ export async function generateViaComfyui(opts: {
     if (saved.length === 0) continue;
     const img = saved[0];
     const params = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder ?? '', type: img.type ?? 'output' });
-    const view = await fetch(`${opts.baseUrl}/view?${params.toString()}`, { headers });
+    const view = await fetchUpstream(`${opts.baseUrl}/view?${params.toString()}`, { headers }, UPSTREAM_TIMEOUT_MS.download, 'DOWNLOAD', 'ComfyUI 取图');
     if (!view.ok) throw new ServiceUnavailableException({ code: 'COMFYUI_VIEW_FAILED', message: `ComfyUI 取图失败 ${view.status}` });
     const buffer = Buffer.from(await view.arrayBuffer());
     const ext = img.filename.split('.').pop()?.toLowerCase() ?? 'png';

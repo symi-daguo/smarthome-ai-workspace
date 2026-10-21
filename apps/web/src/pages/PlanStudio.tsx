@@ -19,7 +19,7 @@ import { Alert, App as AntApp, Button, Checkbox, Drawer, Empty, Form, Grid, Inpu
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FLOORPLAN_TEMPLATES, MARKER_TEMPLATES, floorplanTemplate, markerTemplate, type FloorplanTemplate, type MarkerTemplate } from '../data/planTemplates';
-import { api, fileUrl } from '../lib/api';
+import { api, fileUrl, PLAN_TIMEOUT_MS } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { newRequestId } from '../lib/request-id';
 import { compressImage } from '../lib/compress';
@@ -492,6 +492,7 @@ const [editing, setEditing] = useState<{
     try {
       const created = await api<PlanDetail & { deduped?: boolean }>('/api/plans', {
         method: 'POST',
+        timeoutMs: PLAN_TIMEOUT_MS,
         body: JSON.stringify({
           title: values.title,
           customer: values.customer ?? '',

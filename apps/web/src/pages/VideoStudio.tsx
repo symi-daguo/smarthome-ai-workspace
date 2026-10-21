@@ -6,7 +6,7 @@ import {
 } from '@ant-design/icons';
 import { App as AntApp, Alert, Button, Grid, Input, Modal, Select, Typography, Upload, theme } from 'antd';
 import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { api, fileUrl } from '../lib/api';
+import { api, fileUrl, VIDEO_TIMEOUT_MS } from '../lib/api';
 import { newRequestId } from '../lib/request-id';
 import { useActiveConfig } from '../lib/configStore';
 import {
@@ -138,6 +138,7 @@ export function VideoStudio(): ReactNode {
       const fullPrompt = withAudioPrompt(desc.trim(), audio);
       const r = await api<{ url: string; deduped?: boolean }>('/api/media/videos', {
         method: 'POST',
+        timeoutMs: VIDEO_TIMEOUT_MS,
         body: JSON.stringify({
           prompt: fullPrompt,
           duration: Number(duration),

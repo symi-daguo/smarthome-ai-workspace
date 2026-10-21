@@ -22,7 +22,7 @@ import {
   type WorkflowDraft,
   type WorkflowKey,
 } from '../data/imageWorkflows';
-import { api, fileUrl } from '../lib/api';
+import { api, fileUrl, IMAGE_TIMEOUT_MS } from '../lib/api';
 import { compressImage } from '../lib/compress';
 import { newRequestId } from '../lib/request-id';
 import { IMAGE_SCENE_LABELS, IMAGE_SCENE_PROMPTS } from '../data/imageScenes.js';
@@ -224,6 +224,7 @@ export function ImageStudio(): ReactNode {
     try {
       const r = await api<{ prompt: string }>('/api/media/images/reverse-prompt', {
         method: 'POST',
+        timeoutMs: IMAGE_TIMEOUT_MS,
         body: JSON.stringify({ assetId: refImage.assetId }),
       });
       setPrompt((prev) => (prev.trim() ? `${r.prompt}\n${prev}` : r.prompt));
@@ -287,6 +288,7 @@ export function ImageStudio(): ReactNode {
       const body = isFree ? `${full}，真实室内摄影质感，高清细节，无多余文字水印` : full;
       const r = await api<{ id: string; url: string; deduped?: boolean }>('/api/media/images', {
         method: 'POST',
+        timeoutMs: IMAGE_TIMEOUT_MS,
         body: JSON.stringify({ prompt: body, size, fitVideo, background, clientRequestId: rid }),
       });
       reqIdRef.current = null;
@@ -318,6 +320,7 @@ export function ImageStudio(): ReactNode {
     try {
       const r = await api<{ id: string; url: string; deduped?: boolean }>('/api/media/images', {
         method: 'POST',
+        timeoutMs: IMAGE_TIMEOUT_MS,
         body: JSON.stringify({
           prompt: note,
           size,

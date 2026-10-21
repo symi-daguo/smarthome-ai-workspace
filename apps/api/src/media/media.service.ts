@@ -17,6 +17,7 @@ import { ModelConfigService } from '../llm/model-config.service.js';
 import { generateViaComfyui, generateViaMinimax, generateViaOpenai,
   generateViaOpenaiEdit, type GeneratedImage } from './image-provider.js';
 import { generateViaMinimaxVideo, generateViaOpenaiVideo } from './video-provider.js';
+import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../common/upstream-timeout.js';
 
 /** 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
 
@@ -476,22 +477,28 @@ export class MediaService {
     ].join('');
     const dataUri = `data:${asset.mimeType};base64,${buf.toString('base64')}`;
 
-    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: [
-            { type: 'text', text: '请反推这张图的 AI 绘画提示词，用于生成相同风格的智能家居空间效果图。' },
-            { type: 'image_url', image_url: { url: dataUri } },
-          ] },
-        ],
-        temperature: 0.4,
-        max_tokens: 600,
-      }),
-    });
+    const res = await fetchUpstream(
+      `${cfg.baseUrl}/chat/completions`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: [
+              { type: 'text', text: '请反推这张图的 AI 绘画提示词，用于生成相同风格的智能家居空间效果图。' },
+              { type: 'image_url', image_url: { url: dataUri } },
+            ] },
+          ],
+          temperature: 0.4,
+          max_tokens: 600,
+        }),
+      },
+      UPSTREAM_TIMEOUT_MS.llm,
+      'LLM',
+      '图片反推提示词',
+    );
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       this.logger.warn(`反推提示词失败 ${res.status}: ${body.slice(0, 200)}`);

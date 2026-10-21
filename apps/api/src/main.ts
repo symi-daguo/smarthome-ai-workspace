@@ -81,7 +81,7 @@ async function bootstrap(): Promise<void> {
   // Swagger 仅非生产暴露，避免云服务器上泄露 API 面
   if (!IS_PROD) {
     const config = new DocumentBuilder()
-      .setTitle('增强型智能家居 AI SaaS API')
+      .setTitle('智能家居 AI 工作台 API')
       .setVersion('0.1.0')
       .addBearerAuth()
       .build();

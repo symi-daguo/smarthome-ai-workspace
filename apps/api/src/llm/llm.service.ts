@@ -3,6 +3,7 @@ import { ModelConfigService } from './model-config.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { formatKnowledgeContext, searchExternalKnowledge } from '../knowledge/knowledge-adapter.js';
 import { rankLocalChunks } from '../knowledge/knowledge-doc.service.js';
+import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../common/upstream-timeout.js';
 
 /**
  * OpenAI 兼容 chat 客户端（多模型适配层）
@@ -152,19 +153,25 @@ export class LlmService {
 
     const model = cfg.model ?? input.model;
     const start = Date.now();
-    const response = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
+    const response = await fetchUpstream(
+      `${cfg.baseUrl}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0.3,
+          max_tokens: input.maxTokens ?? 512,
+        }),
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: 0.3,
-        max_tokens: input.maxTokens ?? 512,
-      }),
-    });
+      UPSTREAM_TIMEOUT_MS.llm,
+      'LLM',
+      '模型对话',
+    );
     const latencyMs = Date.now() - start;
 
     if (!response.ok) {

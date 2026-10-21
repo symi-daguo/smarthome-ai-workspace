@@ -9,6 +9,7 @@ import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { LlmService } from './llm.service.js';
 import { ModelConfigService, type ConfigScope } from './model-config.service.js';
 import { chatConfigSchema, imageConfigSchema, videoConfigSchema, type ChatConfigDto, type ImageConfigDto, type VideoConfigDto } from './model-config.schemas.js';
+import { describeUpstreamError } from '../common/upstream-timeout.js';
 
 /**
  * 模型配置中心（仅 super_admin）：
@@ -286,7 +287,9 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
       });
       return { ok: true, model: r.model, latencyMs: r.latencyMs };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      // Node 的原始报错是 "fetch failed"，直接给管理员看等于没给信息
+      const d = describeUpstreamError(e, 'LLM', '对话模型服务', 15000);
+      return { ok: false, error: d ? d.message : (e instanceof Error ? e.message : String(e)) };
     }
   }
 
@@ -310,7 +313,8 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
       if (!cfg.apiKey) return { ok: false, error: 'MiniMax API Key 未配置' };
       return { ok: true, detail: 'MiniMax Key 已配置（对话连通性测试可验证同一 Key）' };
     } catch (e) {
-      return { ok: false, error: `无法连接：${e instanceof Error ? e.message : String(e)}` };
+      const d = describeUpstreamError(e, 'IMAGE', '生图服务', 8000);
+      return { ok: false, error: d ? d.message : `无法连接：${e instanceof Error ? e.message : String(e)}` };
     }
   }
 
@@ -324,7 +328,8 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
       if (!res.ok) return { ok: false, error: comfyProbeError(res.status, cfg.comfyBaseUrl) };
       return { ok: true, detail: `ComfyUI 在线：${cfg.comfyBaseUrl}` };
     } catch (e) {
-      return { ok: false, error: `无法连接 ComfyUI（${cfg.comfyBaseUrl}）：${e instanceof Error ? e.message : String(e)}` };
+      const d = describeUpstreamError(e, 'IMAGE', 'ComfyUI 服务', 8000);
+      return { ok: false, error: d ? d.message : `无法连接 ComfyUI（${cfg.comfyBaseUrl}）：${e instanceof Error ? e.message : String(e)}` };
     }
   }
 
@@ -350,7 +355,8 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
       if (!res.ok) return { ok: false, error: `MiniMax 返回 ${res.status}，请检查 Key 与账户状态` };
       return { ok: true, detail: 'MiniMax Key 有效，可提交 T2V/I2V 任务' };
     } catch (e) {
-      return { ok: false, error: `无法连接：${e instanceof Error ? e.message : String(e)}` };
+      const d = describeUpstreamError(e, 'VIDEO', '生视频服务', 15000);
+      return { ok: false, error: d ? d.message : `无法连接：${e instanceof Error ? e.message : String(e)}` };
     }
   }
 }

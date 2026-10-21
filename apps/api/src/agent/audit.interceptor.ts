@@ -79,7 +79,7 @@ export class AuditInterceptor implements NestInterceptor {
     const run = async (): Promise<unknown> =>
       lastValueFrom(from(next.handle())).then(
         (v) => { finish(res.statusCode ?? 200, true); return v; },
-        (e) => { finish(500, false); throw e; },
+        (e) => { finish(statusOf(e), false); throw e; },
       );
 
     const finish = (statusCode: number, ok: boolean): void => {
@@ -116,8 +116,25 @@ export class AuditInterceptor implements NestInterceptor {
   }
 }
 
-function hashPayload(body: unknown): string | null {
-  if (body === undefined || body === null) return null;
+/**
+ * 取异常里的真实 HTTP 状态码。
+ *
+ * 之前一律记 500，等于把「参数写错了（400，改一下就能成）」、
+ * 「没权限（403，找管理员开权限）」、「对象不存在（404，重新拉清单）」
+ * 三种完全不同的情况全涂成同一色 —— 审计表里的状态码字段就此失去意义，
+ * Agent 也没法据此判断该重试还是该改参数。
+ * Nest 的 HttpException 带 getStatus()；非 HTTP 异常才按 500 记。
+ */
+function statusOf(e: unknown): number {
+  const err = e as { getStatus?: () => number; status?: number };
+  const candidate = typeof err?.getStatus === 'function' ? err.getStatus() : err?.status;
+  if (Number.isInteger(candidate) && Number(candidate) >= 400 && Number(candidate) < 600) {
+    return Number(candidate);
+  }
+  return 500;
+}
+
+function hashPayload(body: unknown): string | null {  if (body === undefined || body === null) return null;
   try {
     return createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 32);
   } catch {
