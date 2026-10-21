@@ -34,6 +34,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +55,20 @@ const APPLE_PASSWORD = process.env.APPLE_APP_SPECIFIC_PASSWORD;
 const TEAM_ID = process.env.APPLE_TEAM_ID;
 const PROFILE = process.env.NOTARY_PROFILE || 'symi-notarize';
 
+/**
+ * 专用钥匙串文件（不依赖登录钥匙串）。
+ *
+ * 踩过的坑：用 `notarytool store-credentials` 存进**登录钥匙串**后，
+ * 过一段时间条目就取不到了（报 "No Keychain password item found"），
+ * 公证流程在轮询阶段直接崩 —— 而此时文件已经上传、钱（时间）已经花掉。
+ * 登录钥匙串会被系统清理，这个稳定性赌不起。
+ *
+ * 改用独立钥匙串文件：它只被这个脚本管理，不受登录钥匙串清理影响，
+ * 也不会把凭据混进用户的日常钥匙串。
+ * 代价是要自己解锁一次（用同一个 app-specific password 当钥匙串口令）。
+ */
+const KEYCHAIN_PATH = process.env.NOTARY_KEYCHAIN || join(homedir(), '.symi', 'notary.keychain');
+
 function log(msg) {
   console.log(`[notarize] ${msg}`);
 }
@@ -67,6 +82,9 @@ function fail(msg) {
  * 打印命令时抹掉凭据。
  * notarytool store-credentials 的密码是 app-specific password，
  * 直接拼进日志就等于把凭据落到磁盘上（与本脚本「不打印、不落盘」的约定冲突）。
+ *
+ * 注意 `security create-keychain -p <密码>` 走的是短选项 `-p`，
+ * 它也是同一个 app-specific password —— 漏掉这条就等于把凭据打进日志。
  */
 function redact(args) {
   const out = [];
@@ -77,7 +95,7 @@ function redact(args) {
       hideNext = false;
       continue;
     }
-    if (a === '--password' || a === '--apple-id') {
+    if (a === '--password' || a === '--apple-id' || a === '-p') {
       out.push(a);
       hideNext = true;
       continue;
@@ -92,25 +110,120 @@ function redact(args) {
   return out.join(' ');
 }
 
+/**
+ * 跑一条命令。
+ *
+ * 失败时抛出的消息里**也必须抹掉凭据** —— 原实现把 args 原样拼进错误消息，
+ * 而 store-credentials 失败时这条消息会被打进日志，等于凭据照样落盘。
+ */
 function run(cmd, args, opts = {}) {
   log(`$ ${cmd} ${redact(args)}`);
   // codesign / stapler 的结果都写在 stderr，用 spawnSync 才能一次拿到两路输出
   const r = spawnSync(cmd, args, { encoding: 'utf8', ...opts });
   if (r.error) throw r.error;
   if (r.status !== 0) {
-    throw new Error(`${cmd} ${args.join(' ')} 失败（exit ${r.status}）：\n${r.stdout ?? ''}${r.stderr ?? ''}`);
+    throw new Error(`${cmd} ${redact(args)} 失败（exit ${r.status}）：\n${r.stdout ?? ''}${r.stderr ?? ''}`);
   }
   return `${r.stdout ?? ''}${r.stderr ?? ''}`;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 从提交历史里找某个文件名的最近一次提交（history 按时间倒序） */
-function latestSubmission(fileName) {
-  const out = run('xcrun', ['notarytool', 'history', '--keychain-profile', PROFILE, '--output-format', 'json']);
+/** 确保专用钥匙串存在且已解锁（不存在才创建） */
+function ensureKeychain() {
+  if (!existsSync(KEYCHAIN_PATH)) {
+    mkdirSync(dirname(KEYCHAIN_PATH), { recursive: true });
+    run('security', ['create-keychain', '-p', APPLE_PASSWORD, KEYCHAIN_PATH]);
+  }
+  run('security', ['unlock-keychain', '-p', APPLE_PASSWORD, KEYCHAIN_PATH]);
+}
+
+/** 所有 notarytool 调用统一带上专用钥匙串 */
+/**
+ * 所有 notarytool 调用统一带上专用钥匙串。
+ *
+ * 顺带在调用前确保钥匙串是**解锁**的。
+ *
+ * 踩过的坑（实测 2026-10-21）：系统会在空闲一段时间后自动锁上钥匙串，
+ * 之后 `notarytool` 直接报 `The notary.keychain is locked`。
+ * 公证流程里有很长的等待（上传 + 扫描），等待期间被锁是常事 ——
+ * 一旦在等待阶段崩掉，前面传的几百 MB 就白费了。
+ * 所以每次调用前都解锁一次（解锁是本地操作，不花钱）。
+ */
+function notaryArgs(args) {
+  try {
+    run('security', ['unlock-keychain', '-p', APPLE_PASSWORD, KEYCHAIN_PATH]);
+  } catch {
+    /* 解锁失败就让它按原样继续，后面的 notarytool 会给出真实错误 */
+  }
+  return ['notarytool', ...args, '--keychain', KEYCHAIN_PATH];
+}
+
+/**
+ * 这条提交在 Apple 侧**是否真实存在**。
+ *
+ * 为什么要探：上传大文件是分片传的，传到一半断了的话，
+ * notarytool 本地的 history 里**仍然会留下一条 In Progress 记录**，
+ * 但 Apple 侧其实没有这条提交（取 log 会报 "submissionId does not exist"）。
+ * 不探这一下，脚本会以为「已提交、正在处理」，一路空等，
+ * 重跑也走同一条分支 —— 变成永远传不上去的死循环。
+ *
+ * 判据：`notarytool log` 对**扫描已开始**的提交返回退出码 0 并输出 JSON；
+ * 对不存在的提交返回退出码 69 并在 stderr 写
+ * "Submission log is not yet available or submissionId does not exist"。
+ *
+ * **实测过的重要陷阱（2026-10-21）**：
+ * 退出码 69 有两种完全不同的成因，返回的**文案一模一样**：
+ *   1. 这条提交压根没送达（上传中断）—— 需要重传；
+ *   2. 这条提交刚建好、**字节还在传**，扫描还没开始 —— **绝不能重传**。
+ * 实测「正在上传中的 245MB 提交」与「上一轮上传中断的死记录」，
+ * 两者 `notarytool log` 的返回码与文案**完全相同**（都是 69 + 同一句话）。
+ *
+ * 所以**单次探不到绝不能作数**：调用方必须连续探多次仍探不到，
+ * 且确认不是「刚提交还在传」，才能判定为死记录。
+ * 这也是为什么下面所有使用点都有「连续 N 次」的计数，而不是单次判断。
+ */
+function submissionExists(id) {
+  try {
+    run('xcrun', notaryArgs(['log', id, '--keychain-profile', PROFILE]));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 从提交历史里找某个文件名的**全部**提交（按时间倒序）。
+ *
+ * 排序显式做，不依赖 Apple 返回的顺序：
+ * 历史上同名的提交会堆积（本项目就有「上一轮上传中断留下的死记录」+
+ * 「本轮正常上传的活记录」两条同名记录），靠返回顺序取第一条是隐式假设，
+ * 哪天 Apple 改了排序就会取错 —— 取错的后果是白等一小时或白传 245MB。
+ */
+function submissionsFor(fileName) {
+  const out = run('xcrun', notaryArgs(['history', '--keychain-profile', PROFILE, '--output-format', 'json']));
   const parsed = JSON.parse(out);
-  const hit = (parsed.history ?? []).find((h) => h.name === fileName);
-  return hit ?? null;
+  return (parsed.history ?? [])
+    .filter((h) => h.name === fileName)
+    .sort((a, b) => String(b.createdDate ?? '').localeCompare(String(a.createdDate ?? '')));
+}
+
+/** 同名提交里最新的那一条 */
+function latestSubmission(fileName) {
+  return submissionsFor(fileName)[0] ?? null;
+}
+
+/**
+ * 同名提交里**最近一条已 Accepted** 的。
+ *
+ * 为什么不能只看最新那条：
+ * 最新那条往往是「上一次上传中断留下的死记录」（In Progress），
+ * 而**真正公证成功的那条可能排在它下面**（1.0.1 实测就是这个情况：
+ * 最新的死记录把已 Accepted 的记录盖住了）。
+ * 只看最新会白白丢掉一次 245MB 上传。
+ */
+function latestAccepted(fileName) {
+  return submissionsFor(fileName).find((h) => h.status === 'Accepted') ?? null;
 }
 
 /**
@@ -140,10 +253,86 @@ function latestSubmission(fileName) {
 const WAIT_TIMEOUT = /timed out|timeout is reached|exceeded.{0,20}timeout|timeout.{0,20}exceeded/i;
 const TRANSPORT_ERROR = /abortedUpload|HTTPClientError|connectTimeout|connection reset|ECONNRESET|EPIPE|premature|network/i;
 
+/**
+ * 提交记录的「宽限期」：记录建了不到这么久，一律不判死。
+ *
+ * 依据（实测 2026-10-21）：`notarytool submit` 先在 Apple 侧建好提交记录、
+ * 拿到 submission id，**然后才传字节**。所以记录出现的那一刻，
+ * 字节往往还在路上 —— 此时 `notarytool log` 必然探不到（返回 69），
+ * 但这条提交是**活的**。
+ *
+ * 本机实测 245MB 上传耗时：链路好时 **2 分钟**（1.7~2.2MB/s），
+ * 链路差时 25 分钟（143KB/s）。取 30 分钟作宽限期：
+ * 覆盖最坏情况，又不至于让「已死但很新」的记录空等太久
+ * （每条死记录要等满 30 分钟才允许重传，代价可控）。
+ *
+ * 可以用环境变量 {@link NOTARY_UPLOAD_GRACE_SECONDS} 覆盖（排查时用）：
+ * 已确认某条记录确实是死记录时，把宽限期调短可以立刻重传，不必干等。
+ */
+const UPLOAD_GRACE_MS = Math.max(
+  0,
+  Number(process.env.NOTARY_UPLOAD_GRACE_SECONDS ?? 30 * 60) * 1000,
+);
+
 /** 报错里取最后一行非空内容（报错常以空行结尾，直接取 last 会打出空括号） */
 function lastMeaningfulLine(msg) {
   const lines = String(msg).split('\n').map((l) => l.trim()).filter(Boolean);
   return lines.length ? lines[lines.length - 1].slice(0, 160) : '(无输出)';
+}
+
+/**
+ * 判断 history 里的这条 In Progress 记录是不是「上传中断留下的死记录」。
+ *
+ * **不能靠单次探测下结论**（实测 2026-10-21）：
+ * `notarytool log` 返回 69 有两种成因，返回文案一模一样 ——
+ *   1. 这条提交压根没送达（上一轮上传在分片途中断了）→ 该重传；
+ *   2. 这条提交刚建好、**字节还在传**，扫描没开始 → **重传就是白传 245MB**。
+ * 「正在上传的提交」和「上传中断的死记录」探测结果完全相同。
+ *
+ * 所以判死要同时满足三个条件：
+ *   a. 连续探测 3 次都探不到（单次不作数）；
+ *   b. 这条记录已经存在足够久（超过 {@link UPLOAD_GRACE_MS}）——
+ *      刚建的记录还在传，不能判死；
+ *   c. 期间 history 里它一直是 In Progress（没变成 Accepted/Invalid）。
+ *
+ * 条件 b 的处理方式很关键：**太新不能直接放弃，而是等到超过宽限期再判**。
+ * 否则「刚中断、最新那条恰好不可见」时会走进「不判死 → 只等不传 → 轮询 60 分钟
+ * 才报错」的死循环 —— 正是这个脚本上一轮卡住的方式。
+ *
+ * 返回 true = 确认是死记录，可以重传。
+ */
+async function isDeadSubmission(hit, fileName, label) {
+  const created = Date.parse(hit.createdDate ?? '');
+  const born = Number.isFinite(created) ? created : Date.now();
+  // 宽限期从「这条记录建起来」算起，不是从现在开始 ——
+  // 上一轮留下的记录可能已经躺了很久，不该再给它 30 分钟。
+  const graceUntil = born + UPLOAD_GRACE_MS;
+
+  // 等宽限期用 while 而不是改循环变量：
+  // 改 `i` 会让 for 的边界失效（i=0 后 ++i 又从 1 开始，等于无限循环）。
+  while (Date.now() < graceUntil) {
+    if (submissionExists(hit.id)) {
+      log(`  ${fileName} 的提交（${hit.id}）在 Apple 侧已可见 —— 是活记录，不是死记录`);
+      return false;
+    }
+    const waitMs = Math.min(graceUntil - Date.now() + 5_000, 15 * 60 * 1000);
+    log(`  ${fileName} 的提交（${hit.id}）还在宽限期内（还剩 `
+      + `${Math.ceil((graceUntil - Date.now()) / 1000)} 秒），字节可能仍在上传 —— 等它过了宽限期再判定`);
+    await sleep(Math.max(waitMs, 5_000));
+  }
+
+  for (let i = 1; i <= 3; i += 1) {
+    if (submissionExists(hit.id)) {
+      log(`  ${fileName} 的提交（${hit.id}）在 Apple 侧已可见 —— 是活记录，不是死记录`);
+      return false;
+    }
+    const age = Math.round((Date.now() - born) / 1000);
+    log(`  ${fileName} 的提交（${hit.id}）在 Apple 侧探不到（${i}/3），该记录已存在 ${age} 秒`);
+    if (i < 3) await sleep(15_000);
+  }
+  log(`  ${fileName} 的提交（${hit.id}）连续 3 次探不到且已存在 `
+    + `${Math.round((Date.now() - born) / 1000)} 秒 —— 判定为上传中断留下的死记录`);
+  return true;
 }
 
 async function submitAndWait(file, label) {
@@ -154,9 +343,14 @@ async function submitAndWait(file, label) {
   // 上一次跑崩/被杀/误判超时后重跑本脚本，就会走到这条分支。
   const already = latestSubmission(fileName);
   if (already && already.status === 'In Progress') {
-    log(`  ${fileName} 已有在处理中的提交（${already.id}），直接等结果，不重复上传`);
-    await pollUntilFinal(fileName, label);
-    return;
+    // 只有确认这条记录是「上传中断留下的死记录」，才允许重传；
+    // 否则一律「只等不传」（宁可等，也不白传 245MB）。
+    if (!(await isDeadSubmission(already, fileName, label))) {
+      log(`  ${fileName} 已有在处理中的提交（${already.id}），直接等结果，不重复上传`);
+      await pollUntilFinal(fileName, label);
+      return;
+    }
+    log(`  ${fileName} 的历史记录（${already.id}）是上传中断留下的死记录 —— 重新上传`);
   }
 
   // 第 1 次用加速端点，之后改用常规端点：两个端点在跨境链路上表现不一样
@@ -166,12 +360,12 @@ async function submitAndWait(file, label) {
     const flag = variants[attempt - 1];
     log(`提交 ${label} 公证：${fileName}（${flag}，第 ${attempt}/3 次）`);
     try {
-      run('xcrun', [
-        'notarytool', 'submit', file,
+      run('xcrun', notaryArgs([
+        'submit', file,
         '--keychain-profile', PROFILE,
         '--wait', '--timeout', '30m',
         flag,
-      ]);
+      ]));
       return;
     } catch (e) {
       const msg = String(e.message);
@@ -185,11 +379,18 @@ async function submitAndWait(file, label) {
         // 硬保障：只要这个文件已经有一条在处理中的提交，就**绝不重复上传**。
         // 216MB 传一次要 25 分钟，Apple 还要多扫一遍；而报错文本本身不总是可靠
         // （等待超时的报错也可能夹带 network 之类的字样）。宁可等，也不重传。
+        //
+        // 但「history 里有」不等于「上传真的送达了」：上传中途断掉时，
+        // history 里同样会留下一条 In Progress 的死记录。
+        // 要用同一套判死逻辑（连续探测 + 宽限期）确认，不能单次探不到就重传。
         const pending = latestSubmission(fileName);
         if (pending && pending.status === 'In Progress') {
-          log(`  已有在处理中的提交（${pending.id}），不重复上传，改为轮询`);
-          await pollUntilFinal(fileName, label);
-          return;
+          if (!(await isDeadSubmission(pending, fileName, label))) {
+            log(`  已有在处理中的提交（${pending.id}），不重复上传，改为轮询`);
+            await pollUntilFinal(fileName, label);
+            return;
+          }
+          log(`  历史里的提交（${pending.id}）是上传中断留下的死记录`);
         }
         if (attempt < 3) {
           log(`  上传中断（${lastMeaningfulLine(msg)}），10 秒后换端点重传`);
@@ -206,25 +407,77 @@ async function submitAndWait(file, label) {
   }
 }
 
-/** 轮询提交历史直到出终态（Accepted / Invalid / Rejected） */
+/**
+ * 轮询提交历史直到出终态（Accepted / Invalid / Rejected）。
+ *
+ * 这里**不能只查 history**。
+ *
+ * 踩过的坑：history 是 Apple 按「文件名」给的列表，它会把一条**上传根本没送达**
+ * 的提交也显示成 In Progress（提交记录在上传开始前就建好了，
+ * 但字节没传完）。只等 history 的话，脚本会一路空等满 60 分钟才报错，
+ * 而重跑还是走同一条「已在处理中」的分支 —— 永远传不上去。
+ *
+ * 所以每次轮询都要**同时探一次 Apple 侧**（notarytool log）：
+ * 连续探不到、且 history 一直是 In Progress，就判定「上传没送达」，
+ * 立刻退出让操作者重跑（重跑会走重传分支）。
+ *
+ * 「探不到」要连续 3 次（每次间隔 20 秒）才作数：
+ * `notarytool log` 的报错文案是「log 不可用 **或** id 不存在」共用的，
+ * 扫描刚提交、结果还没生成的那一小段时间里也会探不到 —— 单次探不到不作数。
+ */
 async function pollUntilFinal(fileName, label) {
   const deadline = Date.now() + 60 * 60 * 1000;
   let last = '';
+  let missing = 0;
+  let unreachable = 0;
   while (Date.now() < deadline) {
     await sleep(20_000);
     const hit = latestSubmission(fileName);
     if (!hit) {
-      log(`  提交历史里还没找到 ${fileName}，继续等`);
+      missing += 1;
+      // 正常情况下 history 里立刻就有这条记录。一直找不到说明提交压根没到 Apple，
+      // 空等一小时没有意义 —— 早退出，重跑脚本会重新上传。
+      if (missing >= 15) {
+        throw new Error(`${label} 提交在 Apple 侧查不到（提交未上传成功），请重跑脚本`);
+      }
+      log(`  提交历史里还没找到 ${fileName}（第 ${missing} 次），继续等`);
       continue;
     }
+    missing = 0;
     if (hit.status !== last) {
       log(`  ${fileName} → ${hit.status}`);
       last = hit.status;
     }
     if (hit.status === 'Accepted') return;
     if (hit.status === 'Invalid' || hit.status === 'Rejected') {
-      const detail = run('xcrun', ['notarytool', 'log', hit.id, '--keychain-profile', PROFILE]);
+      const detail = run('xcrun', notaryArgs(['log', hit.id, '--keychain-profile', PROFILE]));
       throw new Error(`${label} 公证被拒（${hit.id}）：\n${detail.slice(-4000)}`);
+    }
+    // 还在 In Progress：探一下 Apple 侧，确认这条提交是真的存在。
+    // 注意：**单次探不到不作数** —— 「字节还在传」与「上传已死」探测结果相同，
+    // 判死要连续 3 次都探不到，且记录已过宽限期（见 isDeadSubmission 的说明）。
+    if (!submissionExists(hit.id)) {
+      unreachable += 1;
+      log(`  ${fileName} 仍是 In Progress，但 Apple 侧取不到（${unreachable}/3）`);
+      if (unreachable >= 3) {
+        // 再确认一次记录年龄：刚建的记录可能只是字节还在传，不能判死。
+        // 宽限期没过就继续等（每轮 20 秒自然推进），不判死、不放弃。
+        const created = Date.parse(hit.createdDate ?? '');
+        const born = Number.isFinite(created) ? created : Date.now();
+        const age = Date.now() - born;
+        if (age < UPLOAD_GRACE_MS) {
+          log(`  该提交才建了 ${Math.round(age / 1000)} 秒，`
+            + '字节可能还在上传 —— 不判死，继续等');
+          unreachable = 0;
+          continue;
+        }
+        throw new Error(
+          `${label} 提交（${hit.id}）在 Apple 侧不存在 —— 上传没有真正送达，` +
+          '请重跑脚本（会走重传分支）',
+        );
+      }
+    } else {
+      unreachable = 0;
     }
   }
   throw new Error(`${label} 公证等待超时（60 分钟）仍未出结果，最后状态：${last || '未知'}`);
@@ -273,15 +526,16 @@ run('node', [join(HERE, 'verify-signature.mjs'), APP]);
 
 // ---------------------------------------------------------------- 3. 写入钥匙串 profile
 
+log(`准备专用钥匙串：${KEYCHAIN_PATH}`);
+ensureKeychain();
 log(`写入钥匙串 profile：${PROFILE}`);
-run('xcrun', [
-  'notarytool',
+run('xcrun', notaryArgs([
   'store-credentials',
   PROFILE,
   '--apple-id', APPLE_ID,
   '--password', APPLE_PASSWORD,
   '--team-id', TEAM_ID,
-]);
+]));
 
 // ---------------------------------------------------------------- 4. 公证 + 装订 .app
 
@@ -306,7 +560,9 @@ const APP_ZIP = join(TMP, `${PRODUCT}-${VERSION}.zip`);
 // 但「同名的 Accepted 记录」**不能单独作为复用的理由** —— 必须再确认
 // 当前这份 app 确实已经带上了电子签章（stapler validate 通过）。
 // 只有这两条同时成立，才说明「公证的就是现在这份字节」。
-const appPrior = latestSubmission(`${PRODUCT}-${VERSION}.zip`);
+const appPrior = latestAccepted(`${PRODUCT}-${VERSION}.zip`);
+// 「已有票据能直接装订到当前 app」时置 true：省掉一次 245MB 上传
+let appTicketReusable = false;
 let appAlreadyStapled = false;
 try {
   run('xcrun', ['stapler', 'validate', APP]);
@@ -318,13 +574,48 @@ if (appPrior && appPrior.status === 'Accepted' && appAlreadyStapled) {
   log(`app zip 已有 Accepted 提交（${appPrior.id}）且当前 app 已带有效电子签章，跳过压缩与提交`);
 } else {
   if (appPrior && appPrior.status === 'Accepted') {
-    log(`注意：历史里有同名的 Accepted 提交（${appPrior.id}），但当前 app 未带电子签章 —— 说明那份 ticket 对应的是别的字节，按未公证处理`);
+    log(`注意：历史里有同名的 Accepted 提交（${appPrior.id}），但当前 app 未带电子签章 —— 先按未公证处理`);
   }
-  log('压缩 .app（notarytool 不接受 .app，只接受 zip/dmg/pkg）');
-  run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP, APP_ZIP]);
 
-  log('提交公证（等待结果，最长 30 分钟）');
-  await submitAndWait(APP_ZIP, 'app');
+  /**
+   * 先试着把那张已有票据装订到当前 app 上 —— 成功就说明这张票对当前 app 有效，
+   * **完全不必再上传 245MB**。
+   *
+   * 依据（实测 2026-10-21）：Apple 的票据是按 **app 的代码签名哈希（cdhash）**
+   * 匹配的，**不是按压缩包的字节**。`notarytool submit` 提交的是 zip，
+   * 但扫描时解包、对里面的 app 签名哈希出票。
+   * 于是：上一轮压缩出来的那个 zip（字节与本轮不同）如果公证通过了，
+   * 它对应的是**同一份 app**，那张票**照样能装订到当前 app 上**。
+   *
+   * 这解释了 1.0.1 实测里一个差点白费的事实：
+   *   - `ee72de07` 那次上传其实成功了（Accepted），只是脚本当时没认出来；
+   *   - 它对应的 zip 字节（sha `391d4679…`）与本轮压出来的（sha `2ffe3e47…`）**不同**，
+   *     所以「比 sha256」会判为不可复用 —— 但那张票**本来就能用**，
+   *     `stapler staple` 直接装订成功。
+   *
+   * 所以判据是「**装订能不能成功**」，而不是「字节一不一样」：
+   * 装订成功 = Apple 认这张票对当前 app 有效（这是最终事实，无需推断）；
+   * 装订失败 = 票不对应当前 app，重传。
+   */
+  if (appPrior && appPrior.status === 'Accepted') {
+    log('尝试把已公证的票据直接装订到当前 app（票据按 app 的签名哈希匹配，与压缩包字节无关）');
+    try {
+      run('xcrun', ['stapler', 'staple', APP]);
+      run('xcrun', ['stapler', 'validate', APP]);
+      log(`装订成功 —— 已公证的提交（${appPrior.id}）对应的正是当前这份 app，省掉一次 245MB 上传`);
+      appTicketReusable = true;
+    } catch {
+      log('  装订失败 —— 这张票不对应当前 app，需重新上传');
+      appTicketReusable = false;
+    }
+  }
+
+  if (!appTicketReusable) {
+    log('压缩 .app（notarytool 不接受 .app，只接受 zip/dmg/pkg）');
+    run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP, APP_ZIP]);
+    log('提交公证（等待结果，最长 30 分钟）');
+    await submitAndWait(APP_ZIP, 'app');
+  }
 }
 
 log('装订电子签章到 .app');
@@ -348,7 +639,11 @@ mkdirSync(STAGE, { recursive: true });
 // 为什么：重打出来的是**新字节**（时间戳、压缩流都不同），与 Apple 那边已公证的
 // 那一份不是同一个东西 —— 拿旧票据去装订新文件会失败，或者装订成功但
 // 与实际公证内容对不上。重跑脚本时这是最容易踩的坑。
-const priorSubmission = latestSubmission(basename(DMG));
+//
+// 找的是**最近一条已 Accepted** 的同名提交（不是最新那条）：
+// 最新那条常常是「上传中断留下的死记录」（In Progress），
+// 真正公证成功的那条排在它下面 —— 只看最新会白白丢掉一次 226MB 上传。
+const priorSubmission = latestAccepted(basename(DMG));
 // 只有「已 Accepted」才能复用：In Progress 时 ticket 还没下来，复用会导致装订失败
 const reuseDmg = priorSubmission?.status === 'Accepted' && existsSync(DMG);
 if (reuseDmg) {
@@ -434,7 +729,9 @@ mkdirSync(MOUNT, { recursive: true });
 let mounted = false;
 let mountCmd = null;
 try {
-  run('hdiutil', ['attach', DMG, '-nobrowse', '-readonly', '-mountpoint', MOUNT]);
+  // 超时是必须的：受限环境里 attach 可能**挂起**（不报错也不返回），
+  // 没有超时整个流程会永远停在这一步（2026-10-21 实测踩到）。
+  run('hdiutil', ['attach', DMG, '-nobrowse', '-readonly', '-mountpoint', MOUNT], { timeout: 120_000 });
   mounted = true;
   mountCmd = 'hdiutil attach';
 } catch (e) {
@@ -444,13 +741,25 @@ try {
       'image', 'attach', DMG,
       '--mountOptions', 'nobrowse,readOnly',
       '--mountPoint', MOUNT,
-    ]);
+    ], { timeout: 120_000 });
     mounted = true;
     mountCmd = 'diskutil image attach';
   } catch (e2) {
-    log(`  ⚠️ 挂载 dmg 失败（${String(e.message).split('\n').pop().trim()}）`);
-    log('  dmg 与 app 的公证与装订均已成功（见上面的 Accepted 与 stapler 输出）；');
-    log('  这一步只是「从 dmg 拖出来双击」的额外复验，在无 mount 权限的环境里跑不了。');
+    log('  直接挂载失败，改用「转目录镜像再挂载」的路径');
+    // 实测（2026-10-21）：在受限环境里 attach 会**挂起**（不报错也不返回），
+    // 而 `hdiutil convert -format UDTO` 转成目录镜像后再挂载**不需要特权**，
+    // 这条路径在本机实测通过。挂载命令都带超时，避免整个流程被挂住。
+    const CDR = join(TMP, 'dmg-verify.cdr');
+    try {
+      run('hdiutil', ['convert', DMG, '-format', 'UDTO', '-o', CDR, '-quiet'], { timeout: 300_000 });
+      run('hdiutil', ['attach', CDR, '-nobrowse', '-readonly', '-mountpoint', MOUNT], { timeout: 120_000 });
+      mounted = true;
+      mountCmd = 'hdiutil attach';
+    } catch (e3) {
+      log(`  ⚠️ 挂载 dmg 失败（${String(e3.message).split('\n').pop().trim()}）`);
+      log('  dmg 与 app 的公证与装订均已成功（见上面的 Accepted 与 stapler 输出）；');
+      log('  这一步只是「从 dmg 拖出来双击」的额外复验，在无 mount 权限的环境里跑不了。');
+    }
   }
 }
 
