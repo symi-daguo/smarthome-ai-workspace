@@ -13,6 +13,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import type { AuthProfile } from '../auth/auth.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
+import { decodeUploadName } from '../common/upload-name.js';
 import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
@@ -47,7 +48,7 @@ export class ContentController {
       tenantId: user.activeTenantId as string,
       userId: user.id,
       source: 'UPLOAD',
-      sourceRef: file.originalname,
+      sourceRef: decodeUploadName(file.originalname),
       docType,
       file,
     });

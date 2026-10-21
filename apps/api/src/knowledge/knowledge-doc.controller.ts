@@ -4,6 +4,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { z } from 'zod';
 import type { AuthProfile } from '../auth/auth.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
+import { decodeUploadName } from '../common/upload-name.js';
 import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
@@ -48,8 +49,8 @@ export class KnowledgeDocController {
     if (!file) throw new BadRequestException('请选择要上传的文件');
     return this.docs.upload(user.activeTenantId as string, {
       buffer: file.buffer,
-      // mulestorm 对中文文件名是 latin1，要转回 utf-8，否则标题变乱码
-      originalName: Buffer.from(file.originalname, 'latin1').toString('utf-8'),
+      // multipart 的 filename 头被按 latin1 解读，要转回 UTF-8，否则标题变乱码
+      originalName: decodeUploadName(file.originalname),
       mimeType: file.mimetype,
     });
   }

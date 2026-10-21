@@ -220,6 +220,42 @@ async function main(): Promise<void> {
     okRes.status === 201 && okJob.status === 'CONFIRMED' && okJob.document?.confirmed === true,
   );
 
+  // ---------- 上传文件名必须是中文，不能变成 äº§å\x93\x81 那类乱码 ----------
+  // 浏览器按 RFC 7578 用 UTF-8 发送 multipart 的 filename 头，
+  // multer 默认按 latin1 解读 —— 中文名会整串变乱码并原样落库。
+  const cnFileName = '产品清单D5-2-101页方案配图(9,19) 报价(1).txt';
+  const formCn = new FormData();
+  formCn.append('file', new Blob([completeProduct], { type: 'text/plain' }), cnFileName);
+  formCn.append('docType', 'product');
+  const cnRes = await fetch(`${base}/api/content/extractions/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+    body: formCn,
+  });
+  const cnJob = (await cnRes.json()) as { id: string; sourceRef?: string };
+  check(
+    '上传中文文件名后原样返回（不乱码）',
+    cnRes.status === 201 && cnJob.sourceRef === cnFileName,
+  );
+  check(
+    '上传文件名不含 latin1 误读的 mojibake 特征',
+    !/[\u00C0-\u00FF]{2,}/.test(cnJob.sourceRef ?? ''),
+  );
+  const cnJobList = await request<Array<{ id: string; sourceRef: string }>>(
+    base,
+    '/api/content/extractions',
+    { headers: { Authorization: `Bearer ${regA.body.token}` } },
+  );
+  check(
+    '中文文件名原样落库（库里不能是乱码）',
+    cnJobList.body.find((j) => j.id === cnJob.id)?.sourceRef === cnFileName,
+  );
+  // 清掉这条用例产生的数据，保持冒烟跑完库是干净的
+  await request(base, `/api/content/extractions/documents/${cnJob.id}`, {
+    headers: { Authorization: `Bearer ${regA.body.token}` },
+    method: 'DELETE',
+  });
+
   // ---------- S2 内容提取：残缺资料进入 REVIEWING，补全后 CONFIRMED ----------
   const incompleteProduct = '这是一份只有产品简介的资料，提到了某款灯光面板很好用，没有型号与价格信息。';
   const formBad = new FormData();

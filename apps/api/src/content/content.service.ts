@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { decodeUploadName } from '../common/upload-name.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { FIELD_SPECS } from './extractors/fields.js';
 import { runExtraction } from './extractors/pipeline.js';
@@ -55,7 +56,9 @@ export class ContentService {
           sourceRef: opts.sourceRef,
           docType: opts.docType,
           text: opts.text,
-          file: opts.file ? { buffer: opts.file.buffer, originalName: opts.file.originalname, mimeType: opts.file.mimetype } : undefined,
+          file: opts.file
+            ? { buffer: opts.file.buffer, originalName: decodeUploadName(opts.file.originalname), mimeType: opts.file.mimetype }
+            : undefined,
         },
         this.llm,
       );
