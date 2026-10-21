@@ -55,6 +55,81 @@ export const aiProcessProductsSchema = z.object({
 });
 export type AiProcessProductsDto = z.infer<typeof aiProcessProductsSchema>;
 
+/**
+ * 产品库导出：scope=mine 只导「我的产品库」；all=公共库+我的库。
+ * format=csv 给 Excel 用，json 给程序用。
+ */
+export const exportProductsSchema = z.object({
+  scope: z.enum(['mine', 'all']).default('mine'),
+  format: z.enum(['csv', 'json']).default('csv'),
+});
+export type ExportProductsDto = z.infer<typeof exportProductsSchema>;
+
+/**
+ * 产品库导入。
+ *
+ * rows 走 JSON（Agent / 程序用），csv 走文本（网页上传文件用）。
+ * **两者至少给一个**（给 csv 时 rows 省略）——
+ * 踩过的坑：原先 rows 是必填的，于是「只传 csv」会被校验拒掉，
+ * 而那正是网页上传文件走的路径。
+ */
+export const importProductsSchema = z
+  .object({
+    rows: z
+      .array(
+        z.object({
+          name: z.string().min(1, '产品名称不能为空').max(60),
+          category: z.string().min(1, '品类不能为空').max(30),
+          brand: z.string().max(40).optional(),
+          model: z.string().max(40).optional(),
+          unit: z.string().max(10).optional(),
+          sku: z.string().max(40).optional(),
+          barcode: z.string().max(20).optional(),
+          snRule: z.string().max(40).optional(),
+          spec: z.string().max(120).optional(),
+          warranty: z.number().int().min(0).max(600).optional(),
+          priceRetail: priceField.optional(),
+          priceDealer: priceField.optional(),
+          priceProject: priceField.optional(),
+          rebateL1: rebateField.optional(),
+          rebateL2: rebateField.optional(),
+          rebateDesigner: rebateField.optional(),
+          pricingMode: z.enum(['per_unit', 'per_order']).optional(),
+          perRoom: z.string().max(60).optional(),
+          imageUrl: z.string().max(500).optional(),
+          iconKey: z.string().max(40).optional(),
+        }),
+      )
+      .max(2000, '单次最多导入 2000 行')
+      .optional(),
+    /** CSV 文本（当 rows 为空时用它） */
+    csv: z.string().max(2_000_000).optional(),
+    /** 同名同品牌时是否覆盖已有产品（默认覆盖） */
+    updateExisting: z.boolean().default(true),
+  })
+  .refine((v) => (v.rows?.length ?? 0) > 0 || !!v.csv?.trim(), {
+    message: '请提供产品行（rows）或 CSV 文本（csv）之一',
+    path: ['rows'],
+  });
+export type ImportProductsDto = z.output<typeof importProductsSchema>;
+
+/**
+ * 从品牌官网抓产品。
+ *
+ * mode=preview 只抓不落库（先看看抓到了什么）；
+ * mode=import 抓完直接落到「我的产品库」。
+ */
+export const brandFetchSchema = z.object({
+  /** 品牌官网的产品中心地址 */
+  siteUrl: z.string().min(4, '请填写品牌官网地址').max(300),
+  /** 品牌名（写进产品行的品牌字段） */
+  brand: z.string().min(1, '请填写品牌名').max(40),
+  mode: z.enum(['preview', 'import']).default('preview'),
+  /** 同名同品牌是否覆盖已有产品（仅 import 模式有效，默认覆盖） */
+  updateExisting: z.boolean().default(true),
+});
+export type BrandFetchDto = z.infer<typeof brandFetchSchema>;
+
 export const createLayoutSchema = z.object({
   title: z.string().min(1, '请输入图纸名称').max(100),
   mediaAssetId: z.string().uuid('缺少户型底图'),

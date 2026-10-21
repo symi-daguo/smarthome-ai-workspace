@@ -244,7 +244,7 @@ export function Dashboard(): ReactNode {
     void refreshConfig();
   };
 
-  /** 读取文件为 dataURL（≤4MB，仅类型白名单；大文件走素材库/产品中心更合适） */
+  /** 读取文件为 dataURL（≤4MB，仅类型白名单；大文件走产物库/产品中心更合适） */
   const readFile = (file: File): Promise<AttachmentItem> =>
     new Promise((resolve, reject) => {
       if (file.size > 4 * 1024 * 1024) {

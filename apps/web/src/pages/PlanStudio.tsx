@@ -393,7 +393,7 @@ const [editing, setEditing] = useState<{
     }
   };
 
-  /** 打开「从我的资料选效果图」：复用已有素材库列表端点（与生图页选参考图同源） */
+  /** 打开「从我的资料选效果图」：复用已有产物库列表端点（与生图页选参考图同源） */
   const openRaPicker = async (): Promise<void> => {
     setRaPickerOpen(true);
     setLibLoading(true);

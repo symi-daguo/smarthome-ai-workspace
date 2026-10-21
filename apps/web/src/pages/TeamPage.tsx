@@ -88,7 +88,7 @@ const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
   { action: 'order:write', label: '建单、改状态、加跟进', group: '接单' },
   { action: 'publish:read', label: '查看朋友圈/小红书素材', group: '内容' },
   { action: 'publish:write', label: '生成并发布文案与图文', group: '内容' },
-  { action: 'content:read', label: '查看素材库与产物', group: '内容' },
+  { action: 'content:read', label: '查看产物库与作品', group: '内容' },
   { action: 'content:generate', label: '生成方案与出图、生视频', group: '内容' },
   { action: 'content:extract', label: '内容提取与解析', group: '内容' },
   { action: 'knowledge:read', label: '查阅知识库', group: '知识库' },

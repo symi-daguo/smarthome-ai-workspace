@@ -80,6 +80,52 @@ export function buildUserContent(
   return parts.length === 1 ? prompt : parts;
 }
 
+/**
+ * 从模型回复里抠出**第一个完整的 JSON 值**。
+ *
+ * ## 为什么不能用 lastIndexOf 找结尾
+ *
+ * 原来的写法是「取第一个 `{`，再取最后一个 `}`，中间整段当 JSON」。
+ * 踩过的坑：模型在 JSON 后面又输出了一段话（或干脆输出了两个 JSON），
+ * 于是截出来的是 `{...} 的说明文字 {第二个 JSON}` 这种拼接串，
+ * `JSON.parse` 直接报 "Unexpected non-whitespace character after JSON at position N"。
+ * 报错位置还落在中间，肉眼看不出是哪一步错位——很难定位。
+ *
+ * 改成**括号配平扫描**：从第一个 `{` 或 `[` 开始，遇到字符串就跳过
+ * （JSON 字符串里可能有 `{` `}`，不算结构），括号深度归零的那一刻就是结尾。
+ * 这样即使后面跟着解释文字、第二个 JSON、markdown 围栏，都能取到第一个完整值。
+ *
+ * 导出供 smoke 直接断言：这段逻辑决定了「模型返回了带说明的 JSON」时能不能解析成功，
+ * 不能只靠人工看一眼。
+ */
+export function extractJsonValue(text: string): string | null {
+  const start = text.search(/[{[]/);
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{' || ch === '[') depth += 1;
+    else if (ch === '}' || ch === ']') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  // 括号没配平（被 max_tokens 截断）：交给调用方按解析失败处理
+  return null;
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -132,6 +178,8 @@ export class LlmService {
     prompt: string;
     systemPrompt?: string;
     maxTokens?: number;
+    /** 覆盖本次请求的上游超时（批量结构化任务要用更短的超时，失败要能快速重试） */
+    timeoutMs?: number;
     rag?: RagContext;
     /** 附件 dataURL；图片走多模态、文本类内联、二进制明确告知未附带 */
     attachments?: { name: string; dataUrl: string }[];
@@ -168,11 +216,10 @@ export class LlmService {
           max_tokens: input.maxTokens ?? 512,
         }),
       },
-      UPSTREAM_TIMEOUT_MS.llm,
+      input.timeoutMs ?? UPSTREAM_TIMEOUT_MS.llm,
       'LLM',
       '模型对话',
-    );
-    const latencyMs = Date.now() - start;
+    );    const latencyMs = Date.now() - start;
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
@@ -221,14 +268,14 @@ export class LlmService {
       prompt: input.prompt,
     });
 
-    const jsonText = reply
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '');
-    const start = jsonText.indexOf('{');
-    const end = jsonText.lastIndexOf('}');
-    if (start === -1 || end === -1) throw new Error('LLM_JSON_PARSE_FAILED');
-    const parsed = JSON.parse(jsonText.slice(start, end + 1)) as Record<string, unknown>;
+    const jsonText = extractJsonValue(
+      reply
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/, ''),
+    );
+    if (!jsonText) throw new Error('LLM_JSON_PARSE_FAILED');
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
     const result = {} as T;
     for (const [key, value] of Object.entries(parsed)) {
       if (typeof value === 'string') (result as Record<string, string>)[key] = value.trim();
@@ -240,26 +287,35 @@ export class LlmService {
   /**
    * 结构化 JSON 生成：返回任意 JSON 值（对象/数组），保留嵌套结构。
    * 用于方案页等需要数组的场景；解析失败抛错由调用方处理。
+   *
+   * `model` 可以覆盖默认模型，但**用户在「模型配置」里设的模型优先**
+   * （`chat()` 里是 `cfg.model ?? input.model`）——
+   * 所以这里只是给「这类任务更适合某个模型」留个口子，不会盖掉用户的设置。
    */
   async chatJson<T>(input: {
     systemPrompt: string;
     prompt: string;
+    model?: string;
     maxTokens?: number;
+    /** 覆盖上游超时（批量任务要能快速失败重试，不能干等 4 分钟） */
+    timeoutMs?: number;
     rag?: RagContext;
   }): Promise<T> {
     const { reply } = await this.chat({
-      model: 'MiniMax-M3',
+      model: input.model ?? 'MiniMax-M3',
       maxTokens: input.maxTokens ?? 8192,
+      timeoutMs: input.timeoutMs,
       rag: input.rag,
       systemPrompt: `${input.systemPrompt}\n只返回一个 JSON 值（对象或数组），不要输出 markdown 代码块、解释或多余文字。`,
       prompt: input.prompt,
     });
-    const objStart = reply.indexOf('{');
-    const arrStart = reply.indexOf('[');
-    const first = objStart === -1 ? arrStart : arrStart === -1 ? objStart : Math.min(objStart, arrStart);
-    if (first === -1) throw new Error('LLM_JSON_PARSE_FAILED');
-    const end = reply.lastIndexOf(first === arrStart ? ']' : '}');
-    if (end === -1) throw new Error('LLM_JSON_PARSE_FAILED');
-    return JSON.parse(reply.slice(first, end + 1)) as T;
+    const jsonText = extractJsonValue(
+      reply
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/, ''),
+    );
+    if (!jsonText) throw new Error('LLM_JSON_PARSE_FAILED');
+    return JSON.parse(jsonText) as T;
   }
 }

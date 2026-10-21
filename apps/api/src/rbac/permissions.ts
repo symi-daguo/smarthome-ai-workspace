@@ -43,7 +43,7 @@ export const PERMISSIONS = [
   'publish:read',
   'publish:write',
 
-  // —— AI 生成与素材库 ——
+  // —— AI 生成与产物库 ——
   'content:read',
   'content:generate',
   'content:extract',
@@ -51,6 +51,10 @@ export const PERMISSIONS = [
   // —— 知识库 ——
   'knowledge:read',
   'knowledge:manage',
+
+  // —— 对标账号情报 ——
+  'benchmark:read',
+  'benchmark:write',
 
   // —— 反馈与客服 ——
   'cs:read',
@@ -71,6 +75,7 @@ export const WRITE_IMPLIES_READ: Record<string, string> = {
   'publish:write': 'publish:read',
   'content:generate': 'content:read',
   'cs:write': 'cs:read',
+  'benchmark:write': 'benchmark:read',
 };
 
 /** 界面上权限 action 的人话说明与分组（按业务归类，不按技术前缀） */
@@ -81,11 +86,13 @@ export const PERMISSION_CATALOG: { action: PermissionAction; label: string; grou
   { action: 'order:write', label: '建单、改状态、加跟进', group: '接单' },
   { action: 'publish:read', label: '查看朋友圈/小红书素材', group: '内容' },
   { action: 'publish:write', label: '生成并发布文案与图文', group: '内容' },
-  { action: 'content:read', label: '查看素材库与产物', group: '内容' },
+  { action: 'content:read', label: '查看产物库与作品', group: '内容' },
   { action: 'content:generate', label: '生成方案与出图、生视频', group: '内容' },
   { action: 'content:extract', label: '内容提取与解析', group: '内容' },
   { action: 'knowledge:read', label: '查阅知识库', group: '知识库' },
   { action: 'knowledge:manage', label: '维护知识库', group: '知识库' },
+  { action: 'benchmark:read', label: '查看对标账号与情报', group: '对标情报' },
+  { action: 'benchmark:write', label: '配置对标账号、触发分析', group: '对标情报' },
   { action: 'cs:read', label: '查看反馈与工单', group: '协作' },
   { action: 'cs:write', label: '提交与处理反馈', group: '协作' },
   { action: 'tenant:member:manage', label: '管理团队成员', group: '团队' },

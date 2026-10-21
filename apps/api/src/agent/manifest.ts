@@ -89,6 +89,10 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/categories/mine': ['quote:read'],
   'DELETE /api/categories/{id}': ['quote:write'],
   'POST /api/products/ai-process': ['content:generate'],
+  'GET /api/products/export': ['quote:read'],
+  'GET /api/products/import-format': ['quote:read'],
+  'POST /api/products/import': ['quote:write'],
+  'POST /api/products/fetch-brand': ['quote:write'],
 
   'GET /api/orders': ['order:read'],
   'POST /api/orders': ['order:write'],
@@ -155,9 +159,6 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/media/images/reverse-prompt': ['content:generate'],
   'POST /api/media/videos': ['content:generate'],
   'POST /api/media/materials/upload': ['content:generate'],
-  'POST /api/media/materials/submissions': ['content:generate'],
-  'GET /api/media/materials/submissions': ['content:read'],
-  'POST /api/media/materials/purchase': ['content:generate'], // 会扣 100 token，此前无守卫是个漏洞
 
   'GET /api/agents': ['content:read'],
   'POST /api/agents': ['content:read'],
@@ -174,6 +175,17 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/knowledge/docs/{id}/toggle': ['knowledge:manage'],
   'DELETE /api/knowledge/docs/{id}': ['knowledge:manage'],
   'POST /api/knowledge/docs/search': ['knowledge:read'],
+
+  'GET /api/benchmark/accounts': ['benchmark:read'],
+  'POST /api/benchmark/accounts': ['benchmark:write'],
+  'PATCH /api/benchmark/accounts/{id}': ['benchmark:write'],
+  'DELETE /api/benchmark/accounts/{id}': ['benchmark:write'],
+  'GET /api/benchmark/collect-spec': ['benchmark:read'],
+  'POST /api/benchmark/contents': ['benchmark:write'],
+  'GET /api/benchmark/contents': ['benchmark:read'],
+  'POST /api/benchmark/prune': ['benchmark:write'],
+  'POST /api/benchmark/analyze': ['benchmark:write'],
+  'GET /api/benchmark/insights': ['benchmark:read'],
 
   'GET /api/content/extractions': ['content:extract'],
   'GET /api/content/extractions/{id}': ['content:extract'],
@@ -305,6 +317,34 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'GET', p: '/api/categories', d: '品类字典', risk: R },
       { m: 'POST', p: '/api/categories/mine', d: '加自定义品类', risk: W },
       { m: 'DELETE', p: '/api/categories/{id}', d: '删自定义品类', risk: D },
+      {
+        m: 'GET',
+        p: '/api/products/export',
+        d: '导出产品库（?scope=mine|all&format=csv|json），返回文件下载',
+        risk: R,
+      },
+      {
+        m: 'GET',
+        p: '/api/products/import-format',
+        d: '取导入格式契约：字段清单与约束、当前可用的品类字典、CSV 模板表头、JSON 示例、导入规则。'
+          + '要往产品库灌数据，先取这份契约照着填 —— 品类字典是租户可自定义的，不能自己编',
+        risk: R,
+      },
+      {
+        m: 'POST',
+        p: '/api/products/import',
+        d: '导入产品库（rows 传 JSON 行，或 csv 传 CSV 文本）。同名同品牌按更新处理，整批校验不过则整批不落库',
+        risk: W,
+      },
+      {
+        m: 'POST',
+        p: '/api/products/fetch-brand',
+        d: '从品牌官网抓产品列表并转成我们的格式（mode=preview 只看不写 / mode=import 直接落库）。'
+          + '入参 {siteUrl, brand, mode, updateExisting}。siteUrl 必须是品牌官网「产品中心」页地址，'
+          + '不是网站首页（首页会返回 SITE_NOT_SUPPORTED）。'
+          + '若你自己已经有抓取能力，用 import-format 契约自行取数后走 import 即可',
+        risk: W,
+      },
     ],
   },
   {
@@ -396,20 +436,17 @@ export const MANIFEST: ManifestGroup[] = [
   {
     id: 'media',
     name: '素材与生成',
-    about: '上传落库、生图、生视频、素材库投稿。★ 生成类接口会真实扣额度。',
+    about: '上传落库、生图、生视频、产物库增删改查。★ 生成类接口会真实扣额度。',
     ops: [
       { m: 'POST', p: '/api/media/uploads', d: '上传一个文件（multipart），返回 assetId 供后续引用', risk: W },
-      { m: 'GET', p: '/api/media/assets', d: '素材库列表', risk: R },
+      { m: 'GET', p: '/api/media/assets', d: '产物库列表', risk: R },
       { m: 'GET', p: '/api/media/assets/{id}/file', d: '取文件本体', risk: R, q: { '鉴权': 'img/video 链接不能带 Authorization 头，用 ?token= 查询参数' } },
       { m: 'PATCH', p: '/api/media/assets/{id}', d: '改素材元信息', risk: W },
       { m: 'DELETE', p: '/api/media/assets/{id}', d: '删素材（行+文件）', risk: D },
       { m: 'POST', p: '/api/media/images', d: '★ 生图。会调模型、扣额度', risk: W },
       { m: 'POST', p: '/api/media/images/reverse-prompt', d: '★ 反推提示词。会调模型、扣额度', risk: W },
       { m: 'POST', p: '/api/media/videos', d: '★ 生视频。会调模型、扣额度', risk: W },
-      { m: 'POST', p: '/api/media/materials/upload', d: '素材库投稿上传', risk: W },
-      { m: 'POST', p: '/api/media/materials/submissions', d: '提交素材投稿', risk: W },
-      { m: 'GET', p: '/api/media/materials/submissions', d: '我的投稿', risk: R },
-      { m: 'POST', p: '/api/media/materials/purchase', d: '购买素材授权', risk: W },
+      { m: 'POST', p: '/api/media/materials/upload', d: '上传视频素材（进「我的作品」）', risk: W },
     ],
   },
   {
@@ -455,6 +492,25 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'POST', p: '/api/knowledge/docs/{id}/toggle', d: '按份开关：是否参与 AI 召回', risk: W },
       { m: 'DELETE', p: '/api/knowledge/docs/{id}', d: '删除一份资料（只删库里的行，原文件在 uploads 卷另行管理）', risk: D },
       { m: 'POST', p: '/api/knowledge/docs/search', d: '预览本地资料召回效果（验证「AI 到底查不查得到」）', risk: R },
+    ],
+  },
+  {
+    id: 'benchmark',
+    name: '对标账号情报',
+    about:
+      '配置我们盯的对标账号 → 采集它们的热门内容元数据 → AI 映射到我们业务（风格画像 + 场景/产品/卖点映射 + 差距清单）→ 结论进知识库供智能体检索。' +
+      '采集动作在 Agent 侧用浏览器能力完成（服务端不引无头浏览器）；本组提供的是**契约、接收与分析**。',
+    ops: [
+      { m: 'GET', p: '/api/benchmark/accounts', d: '对标账号清单（含每个账号已采集条数）', risk: R },
+      { m: 'POST', p: '/api/benchmark/accounts', d: '新增对标账号', risk: W },
+      { m: 'PATCH', p: '/api/benchmark/accounts/{id}', d: '改对标账号', risk: W },
+      { m: 'DELETE', p: '/api/benchmark/accounts/{id}', d: '删对标账号（连同其采集内容与分析结果）', risk: D },
+      { m: 'GET', p: '/api/benchmark/collect-spec', d: '★ 采集契约：要采哪些字段、怎么算热门、怎么提交（给 Agent 读）', risk: R },
+      { m: 'POST', p: '/api/benchmark/contents', d: '提交采集到的内容元数据（内容链接是幂等键，重复提交不重复入库）', risk: W },
+      { m: 'GET', p: '/api/benchmark/contents', d: '已采集的热门内容（排序维度可切换：综合热度/互动总量/播放量/发布时间）', risk: R },
+      { m: 'POST', p: '/api/benchmark/prune', d: '清理超保留期的采集内容（默认保留 90 天）', risk: D },
+      { m: 'POST', p: '/api/benchmark/analyze', d: '★ 触发 AI 映射分析（会调模型）', risk: W },
+      { m: 'GET', p: '/api/benchmark/insights', d: '分析结果：风格画像 + 差距清单', risk: R },
     ],
   },
   {

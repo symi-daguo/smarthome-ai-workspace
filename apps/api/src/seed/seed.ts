@@ -40,6 +40,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
       'publish:read', 'publish:write',
       'content:read', 'content:generate', 'content:extract',
       'knowledge:read', 'knowledge:manage',
+      'benchmark:read', 'benchmark:write',
       'cs:read', 'cs:write',
     ],
     description: '本团队全部操作权：报价、接单、方案、成员管理、模型配置、数据备份',
@@ -93,8 +94,8 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     key: 'marketing',
     name: '市场运营',
     scope: 'TENANT',
-    permissions: ['publish:read', 'publish:write', 'content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'cs:write'],
-    description: '发朋友圈/小红书、做短视频与海报；不碰客户报价与接单',
+    permissions: ['publish:read', 'publish:write', 'content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'benchmark:read', 'benchmark:write', 'cs:write'],
+    description: '发朋友圈/小红书、做短视频与海报；盯对标账号学内容；不碰客户报价与接单',
   },
   {
     key: 'service',

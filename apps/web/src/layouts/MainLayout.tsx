@@ -18,7 +18,7 @@ import {
   RobotOutlined,
   SettingOutlined,
   ShopOutlined,
-  StarOutlined,
+  AimOutlined,
   ThunderboltOutlined,
   ToolOutlined,
   VideoCameraOutlined,
@@ -253,7 +253,7 @@ export function MainLayout(): ReactNode {
         { key: '/treasure', icon: <ToolOutlined />, label: '智能百宝箱' },
         { key: '/knowledge', icon: <BookOutlined />, label: '我的知识库' },
         { key: '/works', icon: <FolderOpenOutlined />, label: '我的作品' },
-        { key: '/materials', icon: <StarOutlined />, label: '素材库' },
+        { key: '/benchmark', icon: <AimOutlined />, label: '对标情报' },
         { key: '/content', icon: <FileSearchOutlined />, label: '内容提取' },
       ],
     };

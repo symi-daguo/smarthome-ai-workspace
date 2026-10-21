@@ -22,6 +22,7 @@ import { LightingModule } from './lighting/lighting.module.js';
 import { CanvasModule } from './canvas/canvas.module.js';
 import { AgentModule } from './agent/agent.module.js';
 import { TeamModule } from './team/team.module.js';
+import { BenchmarkModule } from './benchmark/benchmark.module.js';
 import { AuditInterceptor } from './agent/audit.interceptor.js';
 
 @Module({
@@ -56,6 +57,8 @@ import { AuditInterceptor } from './agent/audit.interceptor.js';
     AgentModule,
     // 0.1.54：团队成员与角色模板
     TeamModule,
+    // 对标账号情报：配置对标账号 → 采集热门内容元数据 → AI 映射学习比对
+    BenchmarkModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

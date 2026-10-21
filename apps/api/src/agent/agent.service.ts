@@ -48,10 +48,14 @@ export const SNAPSHOT_TABLES: SnapshotTable[] = [
   { table: 'floorplanLayout', scope: 'direct' },
   { table: 'lightingScene', scope: 'direct' },
   { table: 'feedbackTicket', scope: 'direct' },
-  { table: 'materialSubmission', scope: 'direct' },
   { table: 'tokenLedger', scope: 'direct' },
   { table: 'membership', scope: 'direct' },
   { table: 'generationJob', scope: 'direct' },
+  // 对标账号情报：内容与分析结果声明在账号**前面**——
+  // 快照还原的删除顺序按本列表倒着来（子表先删，否则父表删不掉）。
+  { table: 'benchmarkContent', scope: 'direct' },
+  { table: 'benchmarkInsight', scope: 'direct' },
+  { table: 'benchmarkAccount', scope: 'direct' },
 
   { table: 'imageConversation', scope: 'direct' },
   { table: 'imageTurn', scope: 'direct' },

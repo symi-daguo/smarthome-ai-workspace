@@ -530,6 +530,10 @@ model KnowledgeDoc {
   chars     Int      @default(0)
   /** 按份开关：false = 暂不参与召回。配合总开关用 */
   enabled   Boolean  @default(true)
+  /** 来源类型：file（上传的资料）| benchmark（对标账号情报投影） */
+  sourceType String  @default("file")
+  /** 来源链接：情报投影时指向原对标内容，便于回溯 */
+  sourceUrl  String  @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -858,24 +862,88 @@ model GenerationJob {
   @@index([tenantId, createdAt])
 }
 
-// ---------- 素材库投稿（创作者投稿 → 审核 → 上架供下载） ----------
+// ---------- 对标账号情报（配置对标账号 → 采集热门内容元数据 → AI 映射学习比对） ----------
 
-model MaterialSubmission {
-  id         String   @id @default(uuid())
-  tenantId   String
-  userId     String
-  title      String
-  desc       String   @default("")
-  // 素材文件相对 UPLOAD_DIR 的路径（先经 /api/media/uploads 上传拿到 assetId）
-  filePath   String
-  mimeType   String   @default("")
-  sizeBytes  Int      @default(0)
-  // pending（待审核）| approved（已上架）| rejected（未通过）| offline（已下架）
-  status     String   @default("pending")
-  reviewNote String   @default("")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+/**
+ * 对标账号：用户配置「我们盯谁」。平台名是用户自填的自由文本，
+ * 不在代码里枚举任何具体平台品牌。
+ */
+model BenchmarkAccount {
+  id          String   @id @default(uuid())
+  tenantId    String
+  platform    String
+  accountName String
+  // 账号主页链接；采集端（带浏览器能力的 Agent）据此定位账号
+  homeUrl     String
+  // 分组标签，逗号分隔（如 "智能家居,照明,讲解"）
+  tags        String   @default("")
+  note        String   @default("")
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
+  @@index([tenantId, enabled])
   @@index([tenantId, createdAt])
-  @@index([status])
+}
+
+/**
+ * 采集到的对标内容元数据。只存元数据与文案，不下载视频本体（避开版权风险，
+ * 且「热门信息映射学习比对」的对象本来就是元数据）。
+ */
+model BenchmarkContent {
+  id          String   @id @default(uuid())
+  tenantId    String
+  accountId   String
+  // 冗余账号名与平台：账号被删后情报仍可溯源
+  accountName String   @default("")
+  platform    String   @default("")
+  title       String   @default("")
+  // 内容文案正文（映射分析的主要输入）
+  text        String   @default("")
+  sourceUrl   String   @default("")
+  // 发布时间；采集端拿不到时留空
+  publishedAt DateTime?
+  // 互动数据 JSON：{"play":123,"like":45,"comment":6,"collect":2,"share":1}
+  stats       String   @default("{}")
+  // 服务端统一算出的热度分，保证入库排序口径一致（不依赖采集端各自实现）
+  hotScore    Float    @default(0)
+  // 话题标签，逗号分隔
+  topics      String   @default("")
+  coverUrl    String   @default("")
+  // 采集批次号：同一次 Agent 采集的结果归一批，便于溯源与重跑
+  batchId     String   @default("")
+  collectedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 幂等键：同一账号同一条内容不重复入库
+  @@unique([tenantId, accountId, sourceUrl])
+  @@index([tenantId, accountId])
+  @@index([tenantId, hotScore])
+  @@index([tenantId, collectedAt])
+}
+
+/**
+ * AI 映射分析结果：该对标账号的内容风格画像 + 与我们业务的差距。
+ */
+model BenchmarkInsight {
+  id          String   @id @default(uuid())
+  tenantId    String
+  accountId   String
+  accountName String   @default("")
+  // 分析结果 JSON：风格画像 / 场景映射 / 产品映射 / 卖点 / 内容结构
+  analysis    String   @default("{}")
+  // 差距项 JSON：{title, why, action}
+  gaps        String   @default("[]")
+  // 一句话结论
+  summary     String   @default("")
+  // 实际使用的模型（便于回溯口径）
+  model       String   @default("")
+  // 本次分析覆盖的内容条数
+  sampleSize  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, accountId])
+  @@index([tenantId, createdAt])
 }

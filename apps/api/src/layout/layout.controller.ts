@@ -1,5 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Header,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import type { AuthProfile } from '../auth/auth.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { ZodValidationPipe } from '../common/zod.pipe.js';
@@ -7,6 +20,8 @@ import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
 import { TenantGuard } from '../tenants/tenant.guard.js';
 import { LayoutService } from './layout.service.js';
+import { ProductTransferService } from './product-transfer.service.js';
+import { BrandImportService } from './brand-import.service.js';
 import {
   createLayoutSchema,
   createProductSchema,
@@ -14,18 +29,28 @@ import {
   aiProcessProductsSchema,
   updateLayoutSchema,
   updateProductSchema,
+  exportProductsSchema,
+  importProductsSchema,
+  brandFetchSchema,
   type CreateLayoutDto,
   type CreateProductDto,
   type CreateCategoryDto,
   type AiProcessProductsDto,
   type UpdateLayoutDto,
   type UpdateProductDto,
+  type ExportProductsDto,
+  type ImportProductsDto,
+  type BrandFetchDto,
 } from './layout.schemas.js';
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller()
 export class LayoutController {
-  constructor(private readonly layout: LayoutService) {}
+  constructor(
+    private readonly layout: LayoutService,
+    private readonly transfer: ProductTransferService,
+    private readonly brandImport: BrandImportService,
+  ) {}
 
   /** 产品目录（公共库+我的库合并，布点/报价选品数据源） */
   @RequirePermissions('quote:read')
@@ -101,6 +126,83 @@ export class LayoutController {
     @Body(new ZodValidationPipe(aiProcessProductsSchema)) dto: AiProcessProductsDto,
   ) {
     return this.layout.aiProcessProducts(user.activeTenantId as string, user.id, dto.ids, dto.clientRequestId);
+  }
+
+  /**
+   * 导出产品库（CSV / JSON）。
+   *
+   * 返回文件而不是 JSON —— 目的是让人能直接下载、给 Excel 打开、
+   * 或者喂给别的系统继续处理。
+   */
+  @RequirePermissions('quote:read')
+  @Get('products/export')
+  async exportProducts(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Query(new ZodValidationPipe(exportProductsSchema)) q: ExportProductsDto,
+    @Res() res: Response,
+  ) {
+    const rows = await this.transfer.exportRows(user.activeTenantId as string, q.scope);
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (q.format === 'json') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="products-${stamp}.json"`);
+      res.send(this.transfer.toJson(rows));
+      return;
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="products-${stamp}.csv"`);
+    res.send(this.transfer.toCsv(rows));
+  }
+
+  /**
+   * 导入格式契约：客户自己的 Agent 照着这份定义去品牌官网取数、按格式填好再导进来。
+   *
+   * 返回：字段清单与约束、当前可用的品类字典、CSV 模板表头、JSON 示例、导入规则。
+   * 「取哪个品类 key」这件事必须由服务端给 —— 品类字典是租户可自定义的，
+   * 客户端猜不到，猜错就整批被拒。
+   */
+  @RequirePermissions('quote:read')
+  @Get('products/import-format')
+  importFormat(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
+    return this.transfer.importFormat(user.activeTenantId as string);
+  }
+
+  /**
+   * 导入产品库（JSON 行 或 CSV 文本）。
+   *
+   * 整批原子：任何一行不合法就整批不落库，并把每行的问题报出来。
+   */
+  @RequirePermissions('quote:write')
+  @Post('products/import')
+  async importProducts(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(importProductsSchema)) dto: ImportProductsDto,
+  ) {
+    const rows = dto.rows?.length ? dto.rows : dto.csv ? this.transfer.csvToRows(dto.csv) : [];
+    return this.transfer.importRows(user.activeTenantId as string, rows, {
+      updateExisting: dto.updateExisting,
+    });
+  }
+
+  /**
+   * 从品牌官网抓产品（preview=只看不写 / import=直接落库）。
+   */
+  @RequirePermissions('quote:write')
+  @Post('products/fetch-brand')
+  async fetchBrand(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(brandFetchSchema)) dto: BrandFetchDto,
+  ) {
+    if (dto.mode === 'import') {
+      return this.brandImport.fetchAndImport(
+        user.activeTenantId as string,
+        user.id,
+        dto.siteUrl,
+        dto.brand,
+        { updateExisting: dto.updateExisting },
+      );
+    }
+    return this.brandImport.preview(user.activeTenantId as string, dto.siteUrl, dto.brand);
   }
 
   @RequirePermissions('content:generate')

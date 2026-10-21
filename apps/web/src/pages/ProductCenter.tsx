@@ -1,9 +1,9 @@
-import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, RobotOutlined, ShopOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, CloudUploadOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, FileTextOutlined, PlusOutlined, RobotOutlined, ShopOutlined } from '@ant-design/icons';
 import { newRequestId } from '../lib/request-id';
-import { App as AntApp, AutoComplete, Button, Card, Col, ColorPicker, Divider, Empty, Form, Image, Input, InputNumber, Modal, Popconfirm, Row, Segmented, Select, Space, Table, Tag, Tooltip, Typography, Upload, theme } from 'antd';
+import { App as AntApp, AutoComplete, Button, Card, Checkbox, Col, ColorPicker, Divider, Empty, Form, Image, Input, InputNumber, Modal, Popconfirm, Row, Segmented, Select, Space, Table, Tag, Tooltip, Typography, Upload, theme } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, fileUrl } from '../lib/api';
+import { api, fileUrl, tokenStore } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { catMeta, categoryList, categoryOptions, loadCategoryDict, refreshCategoryDict, type CategoryDef } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
@@ -62,6 +62,30 @@ interface ProductForm {
   pricingMode?: 'per_unit' | 'per_order';
 }
 
+/**
+ * 导入格式契约（服务端给出）。
+ *
+ * 客户自己的 Agent 要照着它去品牌官网取数、按格式填好再导进来 ——
+ * 所以这份契约必须由服务端给：品类字典是租户可自定义的，客户端猜不到。
+ */
+interface ImportFormat {
+  version: number;
+  fields: {
+    name: string;
+    required: boolean;
+    type: string;
+    desc: string;
+    default?: string | number;
+    range?: string;
+    example?: string | number;
+  }[];
+  categories: { key: string; label: string }[];
+  csvHeader: string;
+  csvTemplate: string;
+  jsonExample: unknown;
+  rules: string[];
+}
+
 const COLOR_CHOICES = ['#4FA8E0', '#5BA86B', '#D9A036', '#8E7CC3', '#D06A5A', '#5AA8A0', '#C37FB0', '#7A8CA8', '#B07A4A', '#4A90A8'];
 
 /**
@@ -92,12 +116,36 @@ export function ProductCenter(): ReactNode {
   const [catOpen, setCatOpen] = useState(false);
   const [catBusy, setCatBusy] = useState(false);
   const [catIconOpen, setCatIconOpen] = useState(false);
+  /** 导入导出 / 格式说明 弹窗 */
+  const [ioOpen, setIoOpen] = useState(false);
+  const [ioBusy, setIoBusy] = useState(false);
+  const [ioForm] = Form.useForm<{ updateExisting: boolean }>();
+  /** 导入格式契约（字段定义 + 品类字典），由服务端给出 */
+  const [fmt, setFmt] = useState<ImportFormat | null>(null);
+  const [fmtBusy, setFmtBusy] = useState(false);
+  /** 格式说明子弹窗 */
+  const [fmtOpen, setFmtOpen] = useState(false);
   const [form] = Form.useForm<ProductForm>();
   const [catForm] = Form.useForm<{ label: string; icon: string; color: string | { toHexString?: () => string } }>();
 
   const reload = useCallback(async (): Promise<void> => {
     setRows(await api<ProductRow[]>('/api/products'));
   }, []);
+
+  /**
+   * 导入完成后跳到「我的库」并清掉筛选条件。
+   *
+   * 不切的话：导进来 115 个产品，页面还停在「公共产品库」标签上，
+   * 列表里一个变化都看不到 —— 提示说「导入完成」，但屏幕上什么都没有，
+   * 用户会以为导入没生效，又导入一遍。
+   * 同时清掉品牌/品类/关键词筛选：导入的品牌可能正好被当前筛选挡着。
+   */
+  const jumpToMine = (): void => {
+    setTab('mine');
+    setCatFilter(undefined);
+    setBrandFilter(undefined);
+    setSearch('');
+  };
 
   useEffect(() => {
     void loadCategoryDict().then(() => setDictVersion((v) => v + 1));
@@ -228,9 +276,139 @@ export function ProductCenter(): ReactNode {
       message.success(`「${row.name}」产品图已更新`);
       await reload();
     } catch (e) {
-      message.error((e as Error).message);
-    }
+      message.error((e as Error).message);    }
     return false;
+  };
+
+  /**
+   * 导出产品库。
+   *
+   * 直接用浏览器下载（不走 fetch 再转 blob）：
+   * 后端返回的是文件响应，fetch 拿回来再存也行，但直接给 <a download> 更简单，
+   * 也不会把几百 MB 的内容读进内存。
+   */
+  const exportProducts = (format: 'csv' | 'json'): void => {
+    const token = tokenStore.get();
+    const url = `${import.meta.env.VITE_API_BASE_URL ?? ''}/api/products/export?scope=mine&format=${format}`;
+    const fileName = `products-${new Date().toISOString().slice(0, 10)}.${format}`;
+    if (!token) {
+      message.warning('未登录，无法导出');
+      return;
+    }
+    // 后端要 Authorization 头，<a download> 带不了头 —— 用 fetch 取回再存
+    void (async () => {
+      try {
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { message?: string } | null;
+          message.error(body?.message ?? '导出失败');
+          return;
+        }
+        const blob = await res.blob();
+        const obj = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = obj;
+        link.download = fileName;
+        link.click();
+        URL.revokeObjectURL(obj);
+        message.success(`已导出 ${format.toUpperCase()}`);
+      } catch (e) {
+        message.error((e as Error).message);
+      }
+    })();
+  };
+
+  /** 导入：读本地 CSV/JSON 文件 → 调导入接口 */
+  const doImport = async (file: File): Promise<void> => {
+    setIoBusy(true);
+    try {
+      const text = await file.text();
+      const isJson = file.name.toLowerCase().endsWith('.json');
+      const updateExisting = ioForm.getFieldValue('updateExisting') ?? true;
+      const body: Record<string, unknown> = { updateExisting };
+      if (isJson) {
+        const parsed = JSON.parse(text) as { products?: unknown[] } | unknown[];
+        const products = Array.isArray(parsed) ? parsed : parsed.products;
+        if (!Array.isArray(products)) throw new Error('JSON 文件格式不对：需要是数组或 {products:[...]}');
+        body.rows = products;
+      } else {
+        body.csv = text;
+      }
+      const res = await api<{ created: number; updated: number; failed: number }>('/api/products/import', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        timeoutMs: 300_000,
+      });
+      message.success(`导入完成：新增 ${res.created}，更新 ${res.updated}${res.failed ? `，失败 ${res.failed}` : ''}`);
+      setIoOpen(false);
+      jumpToMine();
+      await reload();
+    } catch (e) {
+      const err = e as Error & { details?: string[] };
+      if (err.details?.length) {
+        modal.error({
+          title: '导入未执行',
+          content: (
+            <div style={{ maxHeight: 320, overflow: 'auto' }}>
+              <p style={{ marginBottom: 8 }}>{err.message}</p>
+              <ul style={{ paddingLeft: 18, margin: 0 }}>
+                {err.details.map((d, i) => (<li key={i} style={{ fontSize: 12 }}>{d}</li>))}
+              </ul>
+            </div>
+          ),
+        });
+        return;
+      }
+      message.error(err.message);
+    } finally {
+      setIoBusy(false);
+    }
+  };
+
+  /**
+   * 取导入格式契约（字段定义 + 品类字典 + 模板 + 规则）。
+   *
+   * 打开「导入 / 导出」弹窗时取一次。客户自己的 Agent 也可以直接调
+   * `GET /api/products/import-format` 拿同一份契约，不必开界面。
+   */
+  const loadFormat = useCallback(async (): Promise<void> => {
+    setFmtBusy(true);
+    try {
+      setFmt(await api<ImportFormat>('/api/products/import-format'));
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setFmtBusy(false);
+    }
+  }, [message]);
+
+  /** 下载导入模板（只有表头，填好就能导） */
+  const downloadTemplate = (): void => {
+    if (!fmt) return;
+    downloadText('products-import-template.csv', fmt.csvTemplate, 'text/csv;charset=utf-8');
+    message.success('模板已下载：按列填好，再从上面「选择 CSV / JSON 文件导入」');
+  };
+
+  /** 下载格式说明（给客户自己的 Agent 用的机器可读契约） */
+  const downloadFormatSpec = (): void => {
+    if (!fmt) return;
+    downloadText(
+      'products-import-format.json',
+      JSON.stringify(fmt, null, 2),
+      'application/json;charset=utf-8',
+    );
+    message.success('格式说明已下载，可直接交给你的 Agent');
+  };
+
+  /** 浏览器里触发一次下载 */
+  const downloadText = (filename: string, text: string, mime: string): void => {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   /** agent 批量处理：勾选行一次补全文案/品类归位 + 批量生成产品图（生图按张扣额度） */
@@ -330,6 +508,7 @@ export function ProductCenter(): ReactNode {
             <Button onClick={() => navigate('/quote')}>智能报价</Button>
             <Button onClick={() => navigate('/device-layout')}>设备点位</Button>
             <Button icon={<AppstoreOutlined />} onClick={() => setCatOpen(true)}>分类管理</Button>
+            <Button icon={<CloudUploadOutlined />} onClick={() => { setIoOpen(true); void loadFormat(); }}>导入 / 导出</Button>
             <Button type="primary" icon={<PlusOutlined />} style={{ background: BRAND_GRADIENT, border: 'none' }} onClick={() => openEdit()}>
               新增我的产品
             </Button>
@@ -562,6 +741,133 @@ export function ProductCenter(): ReactNode {
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 导入 / 导出 */}
+      <Modal
+        title="导入 / 导出产品库"
+        open={ioOpen}
+        onCancel={() => setIoOpen(false)}
+        footer={null}
+        destroyOnHidden
+        width={600}
+        // 内容再长也在弹窗里滚，不让字段表与品类字典被顶到屏幕外看不见
+        styles={{ body: { maxHeight: '68vh', overflowY: 'auto' } }}
+      >
+        <Divider titlePlacement="left" style={{ fontSize: 13, margin: '4px 0 10px' }}>导出我的产品库</Divider>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          导出后可用 Excel 打开改价、改规格，再导入回来。CSV 带 BOM，Excel 打开中文不乱码。
+        </Text>
+        <Space style={{ marginTop: 10 }} wrap>
+          <Button icon={<DownloadOutlined />} onClick={() => exportProducts('csv')}>导出 CSV（给 Excel）</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => exportProducts('json')}>导出 JSON（给程序）</Button>
+        </Space>
+
+        <Divider titlePlacement="left" style={{ fontSize: 13, margin: '16px 0 10px' }}>导入产品文件</Divider>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          从品牌官网拿到的产品清单，按下面的<b>格式</b>整理成 CSV 或 JSON 再导进来。
+          你自己的 Agent 可以照着这份格式去官网取数后直接生成文件。
+        </Text>
+        <Space style={{ marginTop: 10 }} wrap>
+          <Button icon={<DownloadOutlined />} onClick={downloadTemplate} disabled={!fmt}>下载导入模板（CSV）</Button>
+          <Button icon={<DownloadOutlined />} onClick={downloadFormatSpec} disabled={!fmt}>下载格式说明（给 Agent）</Button>
+          <Button icon={<FileTextOutlined />} onClick={() => setFmtOpen(true)} disabled={!fmt}>查看格式说明</Button>
+        </Space>
+        <Form form={ioForm} layout="vertical" style={{ marginTop: 12 }} initialValues={{ updateExisting: true }}>
+          <Form.Item
+            name="updateExisting"
+            valuePropName="checked"
+            extra="同名同品牌的产品：勾选=更新已有那条，不勾=跳过。导入采用整批校验，任何一行有问题就整批不落库。"
+          >
+            <Checkbox>同名同品牌时更新已有产品</Checkbox>
+          </Form.Item>
+        </Form>
+        <Upload
+          accept=".csv,.json,text/csv,application/json"
+          showUploadList={false}
+          disabled={ioBusy}
+          beforeUpload={(f) => {
+            void doImport(f);
+            return false;
+          }}
+        >
+          <Button icon={<CloudUploadOutlined />} loading={ioBusy}>选择 CSV / JSON 文件导入</Button>
+        </Upload>
+      </Modal>
+
+      {/* 导入格式说明（单独一个弹窗：字段表与品类字典内容长，挤在导入弹窗里会被屏幕截掉） */}
+      <Modal
+        title="导入格式说明"
+        open={fmtOpen}
+        onCancel={() => setFmtOpen(false)}
+        footer={null}
+        destroyOnHidden
+        width={880}
+        styles={{ body: { maxHeight: '72vh', overflowY: 'auto' } }}
+      >
+        {fmt ? (
+          <>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              这份说明与系统实际校验是同一份来源，不会出现「文档写的和实际要求对不上」。
+              你的 Agent 照着填就行；也可以关掉这个弹窗，在「导入 / 导出」里点
+              「下载格式说明（给 Agent）」直接拿走这份文件。
+            </Text>
+            <Divider titlePlacement="left" style={{ fontSize: 13, margin: '14px 0 8px' }}>导入规则</Divider>
+            <ul style={{ fontSize: 12, color: '#666', paddingLeft: 18, margin: '0 0 4px' }}>
+              {fmt.rules.map((r, i) => (<li key={i} style={{ marginBottom: 3 }}>{r}</li>))}
+            </ul>
+            <Divider titlePlacement="left" style={{ fontSize: 13, margin: '14px 0 8px' }}>字段清单</Divider>
+            <div style={{ border: '1px solid #f0f0f0', borderRadius: 6 }}>
+              <Table
+                size="small"
+                rowKey={(r) => r.name}
+                dataSource={fmt.fields}
+                pagination={false}
+                columns={[
+                  {
+                    title: '字段',
+                    dataIndex: 'name',
+                    width: 150,
+                    render: (v: string, r: ImportFormat['fields'][number]) => (
+                      <span>
+                        <code style={{ fontSize: 12 }}>{v}</code>
+                        {r.required ? <Tag color="red" style={{ marginLeft: 4, fontSize: 10 }}>必填</Tag> : null}
+                      </span>
+                    ),
+                  },
+                  { title: '说明', dataIndex: 'desc', width: 250 },
+                  {
+                    title: '取值',
+                    dataIndex: 'range',
+                    render: (v: string | undefined, r: ImportFormat['fields'][number]) => (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {/* default 为空串表示「没填就空着」，别显示成「默认 」 */}
+                        {v ?? (r.default !== undefined && r.default !== ''
+                          ? `默认 ${r.default}`
+                          : '留空即可')}
+                        {r.example !== undefined ? `　例 ${r.example}` : ''}
+                      </Text>
+                    ),
+                  },
+                ]}
+              />
+            </div>
+            <Divider titlePlacement="left" style={{ fontSize: 13, margin: '14px 0 8px' }}>
+              品类字典（<code style={{ fontSize: 12 }}>category</code> 只能填这些值）
+            </Divider>
+            <Space wrap size={4}>
+              {fmt.categories.map((c) => (
+                <Tag key={c.key} style={{ marginInlineEnd: 4 }}>
+                  <code style={{ fontSize: 11 }}>{c.key}</code>
+                  {' '}
+                  {c.label}
+                </Tag>
+              ))}
+            </Space>
+          </>
+        ) : (
+          <Text type="secondary" style={{ fontSize: 12 }}>{fmtBusy ? '正在读取格式说明…' : '格式说明读取失败，关闭后重新打开'}</Text>
+        )}
       </Modal>
 
       <Modal title="分类管理" open={catOpen} onCancel={() => setCatOpen(false)} footer={null} destroyOnHidden width={560}>

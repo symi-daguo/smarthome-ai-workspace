@@ -29,7 +29,7 @@ import { KnowledgeBase } from './pages/KnowledgeBase';
 import { MyAssets } from './pages/MyAssets';
 import { OrderStudio } from './pages/OrderStudio';
 import { BiographyStudio } from './pages/BiographyStudio';
-import { MaterialLibrary } from './pages/MaterialLibrary';
+import { Benchmark } from './pages/Benchmark';
 import { PlanShareView } from './pages/PlanShareView';
 
 function ProtectedRoutes(): React.ReactNode {
@@ -49,7 +49,9 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="plan" element={<PlanStudio />} />
             <Route path="order" element={<OrderStudio />} />
             <Route path="biography" element={<BiographyStudio />} />
-            <Route path="materials" element={<MaterialLibrary />} />
+            <Route path="benchmark" element={<Benchmark />} />
+            {/* 旧「素材库」路由：投稿交易已下线，页面换成对标情报；老书签不该 404 */}
+            <Route path="materials" element={<Navigate to="/benchmark" replace />} />
             <Route path="treasure" element={<TreasureBox />} />
             <Route path="device-layout" element={<DeviceLayout />} />
             <Route path="lighting" element={<LightingStudio />} />

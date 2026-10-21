@@ -6,8 +6,9 @@ import {
   MoreOutlined,
   PictureOutlined,
   PlayCircleOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
-import { App as AntApp, Button, Dropdown, Empty, Grid, Modal, Popconfirm, Typography, theme } from 'antd';
+import { App as AntApp, Button, Dropdown, Empty, Grid, Modal, Popconfirm, Typography, Upload, theme } from 'antd';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, fileUrl } from '../lib/api';
 import { useChatStore } from '../store/ChatStore';
@@ -106,6 +107,21 @@ export function MyAssets(): ReactNode {
       message.error((e as Error).message || '重命名失败');
     }
   };
+  // 上传视频素材：原先挂在「素材库投稿」里，投稿交易下线后这个入口挪到这里，
+  // 保证「自己拍的视频进产物库」的能力不丢。
+  const uploadVideo = async (file: File): Promise<void> => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('title', file.name.replace(/\.[^.]+$/, '').slice(0, 100));
+    try {
+      await api('/api/media/materials/upload', { method: 'POST', body: fd });
+      message.success('视频已上传');
+      api<MediaRow[]>('/api/media/assets').then(setMedia).catch(() => undefined);
+    } catch (e) {
+      message.error((e as Error).message || '上传失败');
+    }
+  };
+
   // 删除：DB 行 + 本地文件，公共产品图被引用时后端 400 ASSET_REFUSED_BY_PRODUCT
   const removeAsset = async (id: string, title: string): Promise<void> => {
     try {
@@ -153,8 +169,22 @@ export function MyAssets(): ReactNode {
 
   return (
     <div style={{ width: '100%', paddingBottom: 24 }}>
-      <Title level={3} style={{ marginBottom: 4 }}>我的作品</Title>
-      <Text type="secondary">你生成的图片、视频、方案都保存在这里，随时查看与下载</Text>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <Title level={3} style={{ marginBottom: 4 }}>我的作品</Title>
+          <Text type="secondary">你生成的图片、视频、方案都保存在这里，随时查看与下载</Text>
+        </div>
+        <Upload
+          accept="video/*"
+          showUploadList={false}
+          beforeUpload={(file) => {
+            void uploadVideo(file as unknown as File);
+            return false;
+          }}
+        >
+          <Button icon={<UploadOutlined />}>上传视频素材</Button>
+        </Upload>
+      </div>
 
       <div style={{ display: 'flex', gap: 8, margin: '18px 0 20px', flexWrap: 'wrap' }}>
         {TABS.map((t) => {

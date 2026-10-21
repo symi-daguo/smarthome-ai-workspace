@@ -49,12 +49,17 @@ export type UpstreamKind = 'LLM' | 'IMAGE' | 'VIDEO' | 'DOWNLOAD';
  * 并带上能指路的提示（查服务地址、查网络、等一会儿再试）。
  *
  * 返回 null 表示「不是已知的网络失败」，交给调用方按自己的方式处理。
+ *
+ * `hints` 让不同调用方用**自己的话**说同一件事：
+ * 抓品牌官网时，「服务地址解析失败，请检查模型配置里的服务地址」是驴唇不对马嘴 ——
+ * 那里根本没有模型配置，是用户把网址填错了。
  */
 export function describeUpstreamError(
   e: unknown,
   kind: UpstreamKind,
   label: string,
   timeoutMs?: number,
+  hints?: { unreachable?: string; tls?: string; invalidUrl?: string },
 ): { code: string; message: string } | null {
   const err = e as { name?: string; message?: string; cause?: unknown };
   if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
@@ -70,10 +75,23 @@ export function describeUpstreamError(
   const cause = err?.cause as { code?: string; errors?: { code?: string }[] } | undefined;
   if (cause?.code) codes.push(cause.code);
   for (const sub of cause?.errors ?? []) if (sub?.code) codes.push(sub.code);
+  if (codes.includes('ERR_INVALID_URL')) {
+    return {
+      code: `${kind}_INVALID_URL`,
+      message: hints?.invalidUrl ?? `${label}地址格式不对，请检查地址是否完整`,
+    };
+  }
+  // https 证书类问题：证书过期 / 域名不匹配时 https 连不上，但 http 可能正常
+  if (codes.some((c) => TLS_CODES.includes(c))) {
+    return {
+      code: `${kind}_TLS_ERROR`,
+      message: hints?.tls ?? `${label}的 https 证书有问题，请改用 http:// 访问`,
+    };
+  }
   if (codes.includes('ENOTFOUND') || codes.includes('EAI_AGAIN')) {
     return {
       code: `${kind}_UNREACHABLE`,
-      message: `${label}服务地址解析失败，请检查模型配置里的服务地址`,
+      message: hints?.unreachable ?? `${label}服务地址解析失败，请检查模型配置里的服务地址`,
     };
   }
   if (
@@ -85,11 +103,27 @@ export function describeUpstreamError(
   ) {
     return {
       code: `${kind}_UNREACHABLE`,
-      message: `${label}服务连不上，请检查网络或模型配置里的服务地址`,
+      message: hints?.unreachable ?? `${label}服务连不上，请检查网络或模型配置里的服务地址`,
     };
   }
   return null;
 }
+
+/**
+ * https 证书类错误码。
+ *
+ * 实测踩到：有些品牌官网的 https 证书过期（CERT_HAS_EXPIRED），
+ * 浏览器还能开（浏览器会提示风险但允许继续），程序直接 fetch 就失败 ——
+ * 而同一个站 http 是好的。用户看到「服务器错误」完全不知道是该换协议。
+ */
+const TLS_CODES = [
+  'CERT_HAS_EXPIRED',
+  'CERT_NOT_YET_VALID',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+];
 
 /**
  * 带超时的外部请求。
@@ -104,11 +138,15 @@ export async function fetchUpstream(
   timeoutMs: number,
   kind: UpstreamKind,
   label: string,
+  hints?: { unreachable?: string; tls?: string; invalidUrl?: string },
 ): Promise<Response> {
   try {
     return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
-    const described = describeUpstreamError(e, kind, label, timeoutMs);
+    // **在这一层就把话术定下来**：
+    // 错误一旦被包装成 ServiceUnavailableException 再往外传，
+    // 原始的 cause.code 就丢了，调用方二次分类会退回到默认文案。
+    const described = describeUpstreamError(e, kind, label, timeoutMs, hints);
     if (described) {
       throw new ServiceUnavailableException({ code: described.code, message: described.message });
     }

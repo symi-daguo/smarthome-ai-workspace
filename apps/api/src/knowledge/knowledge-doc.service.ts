@@ -156,12 +156,50 @@ export class KnowledgeDocService {
     const docs = await this.prisma.knowledgeDoc.findMany({
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, title: true, fileName: true, fileType: true, chars: true, enabled: true, createdAt: true },
+      select: {
+        id: true,
+        title: true,
+        fileName: true,
+        fileType: true,
+        chars: true,
+        enabled: true,
+        sourceType: true,
+        sourceUrl: true,
+        createdAt: true,
+      },
     });
     // 生效量 / 累计量分开展示：用户要知道「现在真正被 AI 参考了多少」
     const activeChars = docs.filter((d) => d.enabled).reduce((s, d) => s + d.chars, 0);
     const totalChars = docs.reduce((s, d) => s + d.chars, 0);
     return { docs, activeChars, totalChars };
+  }
+
+  /**
+   * 系统内部写入一份资料（不走文件上传）。
+   *
+   * 目前只有一处用：对标账号情报的分析结果**投影**成一份资料，
+   * 好让智能体在对话里能检索到「对标账号是怎么讲这个场景的」。
+   *
+   * 按 fileName 判同名即更新（与 upload 同一口径）——
+   * 同一个对标账号反复分析只留最新一份，不会越堆越多。
+   */
+  async writeDoc(
+    tenantId: string,
+    data: { title: string; content: string; fileName: string; sourceType: string; sourceUrl?: string },
+  ): Promise<{ id: string; title: string; chars: number }> {
+    const content = data.content.slice(0, MAX_CHARS);
+    const existed = await this.prisma.knowledgeDoc.findFirst({ where: { tenantId, fileName: data.fileName } });
+    const payload = {
+      title: data.title,
+      content,
+      chars: content.length,
+      sourceType: data.sourceType,
+      sourceUrl: data.sourceUrl ?? '',
+    };
+    const doc = existed
+      ? await this.prisma.knowledgeDoc.update({ where: { id: existed.id }, data: payload })
+      : await this.prisma.knowledgeDoc.create({ data: { tenantId, fileName: data.fileName, ...payload } });
+    return { id: doc.id, title: doc.title, chars: doc.chars };
   }
 
   async toggle(tenantId: string, id: string, enabled: boolean) {

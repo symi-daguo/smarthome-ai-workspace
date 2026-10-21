@@ -12,13 +12,17 @@ import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
-import { buildUserContent } from '../src/llm/llm.service.js';
+import { buildUserContent, extractJsonValue } from '../src/llm/llm.service.js';
 import { markCharged, isChargedError } from '../src/media/media.service.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
 import { PERMISSIONS, WRITE_IMPLIES_READ } from '../src/rbac/permissions.js';
 import { rankLocalChunks } from '../src/knowledge/knowledge-doc.service.js';
 import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../src/common/upstream-timeout.js';
+import { BrandSiteService } from '../src/layout/brand-site.service.js';
+import { guessModel } from '../src/layout/brand-import.service.js';
+import { computeHotScore } from '../src/benchmark/benchmark.service.js';
+import { buildProjectionText, normalizeAnalysis } from '../src/benchmark/benchmark-analyze.service.js';
 
 const MANIFEST_KEYS = MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
 
@@ -53,7 +57,7 @@ function extractGuards(root: string): Map<string, string[]> {
         if (!mm) continue;
         let perm = classPerm;
         // 向上找方法级守卫，但**遇到空行必须停**：装饰器总是紧贴 handler，
-        // 不设边界的话会把上一个端点的守卫当成这一个的（曾经因此误判 materials/purchase）
+        // 不设边界的话会把上一个端点的守卫当成这一个的（曾经因此误判一个扣费端点）
         for (let j = i - 1; j >= 0; j -= 1) {
           if (lines[j].trim() === '') break;
           const pm = lines[j].match(/@RequirePermissions\('([a-z:]+)'\)/);
@@ -105,6 +109,31 @@ async function request<T>(base: string, path: string, init?: RequestInit): Promi
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   });
   return { status: res.status, body: (await res.json().catch(() => null)) as T };
+}
+
+/**
+ * 取文本响应的请求（文件下载类接口用）。
+ *
+ * 为什么单独一个：`request` 用 `res.json()`，遇到 CSV/文本会解析失败 → body 变 null，
+ * 断言就会「因为拿到 null 而失败」，看起来像接口坏了，其实是取法不对。
+ *
+ * **同时保留原始字节**：按 WHATWG 规范，`Response.text()` 会**自动剥离 UTF-8 BOM**。
+ * 所以「CSV 有没有 BOM」这件事不能用 text() 后的字符串判断 ——
+ * 那样无论服务端发没发 BOM，断言都会失败（实测踩到：服务端字节里 BOM 明明在，
+ * 断言却报「没有 BOM」）。要判断 BOM 必须看原始字节。
+ */
+async function requestText(base: string, path: string, init?: RequestInit): Promise<{ status: number; body: string; bytes: Buffer; contentType: string }> {
+  const res = await fetch(`${base}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  });
+  const bytes = Buffer.from(await res.arrayBuffer());
+  return {
+    status: res.status,
+    body: bytes.toString('utf8'),
+    bytes,
+    contentType: res.headers.get('content-type') ?? '',
+  };
 }
 
 async function main(): Promise<void> {
@@ -317,33 +346,13 @@ async function main(): Promise<void> {
     check('同步产品品类自动推断（非默认兜底）', mineProducts.every((p) => p.category.length > 0));
   }
 
-  // ---------- S3 产物库：素材购买扣额度 + 重复购买幂等 ----------
-  const buy = await request<{ url: string }>(base, '/api/media/materials/purchase', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${regA.body.token}` },
-    body: JSON.stringify({ key: 'm1' }),
-  });
-  check('素材购买返回本地路径', buy.status === 201 && buy.body.url === '/images/materials/m1.jpg');
-
-  const tokensAfterBuy = await request<{ tokenBalance: number }>(base, '/api/tenants/current/tokens', {
-    headers: { Authorization: `Bearer ${regA.body.token}` },
-  });
-  check('素材购买扣减 100 token', tokensAfterBuy.body.tokenBalance === 78_800 - 100);
-
-  const buyAgain = await request<{ url: string }>(base, '/api/media/materials/purchase', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${regA.body.token}` },
-    body: JSON.stringify({ key: 'm1' }),
-  });
-  const tokensDup = await request<{ tokenBalance: number }>(base, '/api/tenants/current/tokens', {
-    headers: { Authorization: `Bearer ${regA.body.token}` },
-  });
-  check('重复购买同一素材不再扣款', buyAgain.status === 201 && tokensDup.body.tokenBalance === 78_800 - 100);
-
+  // ---------- S3 产物库：素材列表 ----------
+  // 断言口径从「含已购素材」改成「是数组」：素材购买交易已下线，
+  // 空列表是正常状态，拿长度当断言会变成一个永远为假的检查。
   const assetList = await request<unknown[]>(base, '/api/media/assets', {
     headers: { Authorization: `Bearer ${regA.body.token}` },
   });
-  check('产物列表含已购素材', Array.isArray(assetList.body) && assetList.body.length >= 1);
+  check('产物列表接口返回数组', Array.isArray(assetList.body));
 
   // ---------- S3 智能方案：列表/校验/分享端点（不触发真实 LLM 生成） ----------
   const plansEmpty = await request<unknown[]>(base, '/api/plans', {
@@ -381,7 +390,25 @@ async function main(): Promise<void> {
 
   // ---------- 产品中心：我的库 CRUD + 查重 + 复制到我的库 + 租户隔离 ----------
   const auth0 = { headers: { Authorization: `Bearer ${regA.body.token}` } };
-  type ProductRow = { id: string; name: string; tenantId: string | null; brand?: string; imageUrl?: string; pricingMode?: string };
+  type ProductRow = {
+    id: string;
+    name: string;
+    tenantId: string | null;
+    brand?: string;
+    model?: string;
+    category?: string;
+    unit?: string;
+    spec?: string;
+    imageUrl?: string;
+    warranty?: number;
+    priceRetail?: number;
+    priceDealer?: number;
+    priceProject?: number;
+    rebateL1?: number;
+    rebateL2?: number;
+    rebateDesigner?: number;
+    pricingMode?: string;
+  };
   const pub = (products.body as ProductRow[]).find((p) => p.tenantId === null);
   check('种子产品均为公共库行', Boolean(pub));
 
@@ -497,6 +524,312 @@ async function main(): Promise<void> {
   const afterDel = await request<ProductRow[]>(base, '/api/products', auth0);
   check('删除我的库产品后列表不再包含', !afterDel.body.some((p) => p.id === myId));
   await request(base, `/api/products/${copyRes.body.id}`, { ...auth0, method: 'DELETE' });
+
+  // ---------- 产品库导入 / 导出（1.0.2） ----------
+  // 判据覆盖三件事：导出的格式能读回来、导回来不产生重复行、坏数据整批不落库。
+  const expCsv = await requestText(base, '/api/products/export?scope=mine&format=csv', auth0);
+  check(
+    '产品库可导出 CSV',
+    expCsv.status === 200 && expCsv.body.includes('name,category'),
+    expCsv.contentType,
+  );
+  check(
+    'CSV 带 UTF-8 BOM（Excel 打开中文不乱码）',
+    expCsv.bytes[0] === 0xef && expCsv.bytes[1] === 0xbb && expCsv.bytes[2] === 0xbf,
+    `前 3 字节 ${[...expCsv.bytes.slice(0, 3)].map((b) => b.toString(16)).join(' ')}`,
+  );
+  check(
+    'CSV 响应类型是 text/csv（浏览器会当成文件下载）',
+    expCsv.contentType.includes('text/csv'),
+    expCsv.contentType,
+  );
+  const expJson = await request<{ version: number; products: unknown[] }>(base, '/api/products/export?scope=mine&format=json', auth0);
+  check(
+    '产品库可导出 JSON',
+    expJson.status === 200 && expJson.body?.version === 1 && Array.isArray(expJson.body?.products),
+  );
+
+  const importRows = [
+    { name: '导入验证产品甲', category: 'switch', brand: '冒烟品牌', model: 'A1', unit: '台', priceRetail: 100, spec: '导入用' },
+    { name: '导入验证产品乙', category: 'light', brand: '冒烟品牌', unit: '个', priceRetail: 200 },
+  ];
+  const imp1 = await request<{ created: number; updated: number }>(base, '/api/products/import', {
+    ...auth0, method: 'POST', body: JSON.stringify({ rows: importRows }),
+  });
+  check('产品库可导入（JSON 行）', imp1.status === 201 && imp1.body?.created === 2, JSON.stringify(imp1.body));
+
+  const imp2 = await request<{ created: number; updated: number }>(base, '/api/products/import', {
+    ...auth0, method: 'POST', body: JSON.stringify({ rows: importRows }),
+  });
+  check(
+    '重复导入同名同品牌走更新而非新增（幂等）',
+    imp2.status === 201 && imp2.body?.created === 0 && imp2.body?.updated === 2,
+    JSON.stringify(imp2.body),
+  );
+
+  const impCsv = await request<{ created: number }>(base, '/api/products/import', {
+    ...auth0,
+    method: 'POST',
+    body: JSON.stringify({
+      csv: '﻿name,category,brand,model,unit,warranty,priceRetail,priceDealer,priceProject,rebateL1,rebateL2,rebateDesigner,pricingMode,spec\r\nCSV导入产品丙,switch,冒烟品牌,C3,台,24,300,250,200,5,3,2,per_unit,CSV导入\r\n',
+    }),
+  });
+  check(
+    '产品库可导入 CSV（数值字段从字符串还原成数字）',
+    impCsv.status === 201 && impCsv.body?.created === 1,
+    JSON.stringify(impCsv.body),
+  );
+  const csvImported = await request<ProductRow[]>(base, '/api/products', auth0);
+  const csvRow = csvImported.body.find((p) => p.name === 'CSV导入产品丙');
+  check(
+    'CSV 导入的数值字段落库正确（指导价 300 / 返点 5%）',
+    csvRow?.priceRetail === 300 && csvRow?.rebateL1 === 5 && csvRow?.warranty === 24,
+    JSON.stringify({ priceRetail: csvRow?.priceRetail, rebateL1: csvRow?.rebateL1, warranty: csvRow?.warranty }),
+  );
+
+  // 导入格式契约：客户自己的 Agent 照着它填，所以它必须与实际校验完全一致
+  const fmtRes = await request<{
+    version?: number;
+    fields?: { name: string; required: boolean; type: string; desc: string; range?: string }[];
+    categories?: { key: string; label: string }[];
+    csvHeader?: string;
+    csvTemplate?: string;
+    jsonExample?: { version?: number; products?: unknown[] };
+    rules?: string[];
+  }>(base, '/api/products/import-format', auth0);
+  const fmt = fmtRes.body;
+  check(
+    '产品库提供导入格式契约（给客户自己的 Agent 用）',
+    fmtRes.status === 200 && fmt?.version === 1 && Array.isArray(fmt?.fields) && fmt.fields.length > 0,
+    `status=${fmtRes.status}，字段 ${fmt?.fields?.length ?? 0} 个`,
+  );
+  const specNames = (fmt?.fields ?? []).map((f) => f.name);
+  check(
+    '格式契约的字段与 CSV 列顺序完全一致（导出的文件能原样导回来）',
+    specNames.join(',') === (fmt?.csvHeader ?? ''),
+    `契约=${specNames.slice(0, 5).join(',')}… 表头=${(fmt?.csvHeader ?? '').slice(0, 40)}…`,
+  );
+  check(
+    '格式契约里只有 name 与 category 是必填',
+    (fmt?.fields ?? []).filter((f) => f.required).map((f) => f.name).join(',') === 'name,category',
+    (fmt?.fields ?? []).filter((f) => f.required).map((f) => f.name).join(','),
+  );
+  const fmtCats = fmt?.categories ?? [];
+  const catKeysApi = new Set((await request<{ key: string }[]>(base, '/api/categories', auth0)).body.map((c) => c.key));
+  check(
+    '格式契约给出的品类字典就是当前可用的品类（Agent 照填才不会整批被拒）',
+    fmtCats.length > 0 && fmtCats.every((c) => catKeysApi.has(c.key)),
+    `契约 ${fmtCats.length} 个`,
+  );
+  check(
+    '格式契约带 CSV 模板与 JSON 示例与导入规则',
+    typeof fmt?.csvTemplate === 'string' && fmt.csvTemplate.includes('name,category')
+      && Boolean(fmt?.jsonExample?.products) && (fmt?.rules?.length ?? 0) >= 5,
+    `模板${fmt?.csvTemplate?.length ?? 0} 字节，规则 ${fmt?.rules?.length ?? 0} 条`,
+  );
+  // 契约里给的示例 category 必须真的是合法品类（否则照着填会被拒）
+  const exCat = (fmt?.jsonExample?.products as { category?: string }[] | undefined)?.[0]?.category;
+  check(
+    '格式契约的 JSON 示例里的品类是合法品类',
+    Boolean(exCat) && catKeysApi.has(exCat as string),
+    String(exCat),
+  );
+
+  const impBad = await request<{ code?: string; details?: string[] }>(base, '/api/products/import', {
+    ...auth0,
+    method: 'POST',
+    body: JSON.stringify({
+      rows: [
+        { name: '整批拒绝前的合法行', category: 'switch' },
+        { name: '整批拒绝的非法行', category: 'not-a-real-category' },
+      ],
+    }),
+  });
+  check(
+    '坏数据整批拒绝（400）并逐行说明原因',
+    impBad.status === 400 && Array.isArray(impBad.body?.details) && impBad.body.details.length > 0,
+    JSON.stringify(impBad.body?.details?.slice(0, 2)),
+  );
+  const afterBad = await request<ProductRow[]>(base, '/api/products', auth0);
+  check(
+    '整批拒绝时一行都不落库（没有半截数据）',
+    !afterBad.body.some((p) => p.name === '整批拒绝前的合法行'),
+  );
+
+  // 清理导入测试数据
+  for (const p of afterBad.body.filter((x) => x.brand === '冒烟品牌')) {
+    await request(base, `/api/products/${p.id}`, { ...auth0, method: 'DELETE' });
+  }
+
+  // 品牌官网抓取：参数校验（真实抓取要外网，smoke 不依赖外网）
+  const fetchBad = await request<{ code?: string }>(base, '/api/products/fetch-brand', {
+    ...auth0, method: 'POST', body: JSON.stringify({ siteUrl: '', brand: '测试' }),
+  });
+  check('品牌抓取缺地址被校验拒绝', fetchBad.status === 400);
+  const fetchBad2 = await request(base, '/api/products/fetch-brand', {
+    ...auth0, method: 'POST', body: JSON.stringify({ siteUrl: 'https://example.com/p', brand: '' }),
+  });
+  check('品牌抓取缺品牌名被校验拒绝', fetchBad2.status === 400);
+  const fetchBad3 = await request(base, '/api/products/fetch-brand', {
+    ...auth0, method: 'POST', body: JSON.stringify({ siteUrl: 'https://example.com/p', brand: '测试', mode: 'preview' }),
+  });
+  check(
+    '品牌抓取对未适配站点给出明确错误（不静默返回空）',
+    fetchBad3.status >= 400 && fetchBad3.status < 600,
+    `status=${fetchBad3.status}`,
+  );
+  // 抓取失败**不能是一律 500**：用户填了网站首页（或乱填的地址），
+  // 界面上只看到「服务器错误」是最糟的体验 —— 要给 400 + 看得懂的中文提示。
+  check(
+    '品牌抓取失败返回 400 而不是 500（用户能看懂错在哪）',
+    fetchBad3.status === 400,
+    `status=${fetchBad3.status}`,
+  );
+  check(
+    '品牌抓取失败时错误信息是中文且给出下一步指引',
+    typeof (fetchBad3.body as { message?: string })?.message === 'string'
+      && /产品中心|产品列表|导入/.test((fetchBad3.body as { message?: string }).message ?? ''),
+    String((fetchBad3.body as { message?: string })?.message).slice(0, 80),
+  );
+  const fetchBad4 = await request(base, '/api/products/fetch-brand', {
+    ...auth0, method: 'POST', body: JSON.stringify({ siteUrl: '这不是一个网址', brand: '测试', mode: 'preview' }),
+  });
+  check(
+    '品牌抓取地址非法时返回 400 而不是 500',
+    fetchBad4.status === 400,
+    `status=${fetchBad4.status}`,
+  );
+
+  // 品牌官网抓取：对着**本地假品牌站**跑真实抓取（不依赖外网，CI 也能跑）
+  //
+  // 假站复刻建站平台（faiusr/508sys）的产品中心结构（实测 2026-10-21 于 cnsymi.com）：
+  // - 分类名：<span class='tabButtonText'>灯控系统</span>
+  // - 列表容器：id='productList426'
+  // - 产品：<tr id='module426product101'>
+  // - 产品名：<a class='fk-productName'>（服务端是**单引号**，浏览器处理后才变双引号）
+  // - 主图：<img data-original='...'>
+  // - 分页：容器 id='pagenation426'，链接里带 m426pageno
+  const brandHtml = (page: number): string => {
+    const page1Products = `
+      <tr id='module426product101'><td>
+        <a class='fk-productName' href='#'>Z7二键智能开关</a>
+        <img data-original='/img/switch-a.jpg' alt='Z7二键智能开关'/>
+      </td></tr>
+      <tr id='module426product102'><td>
+        <a class='fk-productName' href='#'>Z8三键智能开关</a>
+        <img data-original='/img/switch-b.jpg' alt='Z8三键智能开关'/>
+      </td></tr>`;
+    const page2Product = `
+      <tr id='module426product103'><td>
+        <a class='fk-productName' href='#'>磁吸轨道灯</a>
+        <img data-original='/img/light-a.jpg' alt='磁吸轨道灯'/>
+      </td></tr>`;
+    const curtain = `
+      <tr id='module430product201'><td>
+        <a class='fk-productName' href='#'>电动窗帘电机</a>
+        <img data-original='/img/curtain-a.jpg' alt='电动窗帘电机'/>
+      </td></tr>`;
+    // 第 1 页有分页链接 → 抓取器会继续翻第 2 页；第 2 页没有 → 到头
+    const pagenation426 = page === 1
+      ? `<div id='pagenation426'><a href='#'>下一页</a><span data-args='m426pageno%22%3A2'></span></div>`
+      : `<div id='pagenation426'><span>已是最后一页</span></div>`;
+    return `<!doctype html><html><head><title>假品牌站</title></head><body>
+      <span class='tabButtonText'>灯控系统</span>
+      <span class='tabButtonText'>遮阳系统</span>
+      <span class='tabButtonText'>定制类</span>
+      <div id='productList426'>${page1Products}${page === 2 ? page2Product : ''}</div>
+      <div id='productList430'>${curtain}</div>
+      ${pagenation426}
+    </body></html>`;
+  };
+  const fakeBrandSite = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    let page = 1;
+    const args = url.searchParams.get('_reqArgs');
+    if (args) {
+      try {
+        page = Number(JSON.parse(args).args?.m426pageno ?? 1);
+      } catch {
+        page = 1;
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(brandHtml(page));
+  });
+  await new Promise<void>((resolve) => fakeBrandSite.listen(0, '127.0.0.1', resolve));
+  const fakeSiteBase = `http://127.0.0.1:${(fakeBrandSite.address() as AddressInfo).port}`;
+
+  const brandSvc = app.get(BrandSiteService);
+  const fakeFetched = await brandSvc.fetch(`${fakeSiteBase}/h-col-103.html`, '假品牌');
+  check(
+    '品牌抓取能识别官网分类名',
+    fakeFetched.categories.length === 3 && fakeFetched.categories[0] === '灯控系统',
+    fakeFetched.categories.join('/'),
+  );
+  check(
+    '品牌抓取能翻到分页第二页并去重',
+    fakeFetched.products.length === 4,
+    `${fakeFetched.products.length} 个：${fakeFetched.products.map((p) => p.name).join('、')}`,
+  );
+  const fakeSwitch = fakeFetched.products.find((p) => p.name === 'Z7二键智能开关');
+  check(
+    '品牌抓取能取出产品名/分类/主图/详情页',
+    fakeSwitch?.categoryName === '灯控系统'
+      && fakeSwitch?.imageUrl === '/img/switch-a.jpg'
+      && fakeSwitch?.detailUrl === '/sys-pd/101.html',
+    JSON.stringify({ c: fakeSwitch?.categoryName, i: fakeSwitch?.imageUrl, d: fakeSwitch?.detailUrl }),
+  );
+  const fakeCurtain = fakeFetched.products.find((p) => p.name === '电动窗帘电机');
+  check(
+    '品牌抓取不会把别的分类的产品算到没有容器的分类上',
+    fakeCurtain?.categoryName === '遮阳系统'
+      && fakeFetched.products.every((p) => p.categoryName !== '定制类'),
+    fakeFetched.products.map((p) => `${p.name}→${p.categoryName}`).join('、'),
+  );
+  check(
+    '官网分类缺容器时如实提示并跳过',
+    fakeFetched.notes.some((n) => n.includes('定制类') && n.includes('跳过')),
+    fakeFetched.notes.join(' | '),
+  );
+
+  // 风控拦截页必须被识别（真实官网默认 UA 就会被拦，实测返回「可疑请求拦截通知」）
+  const blockedSite = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><html><head><title>可疑请求拦截通知</title></head><body>您的访问行为异常</body></html>');
+  });
+  await new Promise<void>((resolve) => blockedSite.listen(0, '127.0.0.1', resolve));
+  const blockedBase = `http://127.0.0.1:${(blockedSite.address() as AddressInfo).port}`;
+  let blockedMsg = '';
+  let blockedCode = '';
+  try {
+    await brandSvc.fetch(`${blockedBase}/h-col-103.html`, '假品牌');
+  } catch (e) {
+    blockedMsg = e instanceof Error ? e.message : String(e);
+    // 错误码在异常的响应体里（code），message 是给用户看的中文文案
+    const resp = (e as { getResponse?: () => unknown })?.getResponse?.();
+    blockedCode = String((resp as { code?: string })?.code ?? '');
+  }
+  check(
+    '品牌官网风控拦截页被识别（不把拦截页当成空产品列表）',
+    blockedCode === 'SITE_BLOCKED' && blockedMsg.includes('风控'),
+    `code=${blockedCode} message=${blockedMsg.slice(0, 60)}`,
+  );
+  blockedSite.close();
+  fakeBrandSite.close();
+
+  // 型号兜底规则：确定性，同一个产品名永远得到同一个型号
+  check(
+    '型号能从产品名确定性提取',
+    guessModel('Z7二键智能开关') === 'Z7'
+      && guessModel('WJ-1.2N 智能面板') === 'WJ-1.2N'
+      && guessModel('X30 中控屏') === 'X30',
+    [guessModel('Z7二键智能开关'), guessModel('WJ-1.2N 智能面板'), guessModel('X30 中控屏')].join(' | '),
+  );
+  check(
+    '型号提取不把中文数字当型号（宁可留空）',
+    guessModel('二键智能开关') === '' && guessModel('3 路继电器') === '',
+    [guessModel('二键智能开关'), guessModel('3 路继电器')].join(' | '),
+  );
 
   // ai-process 入参校验（不触发真实 LLM/生图链路）
   const aiEmpty = await request(base, '/api/products/ai-process', { ...auth0, method: 'POST', body: JSON.stringify({ ids: [] }) });
@@ -775,6 +1108,226 @@ async function main(): Promise<void> {
   // 后续用例统一换用新密码签发的 token
   authA = { headers: { Authorization: `Bearer ${relogin.body.token}` } };
   await request(base, '/api/admin/model-config/chat', { ...authA, method: 'DELETE' });
+
+  // ---------- 对标账号情报：配置 → 契约 → 采集提交 → 热度排序 → 保留期清理 ----------
+  // 用例顺序有意为之：先提交内容再清理，最后 analyze 时账号已无内容，
+  // 走的是 NO_CONTENT 分支（不调模型），smoke 全程不依赖外网与模型。
+  const benchAcc = await request<{ id: string }>(base, '/api/benchmark/accounts', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      platform: '内容平台甲',
+      accountName: '冒烟对标账号',
+      homeUrl: 'https://example.com/bench-account',
+      tags: '智能家居,照明',
+      note: '冒烟用例',
+    }),
+  });
+  check('新增对标账号成功', benchAcc.status === 201 && Boolean(benchAcc.body?.id));
+  const benchAccId = benchAcc.body?.id ?? '';
+
+  const benchSpec = await request<{
+    fields: { key: string; baseline: boolean }[];
+    rules: string[];
+    accounts: { accountId: string }[];
+    sortFields: { key: string }[];
+    hotRules: { formula: string };
+    jsonExample: unknown;
+    submit: { path: string };
+  }>(base, '/api/benchmark/collect-spec', authA);
+  check(
+    '采集契约给出字段、规则与排序维度',
+    benchSpec.status === 200 &&
+      benchSpec.body.fields.length >= 10 &&
+      benchSpec.body.rules.length >= 6 &&
+      benchSpec.body.sortFields.length >= 3,
+  );
+  check(
+    '采集契约带上刚配置的对标账号',
+    benchSpec.body.accounts.some((a) => a.accountId === benchAccId),
+  );
+  check(
+    '契约标明哪些字段是同业基线、哪些是可选增强',
+    benchSpec.body.fields.some((f) => f.baseline === true) && benchSpec.body.fields.some((f) => f.baseline === false),
+  );
+  check(
+    '契约给出热度公式、提交入口与可直接照抄的示例',
+    benchSpec.body.hotRules.formula.includes('hotScore') &&
+      benchSpec.body.submit.path === '/api/benchmark/contents' &&
+      Boolean(benchSpec.body.jsonExample),
+  );
+
+  const benchDay = 86_400_000;
+  const benchItems = [
+    {
+      accountId: benchAccId,
+      title: '旧但高互动',
+      text: '旧内容文案',
+      sourceUrl: 'https://example.com/p/old',
+      publishedAt: new Date(Date.now() - 30 * benchDay).toISOString(),
+      play: 100000,
+      like: 5000,
+      comment: 800,
+      collect: 900,
+      share: 300,
+    },
+    {
+      accountId: benchAccId,
+      title: '新但低互动',
+      text: '新内容文案',
+      sourceUrl: 'https://example.com/p/new',
+      publishedAt: new Date(Date.now() - benchDay).toISOString(),
+      play: 1000,
+      like: 10,
+      comment: 1,
+    },
+  ];
+  const benchSubmit = await request<{ accepted: number; created: number }>(base, '/api/benchmark/contents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ batchId: 'smoke-bench', items: benchItems }),
+  });
+  check('提交采集内容成功入库', benchSubmit.status === 201 && benchSubmit.body.created === 2);
+
+  const benchAgain = await request<{ created: number; updated: number }>(base, '/api/benchmark/contents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ batchId: 'smoke-bench', items: benchItems }),
+  });
+  check('重复提交同一链接只更新不重复入库', benchAgain.body.created === 0 && benchAgain.body.updated === 2);
+
+  const benchHot = await request<{ contents: { title: string; hotScore: number }[] }>(
+    base,
+    '/api/benchmark/contents?sortBy=hotScore',
+    authA,
+  );
+  check('综合热度把高互动内容排在前', benchHot.body.contents[0]?.title === '旧但高互动');
+  const benchPub = await request<{ contents: { title: string }[] }>(
+    base,
+    '/api/benchmark/contents?sortBy=published',
+    authA,
+  );
+  check('排序维度可切换（按发布时间时新内容在前）', benchPub.body.contents[0]?.title === '新但低互动');
+
+  const benchUnknown = await request<{ code?: string }>(base, '/api/benchmark/contents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      items: [{ ...benchItems[0], accountId: '00000000-0000-0000-0000-000000000000' }],
+    }),
+  });
+  check(
+    '提交未配置的对标账号被拒（400）',
+    benchUnknown.status === 400 && benchUnknown.body?.code === 'BENCHMARK_ACCOUNT_UNKNOWN',
+  );
+
+  const benchMany = await request<{ accepted: number; skippedOverLimit: number }>(base, '/api/benchmark/contents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      items: Array.from({ length: 25 }, (_, i) => ({
+        accountId: benchAccId,
+        title: `批量内容${i}`,
+        text: '批量文案',
+        sourceUrl: `https://example.com/p/b${i}`,
+        like: i + 1,
+      })),
+    }),
+  });
+  check(
+    '单账号超出条数上限按热度截断（不算错误）',
+    benchMany.body.accepted === 20 && benchMany.body.skippedOverLimit === 5,
+  );
+
+  const benchPrune = await request<{ removed: number }>(base, '/api/benchmark/prune?days=0', {
+    ...authA,
+    method: 'POST',
+  });
+  check('可清理超保留期的采集内容', benchPrune.status === 201 && benchPrune.body.removed >= 20);
+
+  const benchAnalyze = await request<{ results: { error?: string }[] }>(base, '/api/benchmark/analyze', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ topN: 20 }),
+  });
+  check(
+    '没有内容时分析给出明确原因而不是空结果',
+    benchAnalyze.status === 201 && benchAnalyze.body.results[0]?.error === 'NO_CONTENT',
+  );
+
+  const benchDel = await request(base, `/api/benchmark/accounts/${benchAccId}`, { ...authA, method: 'DELETE' });
+  check('删除对标账号成功', benchDel.status === 200);
+  const benchList = await request<{ accounts: { id: string }[] }>(base, '/api/benchmark/accounts', authA);
+  check('删除后清单里不再有该账号', !benchList.body.accounts.some((a) => a.id === benchAccId));
+
+  // 纯函数：JSON 提取（模型常在 JSON 后面补说明或再给一个 JSON，用 lastIndexOf 会截错）
+  check(
+    '模型在 JSON 后补说明文字也能抠出完整 JSON',
+    extractJsonValue('{"a":1}\n以上是分析结果') === '{"a":1}',
+    String(extractJsonValue('{"a":1}\n以上是分析结果')),
+  );
+  check(
+    '模型连给两个 JSON 时只取第一个',
+    extractJsonValue('{"a":1}\n{"b":2}') === '{"a":1}',
+    String(extractJsonValue('{"a":1}\n{"b":2}')),
+  );
+  check(
+    'JSON 字符串里的括号不影响配平',
+    extractJsonValue('{"a":"}{["}') === '{"a":"}{["}',
+    String(extractJsonValue('{"a":"}{["}')),
+  );
+  check(
+    'JSON 被截断时返回 null（不硬解析出半截）',
+    extractJsonValue('{"a":1') === null,
+  );
+
+  // 纯函数：热度分口径与分析结果收敛（这两段决定了榜单顺序与数据是否会被模型污染）
+  check(
+    '热度分随时效衰减（同互动量越新分越高）',
+    computeHotScore({ like: 100 }, new Date(Date.now() - benchDay)) >
+      computeHotScore({ like: 100 }, new Date(Date.now() - 30 * benchDay)),
+  );
+  check(
+    '评论权重高于点赞（同样的数评论分更高）',
+    computeHotScore({ comment: 10 }, null) > computeHotScore({ like: 10 }, null),
+  );
+
+  const projText = buildProjectionText(
+    { accountName: '对标甲', platform: '平台X' },
+    normalizeAnalysis({
+      summary: '它靠实拍讲场景',
+      style: { hooks: '痛点提问' },
+      scenes: [{ scene: '全屋灯光', ourCategory: '智能灯光', evidence: '样本第2条' }],
+      sellingPoints: ['免布线'],
+      structure: [{ step: '钩子', seconds: '3秒', what: '先给结果' }],
+      gaps: [{ title: '缺实拍案例', why: '对标8条都在实拍', action: '拍3条实拍' }],
+    }),
+    12,
+  );
+  check(
+    '分析结论投影成知识库文本（画像/映射/差距都在）',
+    projText.includes('【风格画像】') &&
+      projText.includes('全屋灯光') &&
+      projText.includes('缺实拍案例') &&
+      projText.includes('拍3条实拍'),
+  );
+
+  const normalized = normalizeAnalysis({
+    summary: ' 结论 ',
+    style: { hooks: '钩子', 乱字段: 'x' },
+    scenes: [{ scene: 'A', ourCategory: 'B', evidence: 'C' }, { 无场景: 1 }],
+    sellingPoints: ['卖点', 123],
+    gaps: [{ title: 'T', why: 'W', action: 'A' }],
+    乱字段: 'x',
+  } as Record<string, unknown>);
+  check(
+    '分析结果按白名单收敛（模型乱返回不污染数据）',
+    normalized.summary === '结论' &&
+      normalized.style.hooks === '钩子' &&
+      normalized.scenes.length === 1 &&
+      normalized.sellingPoints.length === 2 &&
+      normalized.gaps.length === 1,
+  );
 
   // 生视频 provider 可切换（不再写死 MiniMax）+ ComfyUI 独立配置持久化
   const putVideo = await request<{ ok: boolean }>(base, '/api/admin/model-config/video', {
@@ -2404,31 +2957,16 @@ async function main(): Promise<void> {
     );
   }
 
-  // ---------- 素材库投稿：提交 + 我的投稿列表 ----------
+  // ---------- 视频素材上传（投稿交易已下线，上传能力保留） ----------
   const subFd2 = new FormData();
   subFd2.append('file', new Blob([Buffer.from('fake-mp4-bytes')], { type: 'video/mp4' }), 'clip.mp4');
   const subUpRes = await fetch(`${base}/api/media/materials/upload`, { method: 'POST', headers: authA.headers, body: subFd2 });
   const upJson = (await subUpRes.json().catch(() => null)) as { id?: string } | null;
-  const subBad = await request(base, '/api/media/materials/submissions', {
-    ...authA, method: 'POST', body: JSON.stringify({ assetId: '00000000-0000-0000-0000-000000000000', title: 'x' }),
+  check('视频素材上传成功并返回 assetId', subUpRes.ok && Boolean(upJson?.id));
+  const subGone = await request(base, '/api/media/materials/submissions', {
+    ...authA, method: 'POST', body: JSON.stringify({ assetId: upJson?.id ?? 'x', title: 'x' }),
   });
-  check('投稿引用不存在的素材被拒（400）', subBad.status === 400);
-  let subId = '';
-  if (subUpRes.ok && upJson?.id) {
-    const subOk = await request<{ id: string; status: string }>(base, '/api/media/materials/submissions', {
-      ...authA, method: 'POST', body: JSON.stringify({ assetId: upJson.id, title: '冒烟投稿', desc: '自动化测试' }),
-    });
-    subId = subOk.body?.id ?? '';
-    check('投稿提交成功且初始为待审核', subOk.status === 201 && subOk.body.status === 'pending');
-  } else {
-    check('投稿提交成功且初始为待审核', false);
-  }
-  const mySubs = await request<{ id: string; title: string }[]>(base, '/api/media/materials/submissions', authA);
-  check('我的投稿列表含刚提交的记录', mySubs.status === 200 && mySubs.body.some((x) => x.id === subId));
-  const subEmpty = await request(base, '/api/media/materials/submissions', {
-    ...authA, method: 'POST', body: JSON.stringify({ assetId: upJson?.id ?? 'x', title: '' }),
-  });
-  check('投稿空标题被校验拒绝（400）', subEmpty.status === 400);
+  check('素材投稿交易已下线（端点不存在，返回 404）', subGone.status === 404);
 
   // ---------- 视频模型名必须真正下发，不能被硬编码覆盖 ----------
   // 回归点：曾经写死 T2V/I2V-01-Director，用户在「模型配置」填的模型（含 MiniMax-H3 这类
@@ -3210,8 +3748,9 @@ async function main(): Promise<void> {
       '只读 Key 的清单里确实看不到团队管理与数据备份',
       !promised.some((k) => k.includes('/api/team/members') || k.includes('/api/admin/backup')),
     );
-    // 扣费类操作必须出现在声明表里，且需要权限 —— 曾经 materials/purchase 扣 100 token 却无守卫
-    const charging = ['POST /api/media/materials/purchase', 'POST /api/tenants/current/tokens/grant', 'POST /api/media/videos'];
+    // 扣费类操作必须出现在声明表里，且需要权限 —— 曾经有一个扣费端点没挂守卫，
+    // 等于连只读成员都能花租户额度
+    const charging = ['POST /api/tenants/current/tokens/grant', 'POST /api/media/videos', 'POST /api/llm/chat'];
     check(
       '会扣额度的操作都在权限声明里且要求权限',
       charging.every((k) => (OP_PERMISSIONS[k] ?? []).length > 0),

@@ -64,11 +64,20 @@ export async function api<T>(path: string, init?: ApiInit): Promise<T> {
     clearTimeout(timer);
   }
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
+    const body = (await response.json().catch(() => null)) as
+      | { message?: string; code?: string; details?: unknown[] }
+      | null;
     // 把后端的 code 一并带出来：否则前端只能靠文案匹配判断是哪类错误，
     // 改个字面量就静默失效。Nest 的异常体本身就是 { code, message }。
-    const err = new Error(body?.message ?? response.statusText) as Error & { code?: string; status?: number };
+    const err = new Error(body?.message ?? response.statusText) as Error & {
+      code?: string;
+      status?: number;
+      details?: unknown[];
+    };
     if (body?.code) err.code = body.code;
+    // details 是逐条明细（如导入时每行的问题清单）——不透传的话前端只能显示一句概括，
+    // 用户不知道到底哪几行有问题。
+    if (Array.isArray(body?.details)) err.details = body.details;
     err.status = response.status;
     throw err;
   }

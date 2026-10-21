@@ -36,14 +36,14 @@ const BACKUP_TABLES = [
   'customAgent', 'feedbackTicket', 'lightingScene',
   // 0.1.44 AI 画布：对话线/轮次/异步作业，缺任一张都会丢掉全部创作记录
   'imageConversation', 'imageTurn', 'generationJob',
-  // 0.1.45 素材库投稿
-  'materialSubmission',
   // 0.1.53 Agent 机器接入：机器账号与 API Key 丢了就得全部重新签发，快照丢了就再也回不到操作前
   'apiKey', 'changeSnapshot',
   // 0.1.75 本地资料库：漏了它，备份恢复后门店资料会凭空消失
   'knowledgeDoc',
   // 0.2.4 提交幂等记录：漏了它，恢复后重试窗口内的提交会被当成首次执行（可能重复扣费）
   'idempotencyRecord',
+  // 对标账号情报：账号清单/采集到的内容/分析结论，缺任一张都会丢掉整条情报链路
+  'benchmarkAccount', 'benchmarkContent', 'benchmarkInsight',
 ] as const;
 
 /** 取主键：备份行里 id / key / *Id 里第一个存在的（各表主键名不统一） */

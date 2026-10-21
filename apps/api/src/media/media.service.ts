@@ -515,32 +515,6 @@ export class MediaService {
     return { prompt, model: data.model ?? model };
   }
 
-  /** 素材库购买：扣 ¥1（100 token），写入产物库（kind=material）作为已购买凭证 */
-  async purchaseMaterial(tenantId: string, userId: string, key: string): Promise<{ url: string }> {
-    const allowed = new Set(['m1', 'm2']);
-    if (!allowed.has(key)) throw new BadRequestException('MATERIAL_NOT_FOUND');
-    const dup = await this.prisma.mediaAsset.findFirst({
-      where: { tenantId, kind: 'material', title: key },
-    });
-    if (!dup) {
-      await this.tokens.consume(tenantId, 100, 'CONSUME', { kind: 'material', materialKey: key }, userId);
-      await this.prisma.mediaAsset.create({
-        data: {
-          tenantId,
-          userId,
-          kind: 'material',
-          title: key,
-          prompt: '素材库购买',
-          filePath: `images/materials/${key}.jpg`,
-          mimeType: 'image/jpeg',
-          sizeBytes: 0,
-          status: 'ready',
-        },
-      });
-    }
-    return { url: `/images/materials/${key}.jpg` };
-  }
-
   /**
    * 重命名本租户的产物（最基本的修改能力）。
    * 公共产品图不可改——被任一启用产品 imageUrl 引用的页码反而会被产品中心管理走，ponytail: 复用 StorageCleanup 的引用解析思路，
@@ -573,37 +547,7 @@ export class MediaService {
     return { id };
   }
 
-  // ---------- 素材库投稿 ----------
-
-  /** 提交投稿：素材文件先经 /api/media/uploads 落盘，这里只登记审核条目 */
-  async submitMaterial(tenantId: string, userId: string, dto: { assetId: string; title: string; desc: string }) {
-    const asset = await this.prisma.mediaAsset.findFirst({ where: { id: dto.assetId, tenantId } });
-    if (!asset) throw new BadRequestException('SUBMIT_ASSET_NOT_FOUND');
-    if (asset.status !== 'ready') throw new BadRequestException('SUBMIT_ASSET_NOT_READY');
-    return this.prisma.materialSubmission.create({
-      data: {
-        tenantId,
-        userId,
-        title: dto.title,
-        desc: dto.desc,
-        filePath: asset.filePath,
-        mimeType: asset.mimeType,
-        sizeBytes: asset.sizeBytes,
-        status: 'pending',
-      },
-    });
-  }
-
-  /** 我的投稿列表（含审核状态与驳回原因） */
-  listMySubmissions(tenantId: string, userId: string) {
-    return this.prisma.materialSubmission.findMany({
-      where: { tenantId, userId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-  }
-
-  /** 素材库投稿的视频上传（与图片上传分离，体积与类型各自独立） */
+  /** 视频素材上传（与图片上传分离，体积与类型各自独立） */
   async uploadVideo(tenantId: string, userId: string, file: { buffer: Buffer; mimeType: string }, title: string): Promise<{ id: string; url: string }> {
     if (!file?.buffer?.length) throw new BadRequestException('EMPTY_FILE');
     const mime = file.mimeType || 'video/mp4';
