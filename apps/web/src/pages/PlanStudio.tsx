@@ -324,6 +324,35 @@ const [editing, setEditing] = useState<{
    * 于是点「导出 PPT」导出的还是改之前的点位 —— 改了点位却在交付件里看不到，
    * 这是最伤信任的一种错。
    */
+  /**
+   * 把方案里的效果图按存下来的 meta 回填到本地编辑态。
+   *
+   * 为什么要抽成函数：**两条打开方案的路径都要用它**。
+   * 原来只有「历史方案」弹窗那条路径回填，直接用 `?id=` 进页面（侧栏历史、
+   * 分享链接、刷新）不回填 —— 于是从工具页挂到方案的图，打开方案**看不见**，
+   * 用户以为没挂上。挂载功能是本版新加的，回填漏了它就等于功能不成立。
+   *
+   * 不回填还有第二个后果：用户以为图没了，重新上传一遍，额度白扣一次。
+   */
+  const fillRenderAssets = useCallback((detail: PlanDetail): void => {
+    const ids = detail.renderAssetIds ?? [];
+    const meta = detail.renderAssetMeta ?? [];
+    setRaList(ids.map((assetId, i) => {
+      const m = meta[i] ?? {};
+      return {
+        assetId,
+        clientId: m.clientId ?? `r_saved_${assetId}`,
+        name: m.fileName ?? '效果图',
+        room: m.room ?? '',
+        representative: m.representative ?? false,
+        useMode: m.useMode ?? 'generate',
+        sceneName: m.sceneName ?? '',
+        roomConfirmed: m.roomConfirmed ?? false,
+      };
+    }));
+    setBoundVideos(detail.videoAssetIds ?? []);
+  }, []);
+
   const reloadPlan = useCallback(async (id: string, silent = false): Promise<void> => {
     try {
       const detail = await api<PlanDetail>(`/api/plans/${id}`);
@@ -335,11 +364,14 @@ const [editing, setEditing] = useState<{
       setPageCount(detail.pageCount);
       setActivePage(0);
       setStep(1);
+      // 效果图与视频也要回填：从工具页挂到方案的素材，得在方案里看得见、
+      // 能改空间分组，才能真正进交付件。
+      fillRenderAssets(detail);
       if (silent) message.success('已同步最新的点位与方案数据');
     } catch {
       if (!silent) message.error('方案打开失败，可能已被删除');
     }
-  }, [message]);
+  }, [message, fillRenderAssets]);
 
   useEffect(() => {
     if (!planId) return;
@@ -704,22 +736,7 @@ const [editing, setEditing] = useState<{
       setPageCount(detail.pageCount);
       // 效果图按存下来的 meta 回填：不回填的话，打开历史方案看到的是空白素材区，
       // 用户以为图没了，实际库里还在，重新生成还会把它们当新图再扣一遍额度。
-      const ids = detail.renderAssetIds ?? [];
-      const meta = detail.renderAssetMeta ?? [];
-      setRaList(ids.map((assetId, i) => {
-        const m = meta[i] ?? {};
-        return {
-          assetId,
-          clientId: m.clientId ?? `r_saved_${assetId}`,
-          name: m.fileName ?? '效果图',
-          room: m.room ?? '',
-          representative: m.representative ?? false,
-          useMode: m.useMode ?? 'generate',
-          sceneName: m.sceneName ?? '',
-          roomConfirmed: m.roomConfirmed ?? false,
-        };
-      }));
-      setBoundVideos(detail.videoAssetIds ?? []);
+      fillRenderAssets(detail);
       setStep(1);
       setHistoryOpen(false);
       setPreflight(null);
