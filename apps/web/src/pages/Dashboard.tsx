@@ -1,13 +1,21 @@
 import {
+  AimOutlined,
+  ApartmentOutlined,
   ArrowRightOutlined,
+  BookOutlined,
   CloudServerOutlined,
+  FileSearchOutlined,
   FileTextOutlined,
+  FolderOpenOutlined,
   HomeOutlined,
   PaperClipOutlined,
   PictureOutlined,
   PlusOutlined,
   RobotOutlined,
   SendOutlined,
+  ShopOutlined,
+  TeamOutlined,
+  ToolOutlined,
   VideoCameraOutlined,
   ThunderboltFilled,
 } from '@ant-design/icons';
@@ -26,7 +34,14 @@ import { BRAND_GRADIENT, DEFAULT_CHAT_MODEL } from '../theme/tokens';
 const { Text, Title } = Typography;
 const { useToken } = theme;
 
-/** 首页快捷卡（功能入口；点击填入示例需求并发送） */
+/**
+ * 【已注释】原首页快捷卡（生成智能方案 / 做一张海报 / 出一条视频 / 文案仿写 / 找个智能体）。
+ *
+ * 这五张卡都会带着示例需求直接发起模型调用，属于「点一下就消耗算力」的入口。
+ * 能力在服务端完整保留，智能体通过 API 调用即可使用（见《Agent接入指南》与
+ * 模型配置页的技能包），界面上不再摆这些入口，改用下面的板块导航。
+ * 恢复方式：取消本段与文件末尾渲染处的注释。
+ */
 const QUICK_CARDS = [
   {
     key: 'plan',
@@ -70,16 +85,42 @@ const QUICK_CARDS = [
   },
 ];
 
-/** 输入卡底部功能 chip：每个 chip 真实可点击，触发对应能力（避免装饰性死按钮） */
-const INPUT_CHIPS: { key: 'attachment' | 'image' | 'video' | 'plan'; label: string; helper: string; route: string; needsAttachment?: boolean }[] = [
-  { key: 'attachment', label: '上传附件', helper: '把图片/户型/对话纪要上传到资料库', route: '/content', needsAttachment: true },
-  { key: 'image', label: '图生图', helper: '上传参考图后生图', route: '/image' },
-  { key: 'video', label: '生视频', helper: '首帧图/纯文字生成短视频', route: '/video' },
-  { key: 'plan', label: '生方案', helper: '9 页可编辑 PPT 智能方案', route: '/plan' },
+/**
+ * 首页板块导航：只列不产生算力消耗的板块。
+ * 资料、产品、情报、画布都是浏览与整理动作，智能体的生成类动作走 API。
+ */
+const NAV_CARDS: { key: string; icon: ReactNode; title: string; desc: string; route: string; tone: string }[] = [
+  { key: 'products', icon: <ShopOutlined />, title: '产品中心', desc: '产品库、品类归位与批量导入导出', route: '/products', tone: '#5B5BF0' },
+  { key: 'knowledge', icon: <BookOutlined />, title: '我的知识库', desc: '资料沉淀与关键词召回', route: '/knowledge', tone: '#4DD4D4' },
+  { key: 'content', icon: <FileSearchOutlined />, title: '内容提取', desc: '把文档与链接抽成结构化资料', route: '/content', tone: '#D9A036' },
+  { key: 'benchmark', icon: <AimOutlined />, title: '对标情报', desc: '对标账号的热门内容与映射分析', route: '/benchmark', tone: '#5BA86B' },
+  { key: 'treasure', icon: <ToolOutlined />, title: '智能百宝箱', desc: '现成的智能体与工具卡', route: '/treasure', tone: '#C37FB0' },
+  { key: 'works', icon: <FolderOpenOutlined />, title: '我的作品', desc: '生成过的方案、效果图与视频', route: '/works', tone: '#5B8DEF' },
+  { key: 'canvas', icon: <ApartmentOutlined />, title: 'AI 画布', desc: '在画布上组合素材与布局', route: '/canvas', tone: '#8A6FE0' },
+  { key: 'team', icon: <TeamOutlined />, title: '团队与接入', desc: '成员、权限与智能体接入方式', route: '/team', tone: '#4D9E7A' },
 ];
 
-/** 能力状态条（宽屏一行铺满，窄屏自动换行） */
-const CAPABILITY_TAGS = ['AI 智能体对话', '空间效果图', '演示短视频', '9 页方案 PPT', '设备点位图', '智能报价'];
+/**
+ * 输入卡底部功能 chip：每个 chip 真实可点击，触发对应能力（避免装饰性死按钮）
+ *
+ * 【已注释】原表里的「图生图 / 生视频 / 生方案」三个 chip 会跳到会产生算力消耗的板块，
+ * 与被收起的侧栏入口一致，界面上不再出现。恢复方式：取消下面三行注释与 INPUT_CHIPS
+ * 数组里的对应项。
+ */
+const INPUT_CHIPS: { key: 'attachment' | 'image' | 'video' | 'plan'; label: string; helper: string; route: string; needsAttachment?: boolean }[] = [
+  { key: 'attachment', label: '上传附件', helper: '把图片/户型/对话纪要上传到资料库', route: '/content', needsAttachment: true },
+  // { key: 'image', label: '图生图', helper: '上传参考图后生图', route: '/image' },
+  // { key: 'video', label: '生视频', helper: '首帧图/纯文字生成短视频', route: '/video' },
+  // { key: 'plan', label: '生方案', helper: '9 页可编辑 PPT 智能方案', route: '/plan' },
+];
+
+/**
+ * 能力状态条（宽屏一行铺满，窄屏自动换行）
+ *
+ * 【已注释】原表里的「空间效果图 / 演示短视频 / 9 页方案 PPT」指向已收起的耗算力板块。
+ * 恢复方式：取消下面三行注释与 capabilityRoute 里的对应项。
+ */
+const CAPABILITY_TAGS = ['AI 智能体对话', '设备点位图', '智能报价'];
 
 interface AttachmentItem {
   uid: string;
@@ -301,9 +342,9 @@ export function Dashboard(): ReactNode {
 
   const capabilityRoute: Record<string, string> = {
     'AI 智能体对话': '/agents',
-    '空间效果图': '/image',
-    '演示短视频': '/video',
-    '9 页方案 PPT': '/plan',
+    // '空间效果图': '/image',
+    // '演示短视频': '/video',
+    // '9 页方案 PPT': '/plan',
     '设备点位图': '/device-layout',
     '智能报价': '/quote',
   };
@@ -346,7 +387,7 @@ export function Dashboard(): ReactNode {
       )}
 
       <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
-        <div style={{ maxWidth: contentMaxWidth, width: '100%', margin: '0 auto', padding: isChatting ? (isWide ? '24px 24px 16px' : '16px') : isWide ? 'clamp(40px, 12vh, 130px) 24px 16px' : '24px 16px 16px' }}>
+        <div style={{ maxWidth: contentMaxWidth, width: '100%', margin: '0 auto', padding: isChatting ? (isWide ? '24px 24px 16px' : '16px') : isWide ? 'clamp(24px, 6vh, 64px) 24px 16px' : '24px 16px 16px' }}>
           {isChatting ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -371,12 +412,16 @@ export function Dashboard(): ReactNode {
                   Hi{user?.displayName ? `，${user.displayName}` : ''}，欢迎回来
                 </Title>
                 <Text type="secondary" style={{ fontSize: isWide ? 17 : 14, lineHeight: 1.7 }}>
-                  一句话生成方案 · 出图 · 出视频 · 出文案——智能家居获客与交付，全程帮你搞定
+                  产品库、资料库、对标情报与画布在这里整理；方案、效果图与视频的生成，由智能体按需调用接口完成
                 </Text>
               </div>
 
-              {/* 大输入卡：附件 + 文本 + 模型方案 + 发送 */}
-              <div
+              {/*
+               * 【已注释】大输入卡（附件 + 文本 + 模型方案 + 发送）与它依附的附件预览弹窗。
+               * 这里是与模型对话的通道，发送即发起调用，属于消耗算力的入口。
+               * 能力在服务端完整保留，智能体通过 API 调用即可使用（见《Agent接入指南》）。
+               * 恢复方式：取消本段注释，并补回块内两处小标题注释。
+               <div
                 style={{
                   background: token.colorBgContainer,
                   borderRadius: 18,
@@ -386,7 +431,6 @@ export function Dashboard(): ReactNode {
                   marginBottom: 12,
                 }}
               >
-                {/* 附件缩略带 */}
                 {attachments.length > 0 ? (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                     {attachments.map((a) => (
@@ -545,7 +589,6 @@ export function Dashboard(): ReactNode {
                 />
               </div>
 
-              {/* 附件图片预览弹窗（应用内可关闭返回，不离开工作台） */}
               <Modal
                 title={attachmentPreview?.name ?? ''}
                 open={!!attachmentPreview && attachmentPreview.kind === 'image'}
@@ -558,6 +601,7 @@ export function Dashboard(): ReactNode {
                   <img src={attachmentPreview.dataUrl} alt={attachmentPreview.name} style={{ width: '100%', borderRadius: 12 }} />
                 ) : null}
               </Modal>
+              */}
 
               {/* 能力状态条：每个标签可点击进入对应能力页 */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 30 }}>
@@ -594,7 +638,11 @@ export function Dashboard(): ReactNode {
                 })}
               </div>
 
-              {/* 快捷卡：auto-fit 自适应列数，宽屏铺满 */}
+              {/*
+               * 【已注释】原快捷卡网格：五张卡点击即带着示例需求发起模型调用。
+               * 恢复方式：取消本段注释，并把下面 NAV_CARDS 的渲染改回 QUICK_CARDS。
+               */}
+              {/*
               <div
                 style={{
                   display: 'grid',
@@ -660,6 +708,75 @@ export function Dashboard(): ReactNode {
                   </div>
                 ))}
               </div>
+              */}
+
+              {/* 板块导航：只列不产生算力消耗的板块，点击直接进对应页面 */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                  gap: 14,
+                  marginBottom: 24,
+                }}
+              >
+                {NAV_CARDS.map((card) => (
+                  <div
+                    key={card.key}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => navigate(card.route)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') navigate(card.route);
+                    }}
+                    style={{
+                      background: token.colorBgContainer,
+                      border: `1px solid ${token.colorBorderSecondary}`,
+                      borderRadius: 16,
+                      padding: '22px 20px',
+                      minHeight: 148,
+                      cursor: 'pointer',
+                      transition: 'transform .18s, box-shadow .18s, border-color .18s',
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLElement;
+                      el.style.transform = 'translateY(-3px)';
+                      el.style.boxShadow = token.boxShadowSecondary;
+                      el.style.borderColor = card.tone + '66';
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLElement;
+                      el.style.transform = 'none';
+                      el.style.boxShadow = 'none';
+                      el.style.borderColor = token.colorBorderSecondary;
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 12,
+                        background: card.tone + '1a',
+                        color: card.tone,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 19,
+                        marginBottom: 14,
+                      }}
+                    >
+                      {card.icon}
+                    </div>
+                    <Text strong style={{ fontSize: 15, marginBottom: 4 }}>
+                      {card.title}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                      {card.desc}
+                    </Text>
+                  </div>
+                ))}
+              </div>
             </>
           )}
         </div>
@@ -674,6 +791,11 @@ export function Dashboard(): ReactNode {
           }}
         >
           <div style={{ maxWidth: '100%', margin: '0 auto' }}>
+            {/*
+             * 【已注释】聊天态的意图提示与输入框：继续对话同样会调用模型、消耗算力。
+             * 历史会话保留为只读回看。恢复方式：取消下面两段注释。
+             */}
+            {/*
 {suggest ? (
             <div
               style={{
@@ -699,7 +821,9 @@ export function Dashboard(): ReactNode {
               </Button>
             </div>
                 ) : null}
+            */}
 
+            {/*
             <Sender
               value={input}
               onChange={setInput}
@@ -707,22 +831,23 @@ export function Dashboard(): ReactNode {
               loading={sending}
               placeholder="描述你的需求，例如：为 120㎡ 三居生成一套无主灯设计方案"
             />
+            */}
             <Text type="secondary" style={{ display: 'block', textAlign: 'center', fontSize: 12, marginTop: 8 }}>
-              内容由你自己配置的模型实时生成
+              历史对话仅供回看；生成类动作由智能体通过接口完成
             </Text>
           </div>
         </footer>
       ) : (
         <div style={{ textAlign: 'center', padding: '0 0 16px', position: 'relative' }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            对话 / 生图 / 生视频 / 方案 PPT 全链路已接通 ·{' '}
+            资料、产品与情报都在这里沉淀 ·{' '}
             <a
               onClick={() => {
                 createNew();
                 setActiveKey(null);
               }}
             >
-              新对话
+              查看历史对话
             </a>
           </Text>
         </div>

@@ -296,7 +296,7 @@ export function TokenCenter(): ReactNode {
     <div style={pageContainerStyle}>
       <PageHeader
         title="个人中心"
-        description="额度以统一 token 记账，发放与消耗全程留痕；额度由部署者分配，本部署不提供在线支付"
+        description="账号资料、团队权限、备份与存储治理，都在这里"
       />
 
       {error ? <Alert type="warning" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
@@ -370,6 +370,12 @@ export function TokenCenter(): ReactNode {
                 options={THEME_OPTIONS}
                 block
               />
+              {/*
+               * 【已注释】「顶栏显示额度与开源说明」开关：顶栏额度胶囊默认就是隐藏的，
+               * 这个开关是把它打开用的。界面上不再提供打开的入口。
+               * 恢复方式：取消本段注释。
+               */}
+              {/*
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
                 <Space direction="vertical" size={0}>
                   <Text style={{ fontSize: 13 }}>顶栏显示额度与开源说明</Text>
@@ -377,17 +383,23 @@ export function TokenCenter(): ReactNode {
                 </Space>
                 <Switch checked={showBilling} onChange={(v) => { setShowBillingState(v); setShowBilling(v); }} />
               </div>
+              */}
               <Button type="primary" loading={profileSaving} onClick={() => void saveProfile()} block style={{ marginTop: 8 }}>
                 保存资料
               </Button>
             </Form>
           </Card>
         </Col>
+        {/*
+         * 【已注释】「我的额度」区块：算力账本是部署者自己的成本视图，
+         * 摆在个人中心会被读成「余额不足就要付费」，与免费开源的定位相反。
+         * 额度数据与计费逻辑在服务端完整保留，模型配置页可查可调。
+         * 恢复方式：取消本段注释，并把下面的「数据备份与存储治理」卡片移回原位。
+         */}
+        {/*
         <Col xs={24} lg={12}>
           <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
             <Text strong style={{ fontSize: 15 }}>我的额度</Text>
-            {/* 额度透明不是"给你看余额"，是让你知道这钱花在哪、自己配了多少、还剩多少。
-                能力一律不锁——额度只影响部署者控成本，锁功能是付费墙的做法，与开源定位相反。 */}
             <Alert
               type="info"
               showIcon
@@ -431,6 +443,7 @@ export function TokenCenter(): ReactNode {
             </div>
           </Card>
         </Col>
+        */}
 
         {/* 第二行：备份治理（管理员）+ 改密 + 账号安全；邀请返点已随「免费商用、全员最高权限」定位移除 */}
         {isAdmin ? (
@@ -521,8 +534,11 @@ export function TokenCenter(): ReactNode {
         </Col>
       </Row>
 
-      {/* 账本明细 */}
-      <Card title="账本明细" style={{ marginTop: 16 }} styles={{ body: { padding: 0 } }}>
+      {/*
+        【已注释】账本明细（额度发放与消耗流水）。
+        这是部署者内部的成本账本，界面上不展开；数据接口与留痕逻辑在服务端完整保留。
+        恢复方式：取消本段注释。
+        <Card title="账本明细" style={{ marginTop: 16 }} styles={{ body: { padding: 0 } }}>
         <Table<LedgerEntry>
           rowKey="id"
           dataSource={ledger}
@@ -564,6 +580,7 @@ export function TokenCenter(): ReactNode {
           ]}
         />
       </Card>
+      */}
 
     </div>
   );

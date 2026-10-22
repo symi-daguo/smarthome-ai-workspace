@@ -336,6 +336,11 @@ export function VideoStudio(): ReactNode {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            {/*
+             * 【已注释】「生成视频」：生视频会消耗算力。
+             * 恢复方式：取消下面这段注释。
+             */}
+            {/*
             <Button
               size="large"
               loading={generating}
@@ -354,6 +359,7 @@ export function VideoStudio(): ReactNode {
             >
               生成视频
             </Button>
+            */}
             <Text type="secondary" style={{ fontSize: 13 }}>
               用你自己配置的模型生成，约需 1-3 分钟
             </Text>

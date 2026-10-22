@@ -1,11 +1,9 @@
 import {
-  AuditOutlined,
   BookOutlined,
   BulbFilled,
   BulbOutlined,
   MoonFilled,
   CheckOutlined,
-  FilePptOutlined,
   FileSearchOutlined,
   FolderOpenOutlined,
   HomeOutlined,
@@ -13,7 +11,6 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MoreOutlined,
-  PictureOutlined,
   PlusOutlined,
   RightOutlined,
   RobotOutlined,
@@ -25,6 +22,14 @@ import {
   VideoCameraOutlined,
   WalletOutlined, ApartmentOutlined, TeamOutlined,
 } from '@ant-design/icons';
+/*
+ * 【已注释】AuditOutlined / PictureOutlined / FilePptOutlined：
+ * 这三个图标只被上面注释掉的「开始接单 / AI 生图 / 智能方案」菜单项用到。
+ * 恢复菜单项时连同这里一起取消注释。
+ */
+// AuditOutlined,
+// PictureOutlined,
+// FilePptOutlined,
 import {
   Avatar,
   App as AntApp,
@@ -60,7 +65,14 @@ import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
 const { Text } = Typography;
 const { useToken } = theme;
 
-/** 使用指引弹窗内容（计费口径说明：额度由部署者按自有模型成本配置） */
+/**
+ * 使用指引弹窗内容（计费口径说明：额度由部署者按自有模型成本配置）
+ *
+ * 【已注释】弹窗里渲染这张计费表的 JSX 已被注释掉：对外的使用说明只讲「怎么用」，
+ * 不讲「怎么计费」。算力消耗由部署者按自己的模型成本自行配置，界面上明示单价与
+ * 「按额度扣费」，会让使用者读成「要先充值才能用」，与本项目免费开源的定位相反。
+ * 恢复方式：取消本段说明下的 const 与使用指引弹窗里的对应 JSX 注释。
+ */
 const GUIDE_PRICE_ROWS = [
   { name: 'AI 对话 / 文案', price: '按额度扣费' },
   { name: 'AI 生图 / 生视频 / 方案', price: '按额度扣费（额度单价由部署者配置）' },
@@ -237,13 +249,22 @@ export function MainLayout(): ReactNode {
       label: 'AI 超能力',
       children: [
         { key: '/', icon: <HomeOutlined />, label: '工作台' },
-        { key: '/order', icon: <AuditOutlined />, label: '开始接单' },
         { key: '/agents', icon: <RobotOutlined />, label: 'AI 智能体' },
-        { key: '/image', icon: <PictureOutlined />, label: 'AI 生图' },
         { key: '/canvas', icon: <ApartmentOutlined />, label: 'AI 画布' },
-        { key: '/video', icon: <VideoCameraOutlined />, label: 'AI 生视频' },
-        { key: '/plan', icon: <FilePptOutlined />, label: '智能方案' },
         { key: '/products', icon: <ShopOutlined />, label: '产品中心' },
+        /*
+         * 【已注释】以下 4 个入口的生成动作都会调用模型、产生算力消耗：
+         * 开始接单（AI 解析与跟进）、AI 生图、AI 生视频、智能方案（建方案与渲染效果图）。
+         *
+         * 为什么收起而不是删掉：能力在服务端完整保留，智能体通过 API 调用即可使用
+         * （见《Agent接入指南》与模型配置页的技能包）。界面上把「点一下就消耗算力」
+         * 摆在明面上，既不像免费开源该有的样子，也会让使用者误以为要先付费才能用。
+         * 恢复方式：取消下面 4 行注释，对应的 import 也需要一并恢复。
+         */
+        // { key: '/order', icon: <AuditOutlined />, label: '开始接单' },
+        // { key: '/image', icon: <PictureOutlined />, label: 'AI 生图' },
+        // { key: '/video', icon: <VideoCameraOutlined />, label: 'AI 生视频' },
+        // { key: '/plan', icon: <FilePptOutlined />, label: '智能方案' },
       ],
     };
     const toolbox: NonNullable<MenuProps['items']>[number] = {
@@ -536,12 +557,20 @@ export function MainLayout(): ReactNode {
             {user?.displayName ?? '未命名'}
           </div>
           <Space size={4} split={<Divider type="vertical" style={{ margin: 0 }} />} style={{ fontSize: 12, color: token.colorTextTertiary }}>
+            {/*
+              【已注释】侧栏底部的「额度」入口。
+              算力账本是部署者自己的成本视图，不该占日常操作位上的一个入口；
+              需要看成本的人可以在「个人中心」里自行查看。
+              恢复方式：取消下面这段注释。
+            */}
+            {/*
             <span
               style={{ cursor: 'pointer' }}
               onClick={() => go('/tokens')}
             >
               额度
             </span>
+            */}
             <span
               style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
               onClick={() => go('/tokens')}
@@ -699,6 +728,11 @@ export function MainLayout(): ReactNode {
 
           <div style={{ flex: 1 }} />
 
+          {/*
+            【已注释】顶栏额度胶囊（TokenPill）：与「开源说明」同属额度展示，
+            默认隐藏且界面上不再提供打开的入口。
+            恢复方式：取消本段注释。
+          */}
           {showBilling && <TokenPill />}
           {/* 主题切换：常驻顶栏，不再只藏在头像菜单里。
               明暗两套的卡片配色由 AntD 算法派生，这里只提供入口与当前态指示。 */}
@@ -735,8 +769,14 @@ export function MainLayout(): ReactNode {
             cancelButtonProps={{ style: { display: 'none' } }}
           >
             <Text style={{ display: 'block', marginBottom: 12 }}>
-              开源自部署：额度由部署者分配、单价由部署者配置，不设付费墙。计费口径：
+              开源自部署：模型与算力由部署者自备，不设付费墙，不提供在线充值。
             </Text>
+            {/*
+              【已注释】原计费口径表（「AI 对话 / 文案 —— 按额度扣费」等两行）。
+              算力成本由部署者自己掌握，界面不展开计费口径。
+              恢复方式：取消下面这段注释，并恢复上面的 GUIDE_PRICE_ROWS。
+            */}
+            {/*
             {GUIDE_PRICE_ROWS.map((row) => (
               <div
                 key={row.name}
@@ -753,10 +793,16 @@ export function MainLayout(): ReactNode {
                 <Text strong>{row.price}</Text>
               </div>
             ))}
+            */}
             <Text type="secondary" style={{ fontSize: 12 }}>
-              额度由部署者在后台发放，本部署不提供在线充值；一个公司可开通多个员工账号，共享额度账本，个人对话与资料相互隔离。
+              一个公司可开通多个员工账号，个人对话与资料相互隔离；所有内容与数据都留在你自己的部署里。
             </Text>
           </Modal>
+          {/*
+            【已注释】顶栏「开源说明」按钮：它指向的额度说明页已一并收起。
+            顶栏额度胶囊（TokenPill）由同一个 showBilling 开关控制，默认就是隐藏的。
+            恢复方式：取消本段注释，并恢复 App.tsx 里的 /quota 路由。
+          */}
           {showBilling && (
             <Button
               size="small"

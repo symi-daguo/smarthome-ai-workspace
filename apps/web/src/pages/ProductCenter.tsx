@@ -512,9 +512,16 @@ export function ProductCenter(): ReactNode {
             <Button type="primary" icon={<PlusOutlined />} style={{ background: BRAND_GRADIENT, border: 'none' }} onClick={() => openEdit()}>
               新增我的产品
             </Button>
+            {/*
+             * 【已注释】原「AI 批量处理」按钮：补全文案、归位分类与批量出图都会调用模型，
+             * 会消耗算力。整段能力在服务端保留，智能体通过接口调用即可使用。
+             * 恢复方式：取消下面这段注释。
+             */}
+            {/*
             <Button icon={<RobotOutlined />} loading={aiBusy} disabled={!selectedIds.length} onClick={aiProcess}>
               AI 批量处理{selectedIds.length ? `（${selectedIds.length}）` : ''}
             </Button>
+            */}
           </Space>
         }
       />
@@ -616,7 +623,7 @@ export function ProductCenter(): ReactNode {
           ]}
         />
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
-          <ShopOutlined /> 联动规则：设备/灯光点位与智能报价的选品来源 = 公共库 + 我的库；每个产品都可上传自己的 PNG/JPG 主图（自动压缩至 1024px，产品图即点位图标，无图回退品类图标）；「内容提取」确认的产品资料自动同步到我的库；勾选产品后「AI 批量处理」由智能体补全文案、归位分类并批量生成产品主图。
+          <ShopOutlined /> 联动规则：设备/灯光点位与智能报价的选品来源 = 公共库 + 我的库；每个产品都可上传自己的 PNG/JPG 主图（自动压缩至 1024px，产品图即点位图标，无图回退品类图标）；「内容提取」确认的产品资料自动同步到我的库；产品文案、品类归位与批量出图由智能体通过接口完成。
         </Text>
       </Card>
 

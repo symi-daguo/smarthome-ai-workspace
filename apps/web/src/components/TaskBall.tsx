@@ -62,7 +62,7 @@ const STATE_HINT: Record<TaskState, string> = {
   running: '生成中',
   done: '',
   failed: '生成失败',
-  unknown: '额度已扣，结果待核对',
+  unknown: '已提交，结果待核对',
   interrupted: '服务重启导致中断，可重新提交',
   canceled: '已取消',
 };

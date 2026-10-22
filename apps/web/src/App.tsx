@@ -57,9 +57,15 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="lighting" element={<LightingStudio />} />
             <Route path="lighting-diagnosis" element={<LightingDiagnosis />} />
             <Route path="feedback" element={<Feedback />} />
-            {/* 额度说明页。原 /vip 旧链接仍能进：老书签与历史对话不该因为改名就 404 */}
+            {/*
+             * 【已注释】额度说明页与它的旧别名 /vip。
+             * 额度是部署者自己的内部成本账本，界面上不提供专门页面来说明它。
+             * 恢复方式：取消本段注释（Quota.tsx 页面本体保持原样未动）。
+             */}
+            {/*
             <Route path="quota" element={<Quota />} />
             <Route path="vip" element={<Navigate to="/quota" replace />} />
+            */}
             <Route path="quote" element={<QuoteStudio />} />
             <Route path="products" element={<ProductCenter />} />
             <Route path="knowledge" element={<KnowledgeBase />} />
