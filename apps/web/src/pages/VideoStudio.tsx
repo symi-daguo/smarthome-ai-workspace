@@ -337,9 +337,24 @@ export function VideoStudio(): ReactNode {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             {/*
-             * 【已注释】「生成视频」：生视频会消耗算力。
-             * 恢复方式：取消下面这段注释。
-             */}
+            <Button
+              size="large"
+              loading={generating}
+              onClick={generate}
+              icon={<ThunderboltFilled />}
+              style={{
+                height: 50,
+                paddingInline: 28,
+                borderRadius: 9999,
+                background: INK_BLACK,
+                color: '#fff',
+                border: 'none',
+                fontWeight: 700,
+                boxShadow: 'none',
+              }}
+            >
+              生成视频
+            </Button>
             {/*
             <Button
               size="large"

@@ -414,9 +414,14 @@ export function AgentMarket(): ReactNode {
                   {a.description}
                 </Text>
                 <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
-                  <Text type="secondary" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <FireFilled style={{ color: '#F5533D' }} /> 使用热度 {a.usage} 次
-                  </Text>
+                  {a.usage > 0 ? (
+                    <Text type="secondary" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <FireFilled style={{ color: '#F5533D' }} /> 使用热度 {a.usage} 次
+                    </Text>
+                  ) : (
+                    /* 次数为 0 就别写「0 次」—— 那不是使用量，是没数据。 */
+                    <Text type="secondary" style={{ fontSize: 12 }}>内置智能体</Text>
+                  )}
                   <div style={{ flex: 1 }} />
                   {/* 「常用」分类筛的就是预置智能体，这里不给入口，那个分类就永远是空的 */}
                   <Tooltip title={saved.has(a.key) ? '取消常用' : '加入常用'}>

@@ -421,9 +421,9 @@ export function ImageStudio(): ReactNode {
       <SectionLabel>封面文案（可编辑）</SectionLabel>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         {/*
-         * 【已注释】「一键生成标题与卖点」：调用对话模型产出文案，会消耗算力。
-         * 恢复方式：取消下面这段注释。
-         */}
+        <Button size="small" icon={<BulbOutlined />} loading={copying} onClick={() => void genCoverCopy()}>
+          一键生成标题与卖点
+        </Button>
         {/*
         <Button size="small" icon={<BulbOutlined />} loading={copying} onClick={() => void genCoverCopy()}>
           一键生成标题与卖点
@@ -506,9 +506,9 @@ export function ImageStudio(): ReactNode {
                 <img src={refImage.url} alt="参考图" style={{ width: 108, height: 72, objectFit: 'cover', borderRadius: 8, border: `1px solid ${token.colorBorderSecondary}` }} />
                 <div style={{ flex: 1, minWidth: 180 }}>
                   {/*
-                   * 【已注释】「反推提示词」：调用模型反推提示词，会消耗算力。
-                   * 恢复方式：取消下面这段注释。
-                   */}
+                  <Button type="primary" ghost size="small" icon={<BulbOutlined />} loading={reversing} onClick={() => void reversePrompt()} style={{ marginBottom: 6 }}>
+                    反推提示词
+                  </Button>
                   {/*
                   <Button type="primary" ghost size="small" icon={<BulbOutlined />} loading={reversing} onClick={() => void reversePrompt()} style={{ marginBottom: 6 }}>
                     反推提示词
@@ -669,9 +669,12 @@ export function ImageStudio(): ReactNode {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
             {/*
-             * 【已注释】「生成图片」：出图会消耗算力。
-             * 恢复方式：取消下面这段注释。
-             */}
+            <Button
+              size="large" loading={generating} onClick={() => void generate()} icon={<ThunderboltFilled />}
+              style={{ height: 50, paddingInline: 28, borderRadius: 9999, background: INK_BLACK, color: '#fff', border: 'none', fontWeight: 700, boxShadow: 'none' }}
+            >
+              {generating ? '生成中（约 15 秒）' : '生成图片'}
+            </Button>
             {/*
             <Button
               size="large" loading={generating} onClick={() => void generate()} icon={<ThunderboltFilled />}

@@ -444,10 +444,13 @@ export function TokenCenter(): ReactNode {
                 block
               />
               {/*
-               * 【已注释】「顶栏显示额度与开源说明」开关：顶栏额度胶囊默认就是隐藏的，
-               * 这个开关是把它打开用的。界面上不再提供打开的入口。
-               * 恢复方式：取消本段注释。
-               */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
+                <Space direction="vertical" size={0}>
+                  <Text style={{ fontSize: 13 }}>顶栏显示额度与开源说明</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>默认隐藏，开源免费使用下这两项没有实际意义</Text>
+                </Space>
+                <Switch checked={showBilling} onChange={(v) => { setShowBillingState(v); setShowBilling(v); }} />
+              </div>
               {/*
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
                 <Space direction="vertical" size={0}>
@@ -464,11 +467,52 @@ export function TokenCenter(): ReactNode {
           </Card>
         </Col>
         {/*
-         * 【已注释】「我的额度」区块：算力账本是部署者自己的成本视图，
-         * 摆在个人中心会被读成「余额不足就要付费」，与免费开源的定位相反。
-         * 额度数据与计费逻辑在服务端完整保留，模型配置页可查可调。
-         * 恢复方式：取消本段注释，并把下面的「数据备份与存储治理」卡片移回原位。
-         */}
+        <Col xs={24} lg={12}>
+          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
+            <Text strong style={{ fontSize: 15 }}>我的额度</Text>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginTop: 12, fontSize: 12.5 }}
+              message="这是你自己部署的实例，额度由你设定，不设付费墙"
+              description="本项目开源免费：任何功能都不会因为额度不足被锁。额度只是让部署者能看清成本、避免误用；计费单价与初始额度都可用 BILLING_* 环境变量调整，额度用完也只是暂停 AI 调用，资料、方案、报价、团队等功能不受影响。"
+            />
+            <Row gutter={[16, 16]} style={{ marginTop: 14 }}>
+              <Col xs={24} md={10}>
+                <div style={{ fontSize: 34, fontWeight: 700, color: token.colorPrimary, lineHeight: 1.2 }}>
+                  {balance ? tokenToYuan(balance.tokenBalance) : '--'}
+                </div>
+                <Text type="secondary" style={{ fontSize: 13 }}>额度剩余</Text>
+              </Col>
+              <Col xs={12} md={7}>
+                <Text type="secondary" style={{ fontSize: 12 }}>总额度</Text>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(total)}</div>
+              </Col>
+              <Col xs={12} md={7}>
+                <Text type="secondary" style={{ fontSize: 12 }}>已使用</Text>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(consumed)}</div>
+              </Col>
+            </Row>
+            <Progress percent={usedPct} showInfo={false} strokeColor={token.colorPrimary} style={{ marginTop: 12 }} />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+              {PRICE_CHIPS.map((p) => (
+                <span
+                  key={p}
+                  style={{
+                    fontSize: 12,
+                    padding: '4px 12px',
+                    borderRadius: 9999,
+                    background: token.colorFillQuaternary,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    color: token.colorTextSecondary,
+                  }}
+                >
+                  {p}
+                </span>
+              ))}
+            </div>
+          </Card>
+        </Col>
         {/*
         <Col xs={24} lg={12}>
           <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
@@ -607,15 +651,10 @@ export function TokenCenter(): ReactNode {
         </Col>
       </Row>
 
-      {/*
-        【已注释】账本明细（额度发放与消耗流水）。
-        这是部署者内部的成本账本，界面上不展开；数据接口与留痕逻辑在服务端完整保留。
-        恢复方式：取消本段注释。
-        <Card title="账本明细" style={{ marginTop: 16 }} styles={{ body: { padding: 0 } }}>
+      <Card title="账本明细" style={{ marginTop: 16 }} styles={{ body: { padding: 0 } }}>
         <Table<LedgerEntry>
           rowKey="id"
-          dataSource={ledger}
-          pagination={{ pageSize: 10, hideOnSinglePage: true, showSizeChanger: false }}
+          dataSource={ledger}          pagination={{ pageSize: 10, hideOnSinglePage: true, showSizeChanger: false }}
           scroll={{ x: 'max-content' }}
           locale={{
             emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无账本记录，token 变动后将在此展示" />,
@@ -653,7 +692,6 @@ export function TokenCenter(): ReactNode {
           ]}
         />
       </Card>
-      */}
 
     </div>
   );

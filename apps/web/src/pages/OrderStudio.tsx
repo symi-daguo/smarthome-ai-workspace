@@ -604,9 +604,7 @@ export function OrderStudio(): ReactNode {
                 extra={(
                   <>
                     {/*
-                     * 【已注释】「AI 跟进建议」：生成建议会调用模型，会消耗算力。
-                     * 恢复方式：取消下面这段注释，并把 extra 改回单个 Button。
-                     */}
+                    <Button icon={<RobotOutlined />} loading={adviceLoading} onClick={() => void askAdvice()}>AI 跟进建议</Button>
                     {/*
                     <Button icon={<RobotOutlined />} loading={adviceLoading} onClick={() => void askAdvice()}>AI 跟进建议</Button>
                     */}
@@ -653,9 +651,7 @@ export function OrderStudio(): ReactNode {
         <TextArea rows={3} value={intakeText} onChange={(e) => setIntakeText(e.target.value)} placeholder="例：王先生，东湖玖章 128㎡ 四室两厅，预算 3 万左右，想做米家全屋智能，重点客厅灯光+主卧窗帘+全屋 WiFi 覆盖，下月开工…" maxLength={4000} />
         <Space style={{ margin: '10px 0' }}>
           {/*
-           * 【已注释】「AI 解析建档」：解析原始描述会调用模型，会消耗算力。
-           * 恢复方式：取消下面这段注释。
-           */}
+          <Button icon={<RobotOutlined />} loading={intakeLoading} onClick={() => void runIntake()} style={{ background: BRAND_GRADIENT, border: 'none', color: '#fff' }}>AI 解析建档</Button>
           {/*
           <Button icon={<RobotOutlined />} loading={intakeLoading} onClick={() => void runIntake()} style={{ background: BRAND_GRADIENT, border: 'none', color: '#fff' }}>AI 解析建档</Button>
           */}

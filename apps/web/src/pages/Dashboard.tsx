@@ -35,12 +35,8 @@ const { Text, Title } = Typography;
 const { useToken } = theme;
 
 /**
- * 【已注释】原首页快捷卡（生成智能方案 / 做一张海报 / 出一条视频 / 文案仿写 / 找个智能体）。
- *
- * 这五张卡都会带着示例需求直接发起模型调用，属于「点一下就消耗算力」的入口。
- * 能力在服务端完整保留，智能体通过 API 调用即可使用（见《Agent接入指南》与
- * 模型配置页的技能包），界面上不再摆这些入口，改用下面的板块导航。
- * 恢复方式：取消本段与文件末尾渲染处的注释。
+ * 首页快捷卡：五张卡各带一句示例需求，点一下就以这句话发起对话。
+ * 与下面的板块导航并存 —— 快捷卡是「一键开始一件事」，板块导航是「去某个板块整理资料」。
  */
 const QUICK_CARDS = [
   {
@@ -102,25 +98,18 @@ const NAV_CARDS: { key: string; icon: ReactNode; title: string; desc: string; ro
 
 /**
  * 输入卡底部功能 chip：每个 chip 真实可点击，触发对应能力（避免装饰性死按钮）
- *
- * 【已注释】原表里的「图生图 / 生视频 / 生方案」三个 chip 会跳到会产生算力消耗的板块，
- * 与被收起的侧栏入口一致，界面上不再出现。恢复方式：取消下面三行注释与 INPUT_CHIPS
- * 数组里的对应项。
  */
 const INPUT_CHIPS: { key: 'attachment' | 'image' | 'video' | 'plan'; label: string; helper: string; route: string; needsAttachment?: boolean }[] = [
   { key: 'attachment', label: '上传附件', helper: '把图片/户型/对话纪要上传到资料库', route: '/content', needsAttachment: true },
-  // { key: 'image', label: '图生图', helper: '上传参考图后生图', route: '/image' },
-  // { key: 'video', label: '生视频', helper: '首帧图/纯文字生成短视频', route: '/video' },
-  // { key: 'plan', label: '生方案', helper: '9 页可编辑 PPT 智能方案', route: '/plan' },
+  { key: 'image', label: '图生图', helper: '上传参考图后生图', route: '/image' },
+  { key: 'video', label: '生视频', helper: '首帧图/纯文字生成短视频', route: '/video' },
+  { key: 'plan', label: '生方案', helper: '9 页可编辑 PPT 智能方案', route: '/plan' },
 ];
 
 /**
  * 能力状态条（宽屏一行铺满，窄屏自动换行）
- *
- * 【已注释】原表里的「空间效果图 / 演示短视频 / 9 页方案 PPT」指向已收起的耗算力板块。
- * 恢复方式：取消下面三行注释与 capabilityRoute 里的对应项。
  */
-const CAPABILITY_TAGS = ['AI 智能体对话', '设备点位图', '智能报价'];
+const CAPABILITY_TAGS = ['AI 智能体对话', '空间效果图', '演示短视频', '9 页方案 PPT', '设备点位图', '智能报价'];
 
 interface AttachmentItem {
   uid: string;
@@ -342,9 +331,9 @@ export function Dashboard(): ReactNode {
 
   const capabilityRoute: Record<string, string> = {
     'AI 智能体对话': '/agents',
-    // '空间效果图': '/image',
-    // '演示短视频': '/video',
-    // '9 页方案 PPT': '/plan',
+    '空间效果图': '/image',
+    '演示短视频': '/video',
+    '9 页方案 PPT': '/plan',
     '设备点位图': '/device-layout',
     '智能报价': '/quote',
   };
@@ -412,16 +401,16 @@ export function Dashboard(): ReactNode {
                   Hi{user?.displayName ? `，${user.displayName}` : ''}，欢迎回来
                 </Title>
                 <Text type="secondary" style={{ fontSize: isWide ? 17 : 14, lineHeight: 1.7 }}>
-                  产品库、资料库、对标情报与画布在这里整理；方案、效果图与视频的生成，由智能体按需调用接口完成
+                  在上面描述需求就能直接对话；方案、效果图与视频的生成，也能在对应板块一键发起
                 </Text>
               </div>
 
               {/*
-               * 【已注释】大输入卡（附件 + 文本 + 模型方案 + 发送）与它依附的附件预览弹窗。
-               * 这里是与模型对话的通道，发送即发起调用，属于消耗算力的入口。
-               * 能力在服务端完整保留，智能体通过 API 调用即可使用（见《Agent接入指南》）。
-               * 恢复方式：取消本段注释，并补回块内两处小标题注释。
-               <div
+               * 大输入卡：附件 + 文本 + 模型方案 + 发送。
+               * 这是工作台与模型对话的通道 —— 门店在这里提需求、传户型图、接方案，
+               * 是「每条业务线都能自己走完」的起点，不能收起来。
+               */}
+              <div
                 style={{
                   background: token.colorBgContainer,
                   borderRadius: 18,
@@ -601,7 +590,6 @@ export function Dashboard(): ReactNode {
                   <img src={attachmentPreview.dataUrl} alt={attachmentPreview.name} style={{ width: '100%', borderRadius: 12 }} />
                 ) : null}
               </Modal>
-              */}
 
               {/* 能力状态条：每个标签可点击进入对应能力页 */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 30 }}>
@@ -639,10 +627,10 @@ export function Dashboard(): ReactNode {
               </div>
 
               {/*
-               * 【已注释】原快捷卡网格：五张卡点击即带着示例需求发起模型调用。
-               * 恢复方式：取消本段注释，并把下面 NAV_CARDS 的渲染改回 QUICK_CARDS。
+               * 快捷卡网格：五张卡点击即带着示例需求发起模型调用。
+               * 与下面的板块导航并存 —— 快捷卡是「一键开始一件事」，
+               * 板块导航是「去某个板块整理资料」，两条路都得留着。
                */}
-              {/*
               <div
                 style={{
                   display: 'grid',
@@ -708,9 +696,8 @@ export function Dashboard(): ReactNode {
                   </div>
                 ))}
               </div>
-              */}
 
-              {/* 板块导航：只列不产生算力消耗的板块，点击直接进对应页面 */}
+              {/* 板块导航：进各板块整理资料，不直接发起模型调用 */}
               <div
                 style={{
                   display: 'grid',
@@ -791,39 +778,32 @@ export function Dashboard(): ReactNode {
           }}
         >
           <div style={{ maxWidth: '100%', margin: '0 auto' }}>
-            {/*
-             * 【已注释】聊天态的意图提示与输入框：继续对话同样会调用模型、消耗算力。
-             * 历史会话保留为只读回看。恢复方式：取消下面两段注释。
-             */}
-            {/*
-{suggest ? (
-            <div
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                marginBottom: 8, padding: '6px 12px', borderRadius: 10,
-                background: token.colorPrimaryBg, fontSize: 12.5,
-              }}
-            >
-              <ThunderboltFilled style={{ color: token.colorPrimary }} />
-              <span>
-                识别到你要做「{suggest.label}」
-                <Text type="secondary" style={{ marginInlineStart: 6 }}>（命中「{suggest.hit}」）</Text>
-              </span>
-              <Button
-                size="small"
-                type="primary"
-                onClick={() => { navigate(suggest.route); setInput(''); }}
+            {suggest ? (
+              <div
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                  marginBottom: 8, padding: '6px 12px', borderRadius: 10,
+                  background: token.colorPrimaryBg, fontSize: 12.5,
+                }}
               >
-                前往{suggest.label}
-              </Button>
-              <Button size="small" type="text" onClick={() => setIntentDismissed(suggest.label)}>
-                不用，直接对话
-              </Button>
-            </div>
-                ) : null}
-            */}
+                <ThunderboltFilled style={{ color: token.colorPrimary }} />
+                <span>
+                  识别到你要做「{suggest.label}」
+                  <Text type="secondary" style={{ marginInlineStart: 6 }}>（命中「{suggest.hit}」）</Text>
+                </span>
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => { navigate(suggest.route); setInput(''); }}
+                >
+                  前往{suggest.label}
+                </Button>
+                <Button size="small" type="text" onClick={() => setIntentDismissed(suggest.label)}>
+                  不用，直接对话
+                </Button>
+              </div>
+            ) : null}
 
-            {/*
             <Sender
               value={input}
               onChange={setInput}
@@ -831,10 +811,6 @@ export function Dashboard(): ReactNode {
               loading={sending}
               placeholder="描述你的需求，例如：为 120㎡ 三居生成一套无主灯设计方案"
             />
-            */}
-            <Text type="secondary" style={{ display: 'block', textAlign: 'center', fontSize: 12, marginTop: 8 }}>
-              历史对话仅供回看；生成类动作由智能体通过接口完成
-            </Text>
           </div>
         </footer>
       ) : (

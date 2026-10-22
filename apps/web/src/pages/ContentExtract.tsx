@@ -337,11 +337,6 @@ export function ContentExtract(): ReactNode {
       {error ? <Alert type="warning" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
 
       <Card style={{ marginBottom: 16 }}>
-      {/*
-        【已注释】三源提取入口（上传文档 / 网页抓取 / 对话纪要）：
-        三个入口都会调用模型做字段结构化，会消耗算力。提取能力在服务端完整保留，
-        智能体通过接口调用即可使用；界面上收起入口，只保留下方已提取结果与人工确认。
-        恢复方式：取消本段注释。
         <Tabs
           activeKey={sourceTab}
           onChange={(key) => setSourceTab(key as typeof sourceTab)}
@@ -428,7 +423,6 @@ export function ContentExtract(): ReactNode {
             },
           ]}
         />
-      */}
       </Card>
 
       <Card>

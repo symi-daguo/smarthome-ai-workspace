@@ -1614,9 +1614,17 @@ const [editing, setEditing] = useState<{
               </Button>
               {/* 精装修生成：必须先有户型图，无则禁用 */}
               {/*
-               * 【已注释】「生成精装修效果图」：调用模型出图，会消耗算力。
-               * 恢复方式：取消下面这段注释。
-               */}
+              <Button
+                size="small"
+                ghost
+                type={plan.renderedFloorplanAssetId ? 'default' : 'primary'}
+                disabled={!plan.floorplanAssetId || renderingFloorplan}
+                loading={renderingFloorplan}
+                style={{ marginRight: 8 }}
+                onClick={renderFloorplan}
+              >
+                {plan.renderedFloorplanAssetId ? '重新生成精装修' : '生成精装修效果图'}
+              </Button>
               {/*
               <Button
                 size="small"
@@ -1764,9 +1772,9 @@ const [editing, setEditing] = useState<{
           {step === 0 ? (
             <>
               {/*
-               * 【已注释】「生成方案文案」：建方案会调用模型，会消耗算力。
-               * 恢复方式：取消下面这段注释，并删掉同级的提示文字。
-               */}
+              <Button data-testid="plan-generate-btn" size="large" type="primary" loading={generating} onClick={generate} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 180 }}>
+                生成方案文案
+              </Button>
               {/*
               <Button data-testid="plan-generate-btn" size="large" type="primary" loading={generating} onClick={generate} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 180 }}>
                 生成方案文案
