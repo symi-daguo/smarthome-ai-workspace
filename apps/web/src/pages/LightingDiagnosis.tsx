@@ -72,7 +72,7 @@ export function LightingDiagnosis(): ReactNode {
     setResult(null);
   }, []);
 
-  /** 幂等键：同一次点���重试（弱网/手抖）不该让用户付两次钱 */
+  /** 幂等键：同一次点击重试（弱网/手抖）不该让用户付两次钱 */
   const reqIdRef = useRef<string | null>(null);
 
   const run = async (): Promise<void> => {
