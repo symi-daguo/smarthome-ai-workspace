@@ -2813,6 +2813,9 @@ async function main(): Promise<void> {
   });
   check('没带 PPTX 文件被打回（400）', pkgNoFile.status === 400);
   await prisma.planProject.delete({ where: { id: reviewSeed.id } });
+  // 交付模版那个 seed 方案也要删：不删的话每跑一次 smoke 就在库里多留一条
+  // 「交付模版验证」，跑多了以后方案列表被测试数据淹没（实测残留 8 条）。
+  await prisma.planProject.delete({ where: { id: tplSeed.id } });
 
   // ---------- 方案编辑乐观锁（批次 10 剩余：冲突检测） ----------
   // pages 是整份 JSON 覆盖，不比对版本的话，后保存的人会把先保存的人的修改整份抹掉，
