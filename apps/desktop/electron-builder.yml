@@ -54,17 +54,23 @@ mac:
   category: public.app-category.productivity
   icon: build/icon.icns
   darkModeSupport: true
+  # 产物名用 ASCII：默认会拼中文 productName（智能家居AI工作台-1.0.4-arm64.dmg），
+  # GitHub 上传资产时会剥掉非 ASCII 字符，下载到的文件名与实际文件对不上。
+  #
+  # artifactName 只能放在**平台根级**或 **target 专属段**（顶层 dmg / nsis）。
+  # target 数组元素的对象只认 arch 与 target 两个字段 —— 往里写 artifactName
+  # 会让 electron-builder 的 schema 校验直接失败（additionalProperties: false），
+  # 而且报出来的错误文案是「target.0 should be one of these: string」，
+  # 与真实原因（多了个非法属性）完全对不上，极难自查。
+  # 这里平台根级给 zip 用（-mac 后缀），dmg 另在顶层 dmg 段覆盖（见文件末尾）。
+  artifactName: smarthome-ai-workspace-${version}-${arch}-mac.${ext}
   target:
-    # 产物名用 ASCII：默认会拼中文 productName（智能家居AI工作台-1.0.4-arm64.dmg），
-    # GitHub 上传资产时会剥掉非 ASCII 字符，下载到的文件名与实际文件对不上。
     - target: dmg
       arch:
         - arm64
-      artifactName: smarthome-ai-workspace-${version}-${arch}.${ext}
     - target: zip
       arch:
         - arm64
-      artifactName: smarthome-ai-workspace-${version}-${arch}-mac.${ext}
   # hardened runtime 是公证的前置条件：不开的话 notarytool 直接拒收
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -100,6 +106,9 @@ mac:
 dmg:
   # DMG 本身不签名（macOS 从 10.11 起不再校验 DMG 签名），公证对象是 .app 与 dmg 两层
   sign: false
+  # dmg 单独给一份 ASCII 名（target 专属段优先于平台根级）：
+  # mac 的 zip 用平台根级的「-mac」后缀版，dmg 用这个无后缀版，两者不会撞名。
+  artifactName: smarthome-ai-workspace-${version}-${arch}.${ext}
   contents:
     - x: 140
       y: 220
