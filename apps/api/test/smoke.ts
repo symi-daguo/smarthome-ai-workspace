@@ -3113,6 +3113,49 @@ async function main(): Promise<void> {
     await prisma.planProject.delete({ where: { id: clean.id } });
   }
 
+  // ---------- 预检：叠字错误要报出来，正常叠词不能误报 ----------
+  // 实测案例：模型把 quote「装好只是开始，会用才是交付」的句式套进 heading，
+  // 生成出「落地交付｜从方案确认到会用会用」。客户一眼看到就怀疑整份方案没走心。
+  {
+    const dup = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '叠字方案', style: 'A', edition: 'standard', pageCount: 1,
+        pages: [{ type: 'delivery', heading: '落地交付｜从方案确认到会用会用', subtitle: '每个环节有人负责', body: '本页内容已全部确认。', bullets: [], narration: '', quote: '装好只是开始，会用才是交付' }],
+        versionNo: 1,
+      },
+    });
+    const pfDup = await request<{ canDeliver: boolean; warnings: { field: string; snippet: string }[] }>(
+      base, `/api/plans/${dup.id}/preflight`, authA,
+    );
+    check('叠字错误被预检报出（heading 里的「会用会用」）',
+      (pfDup.body?.warnings ?? []).some((w) => w.field === 'heading' && w.snippet.includes('会用会用')));
+    check('有叠字错误时 canDeliver 为 false', pfDup.body?.canDeliver === false);
+    await prisma.planProject.delete({ where: { id: dup.id } });
+
+    // 反向场景：正常叠词与正常表达**不能**被误报。
+    // 预检一旦误报，门店就不信它了 —— 这一半的断言比正向那半更重要。
+    const okTexts = [
+      '一步到位，一步到位', '天天向上，天天向上', '一家人，一家人',
+      '很好很好', '非常好非常好', '每天每夜', '千千万万', '家家户户',
+      '让全家舒适与便捷自然发生', '按生活顺序，让操作更少一步', '每个环节有人负责，每项功能现场核对',
+    ];    const okPages = okTexts.map((h) => ({
+      type: 'scene', heading: h, subtitle: '', body: '本页内容已全部确认。', bullets: [], narration: '', quote: '',
+    }));
+    const okPlan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '正常叠词方案', style: 'A', edition: 'standard', pageCount: okPages.length,
+        pages: okPages,
+        versionNo: 1,
+      },
+    });
+    const pfOk = await request<{ canDeliver: boolean; warnings: { index: number; snippet: string }[] }>(
+      base, `/api/plans/${okPlan.id}/preflight`, authA,
+    );
+    check('正常叠词与正常表达不被误报（预检必须可信）', (pfOk.body?.warnings ?? []).length === 0);
+    check('无问题的方案 canDeliver 为 true', pfOk.body?.canDeliver === true);
+    await prisma.planProject.delete({ where: { id: okPlan.id } });
+  }
+
   // ---------- 生产路径（nginx）配置与后端限制一致 ----------
   // 这两条只有容器部署才会暴露：vite dev 不经过 nginx。
   // 0.2.2 修过两个真实缺陷 —— /api/ 只给 12m 而打包端点要 60MB（413），

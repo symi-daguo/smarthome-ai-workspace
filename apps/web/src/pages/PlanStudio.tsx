@@ -1732,7 +1732,7 @@ const [editing, setEditing] = useState<{
                 <Alert
                   type="warning"
                   showIcon
-                  message={`第 ${preflight.warnings.length} 处内部待办语句，打包交付前建议先处理`}
+                  message={`第 ${preflight.warnings.length} 处需要确认的问题，打包交付前建议先处理`}
                   description={
                     <div style={{ maxHeight: 200, overflowY: 'auto', lineHeight: 1.9 }}>
                       {preflight.warnings.map((w, i) => (

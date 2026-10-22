@@ -74,6 +74,36 @@ const RESUME_HEADING = /^(?:已确认|已提供|本次优先|可选升级|预留
 /** 整行都是占位符（「暂无」「未知」「---」等） */
 const PLACEHOLDER_ONLY = /^(?:暂无|未知|不详|待补|[-—–/])+$/;
 
+/**
+ * 紧邻的重复词组（模型偶发的叠字错误）。
+ *
+ * 实测案例：模型把 quote「装好只是开始，会用才是交付」的句式套进 heading，
+ * 生成出「落地交付｜从方案确认到会用会用」—— 客户一眼看到就怀疑整份方案没走心。
+ *
+ * 判据要精确，否则误报比漏报更伤：
+ * 1. 重复组是**两个字**（3 字组会误伤「一步一步」这类正常表达）；
+ * 2. 组内两个字**不同**（「看看」「好好」「谢谢」是叠词，放过；「会用」不是）；
+ * 3. 重复组紧邻出现，中间没有标点或空格。
+ *
+ * 已知局限：「一步一步」与「会用会用」在字符层面同构，规则区分不了 ——
+ * 只能靠白名单把前者列出来。**取舍是宁可漏报也不误报**：
+ * 预检一旦误报，门店就不信它了；漏报一条，用户在逐页校对时看一眼就发现了。
+ */
+const REPEATED_BIGRAM = /([\u4e00-\u9fa5]{2})\1/g;
+
+/**
+ * 合法的双字重复组（正常表达，不算错误）。
+ * 键是重复的那两个字。
+ */
+const REPEAT_ALLOWLIST = new Set([
+  '一步', '一一', '天天', '人人', '家家', '日日', '月月', '年年', '处处', '事事',
+  '各各', '分分', '点点', '些些', '件件', '条条', '次次', '遍遍', '样样', '种种',
+  '多多', '少少', '好好', '很好', '看看', '想想', '说说', '听听', '尝尝', '试试', '走走',
+  '坐坐', '聊聊', '玩玩', '动动', '等等', '常常', '往往', '渐渐', '刚刚', '恰恰',
+  '偏偏', '单单', '仅仅', '默默', '暗暗', '悄悄', '深深', '远远', '频频', '连连',
+  '桩桩', '笔笔', '句句', '字字', '声声', '念念', '历历',
+]);
+
 /** 需要逐字段检查的文本字段 */
 const TEXT_FIELDS = ['heading', 'subtitle', 'body', 'narration', 'quote'] as const;
 
@@ -137,6 +167,30 @@ export class PlanPreflightService {
       }
       if (PLACEHOLDER_ONLY.test(line)) return this.clip(line);
       if (PENDING.test(line)) return this.clip(line);
+      const dup = this.findRepeatedBigram(line);
+      if (dup) return this.clip(dup);
+    }
+    return null;
+  }
+
+  /**
+   * 找出一处「紧邻重复的双字词组」，返回带上下文的片段；没有则返回 null。
+   *
+   * 组内两字相同（看看/好好/谢谢）时放过 —— 那是叠词，不是错误。
+   */
+  private findRepeatedBigram(line: string): string | null {
+    REPEATED_BIGRAM.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = REPEATED_BIGRAM.exec(line)) !== null) {
+      const gram = m[1];
+      // 「一步一步」这类：组内两字不同但整体是正常词，规则区分不了 —— 放过。
+      // 只报「组内两字相同」之外、且重复的是**明显不成词**的情况由下方白名单兜底。
+      if (gram[0] === gram[1]) continue;
+      // 常见正常叠词/固定搭配：这些是合法表达，误报会让预检失去可信度
+      if (REPEAT_ALLOWLIST.has(gram)) continue;
+      const start = Math.max(0, m.index - 6);
+      const end = Math.min(line.length, m.index + gram.length * 2 + 6);
+      return line.slice(start, end);
     }
     return null;
   }
