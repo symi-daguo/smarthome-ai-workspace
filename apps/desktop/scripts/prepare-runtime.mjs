@@ -450,7 +450,11 @@ log(`schema engine：${engineRelative}（@prisma/engines ${engine.version}）`);
 if (!PG_PACKAGE) {
   throw new Error(`当前平台 ${process.platform}-${process.arch} 没有对应的 @embedded-postgres 包`);
 }
-const pgPkgDir = join(DESKTOP_DIR, 'node_modules', '@embedded-postgres', `${process.platform}-${process.arch}`);
+// 目录名取**包名的最后一段**，不能拼 `${process.platform}-${process.arch}`：
+// node 的平台标识与包名不是一套（Windows 上 node 叫 win32-x64，包叫 windows-x64），
+// 拼出来的目录在 Windows 上永远不存在，报「缺少内嵌 PostgreSQL 包」。
+// mac/linux 上两者恰好同名，所以这个坑只在 Windows 打包时才暴露。
+const pgPkgDir = join(DESKTOP_DIR, 'node_modules', '@embedded-postgres', PG_PACKAGE.split('/').pop());
 if (!existsSync(pgPkgDir)) {
   throw new Error(`缺少内嵌 PostgreSQL 包：${pgPkgDir}（先跑 pnpm install）`);
 }

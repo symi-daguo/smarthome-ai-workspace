@@ -27,6 +27,7 @@ import { compressImage } from '../lib/compress';
 import { newRequestId } from '../lib/request-id';
 import { IMAGE_SCENE_LABELS, IMAGE_SCENE_PROMPTS } from '../data/imageScenes.js';
 import { RegionSelector, type RegionSelection } from '../components/RegionSelector';
+import { AttachToPlanButton } from '../components/AttachToPlanButton';
 import { useActiveConfig } from '../lib/configStore';
 import { DEFAULT_CHAT_MODEL, INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
@@ -729,6 +730,8 @@ export function ImageStudio(): ReactNode {
                   >
                     圈选局部重绘
                   </Button>
+                  {/* 工具与工程的连接点：出的这张图可以直接挂进正在做的方案 */}
+                  <AttachToPlanButton assetId={preview.id} slot="render" />
                 </div>
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   圈选后只重画圈内区域，圈外保持原样；出图通道需为 OpenAI 兼容端点，否则会明确拒绝。

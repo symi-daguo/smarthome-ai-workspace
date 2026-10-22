@@ -1,6 +1,7 @@
 import {
   AuditOutlined,
   BookOutlined,
+  BorderOutlined,
   BulbFilled,
   BulbOutlined,
   MoonFilled,
@@ -56,6 +57,7 @@ import { TaskBall } from '../components/TaskBall';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore, type WorkbenchConversation } from '../store/ChatStore';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
+import { getHiddenSidebarKeys, subscribeSidebarVisibility } from '../lib/sidebarVisibility';
 
 const { Text } = Typography;
 const { useToken } = theme;
@@ -237,7 +239,16 @@ export function MainLayout(): ReactNode {
   // 不是 super_admin 角色本身。叫 isSuperAdmin 会让后来者误以为只有超管可见，与 ModelConfig.tsx 的 canManageModels 也对不上。
   const canManageModels = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
 
+  /**
+   * 侧栏入口的显示由「设置 → 侧栏功能」逐项控制，默认全部显示。
+   * 这里存的是**被隐藏的 key 集合**：新增入口不用动老配置（老配置自动兼容），
+   * 且不显示的入口不会占用任何渲染开销。
+   */
+  const [hiddenSidebarKeys, setHiddenSidebarKeys] = useState<Set<string>>(() => getHiddenSidebarKeys());
+  useEffect(() => subscribeSidebarVisibility(() => setHiddenSidebarKeys(getHiddenSidebarKeys())), []);
+
   const menuItems: MenuProps['items'] = useMemo(() => {
+    const visible = (key: string): boolean => !hiddenSidebarKeys.has(key);
     const creation: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-ai',
@@ -253,7 +264,17 @@ export function MainLayout(): ReactNode {
         { key: '/image', icon: <PictureOutlined />, label: 'AI 生图' },
         { key: '/video', icon: <VideoCameraOutlined />, label: 'AI 生视频' },
         { key: '/plan', icon: <FilePptOutlined />, label: '智能方案' },
-      ],
+      ].filter((i) => visible(i.key)),
+    };
+    // 平面图/点位是独立的设计板块：点位要反复改，改完的成果被 PPT 引用，
+    // 所以它有自己的入口，不塞在百宝箱里当一个工具卡片。
+    const design: NonNullable<MenuProps['items']>[number] = {
+      type: 'group',
+      key: 'g-design',
+      label: '设计交付',
+      children: [
+        { key: '/floorplan', icon: <BorderOutlined />, label: '平面图与点位' },
+      ].filter((i) => visible(i.key)),
     };
     const toolbox: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
@@ -265,22 +286,23 @@ export function MainLayout(): ReactNode {
         { key: '/works', icon: <FolderOpenOutlined />, label: '我的作品' },
         { key: '/benchmark', icon: <AimOutlined />, label: '对标情报' },
         { key: '/content', icon: <FileSearchOutlined />, label: '内容提取' },
-      ],
+      ].filter((i) => visible(i.key)),
     };
     // 个人中心人人可见；模型配置仅具备平台配置权限（开源自部署默认 tenant_admin 即有）时追加
     const systemChildren: NonNullable<MenuProps['items']> = [
       { key: '/team', icon: <TeamOutlined />, label: '团队与接入' },
       { key: '/tokens', icon: <WalletOutlined />, label: '个人中心' },
-    ];
-    if (canManageModels) systemChildren.push({ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' });
+    ].filter((i) => visible(i.key));
+    if (canManageModels && visible('/model-config')) systemChildren.push({ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' });
     const system: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-system',
       label: '系统管理',
       children: systemChildren,
     };
-    return [creation, toolbox, system];
-  }, [canManageModels]);
+    // 分组内一个入口都不显示时，整个分组也不显示（否则会留一个空标题）
+    return [creation, design, toolbox, system].filter((g) => ((g as { children?: unknown[] }).children ?? []).length > 0);
+  }, [canManageModels, hiddenSidebarKeys]);
 
   /**
    * 折叠态侧栏用的扁平菜单。
@@ -300,6 +322,9 @@ export function MainLayout(): ReactNode {
   const selectedKey = useMemo(() => {
     const p = location.pathname;
     if (p === '/') return '/';
+    // 平面图板块有两条路径：/floorplan（专门板块）与 /device-layout（旧书签与百宝箱入口），
+    // 两者是同一个编辑器，选中态要统一指向板块入口。
+    if (p.startsWith('/floorplan') || p.startsWith('/device-layout')) return '/floorplan';
     for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/treasure', '/products', '/knowledge', '/works', '/benchmark', '/content', '/team', '/tokens', '/model-config', '/lighting', '/lighting-diagnosis', '/feedback', '/quota']) {
       if (p.startsWith(k)) return k;
     }

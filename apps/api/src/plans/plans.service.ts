@@ -303,6 +303,77 @@ export class PlansService {
     return { videoAssetIds: ids };
   }
 
+  /**
+   * 把一件工具产物挂到工程（方案）上。
+   *
+   * 这是「百宝箱的工具与项目关联起来」的落点：任何工具页出的图/视频/点位图，
+   * 都能挂到正在做的那个方案上，方案的 PPT 与分享页随后就能用上它们。
+   *
+   * 按 slot 分派到方案上已有的字段，不新增字段、不改表结构：
+   * - render   → renderAssetIds（与 renderAssetMeta 同序追加）
+   * - video    → videoAssetIds（与 videoTitles 同序追加）
+   * - floorplan→ floorplanAssetId（可同时带 layoutPoints）
+   *
+   * 归属校验与 bindVideos 同一套：素材必须属于本租户且状态 ready。
+   */
+  async attachAsset(
+    tenantId: string,
+    id: string,
+    dto: { assetId: string; slot: 'render' | 'video' | 'floorplan'; layoutPoints?: unknown[] | null; room?: string },
+  ): Promise<{ slot: string; assetId: string }> {
+    const plan = await this.detail(tenantId, id);
+    const asset = await this.prisma.mediaAsset.findFirst({ where: { id: dto.assetId, tenantId } });
+    if (!asset) throw new NotFoundException('ASSET_NOT_FOUND');
+    if (asset.status !== 'ready') throw new BadRequestException('ASSET_NOT_READY');
+
+    if (dto.slot === 'floorplan') {
+      // 户型图：替换主图。点位一并写入，点位编辑器改完一次提交即可。
+      await this.attachFloorplan(tenantId, id, {
+        floorplanAssetId: dto.assetId,
+        extraFloorplanAssetIds: [],
+        floorplanFloors: [],
+        layoutPoints: dto.layoutPoints ?? null,
+      });
+      return { slot: dto.slot, assetId: dto.assetId };
+    }
+
+    if (dto.slot === 'video') {
+      if (asset.kind !== 'video') throw new BadRequestException('VIDEO_ASSET_KIND_INVALID');
+      const ids = [...(plan.videoAssetIds ?? []), dto.assetId].slice(0, 2);
+      const titles = await Promise.all(
+        ids.map((vid) => this.prisma.mediaAsset.findUnique({ where: { id: vid }, select: { title: true } })),
+      );
+      await this.prisma.planProject.update({
+        where: { id },
+        data: { videoAssetIds: ids, videoTitles: titles.map((t) => t?.title ?? '') },
+      });
+      return { slot: dto.slot, assetId: dto.assetId };
+    }
+
+    // render：追加到渲染图列表，元数据同序追加
+    if (asset.kind !== 'image') throw new BadRequestException('RENDER_ASSET_KIND_INVALID');
+    const meta = (plan.renderAssetMeta ?? []) as { clientId?: string; room?: string; roomConfirmed?: boolean; useMode?: string; sceneName?: string; representative?: boolean; fileName?: string }[];
+    const nextMeta = [...meta];
+    if (nextMeta.length < RENDER_MAX) {
+      nextMeta.push({
+        clientId: `attach-${dto.assetId}`,
+        room: dto.room ?? '',
+        roomConfirmed: false,
+        useMode: 'provided',
+        sceneName: asset.title ?? '',
+        representative: false,
+        fileName: asset.title ?? '',
+      });
+    }
+    const ids = [...(plan.renderAssetIds ?? [])];
+    if (ids.length < RENDER_MAX && !ids.includes(dto.assetId)) ids.push(dto.assetId);
+    await this.prisma.planProject.update({
+      where: { id },
+      data: { renderAssetIds: ids, renderAssetMeta: nextMeta },
+    });
+    return { slot: dto.slot, assetId: dto.assetId };
+  }
+
   /** 挂接户型图与设备点位（点位编辑器产物 → 空间动线页配图） */
   async attachFloorplan(
     tenantId: string,

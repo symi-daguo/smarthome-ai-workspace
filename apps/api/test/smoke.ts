@@ -2922,6 +2922,72 @@ async function main(): Promise<void> {
     await prisma.planProject.delete({ where: { id: vplan.id } });
   }
 
+  // ---------- 工具产物挂到工程（批次 11）：归属校验 + 点位随挂随写 ----------
+  // PATCH /api/plans/{id}/assets 是「百宝箱工具 ↔ 方案工程」的连接点。
+  // 它会写进方案的交付字段，而分享页是公开的 —— 归属与类型必须逐条校验，
+  // 不能只看 id 格式。
+  {
+    const aproj = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '产物挂工程验证', style: 'A', edition: 'standard',
+        pageCount: 1, pages: [{ type: 'scene', heading: '测试', subtitle: '', body: 'x', bullets: [], narration: '', quote: '' }],
+        versionNo: 1, shareToken: `smoke-asset-${randomUUID()}`,
+      },
+    });
+    const img = await prisma.mediaAsset.create({
+      data: { tenantId: tenantA, userId: me.body.id, kind: 'image', title: '空间效果图', prompt: '', filePath: 'images/smoke.jpg', mimeType: 'image/jpeg', sizeBytes: 1, status: 'ready' },
+    });
+    const foreignImg = await prisma.mediaAsset.create({
+      data: { tenantId: 'other-tenant-xyz', userId: null, kind: 'image', title: '他租户的图', prompt: '', filePath: 'images/y.jpg', mimeType: 'image/jpeg', sizeBytes: 1, status: 'ready' },
+    });
+
+    const foreignAttach = await request(base, `/api/plans/${aproj.id}/assets`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ assetId: foreignImg.id, slot: 'render' }),
+    });
+    check('挂他租户的素材被拒（404，不把他人的东西挂进工程）', foreignAttach.status === 404);
+
+    const badSlot = await request(base, `/api/plans/${aproj.id}/assets`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ assetId: img.id, slot: 'video' }),
+    });
+    check('把图片当视频挂被拒（400）', badSlot.status === 400);
+
+    const missing = await request(base, `/api/plans/${aproj.id}/assets`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ slot: 'render' }),
+    });
+    check('缺 assetId 被参数校验拒（400）', missing.status === 400);
+
+    const okAttach = await request<{ slot: string; assetId: string }>(base, `/api/plans/${aproj.id}/assets`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ assetId: img.id, slot: 'render', room: '客厅' }),
+    });
+    check('合法素材挂到工程成功', okAttach.status === 200 && okAttach.body.slot === 'render');
+
+    const after = await prisma.planProject.findUnique({ where: { id: aproj.id } });
+    check('渲染图真的写进了方案的交付字段（工具与工程打通了）', (after?.renderAssetIds ?? []).includes(img.id));
+
+    // 户型图 + 点位一次提交：点位是反复改的，改完挂回工程要能一次到位
+    const fp = await prisma.mediaAsset.create({
+      data: { tenantId: tenantA, userId: me.body.id, kind: 'image', title: '户型底图', prompt: '', filePath: 'images/fp.jpg', mimeType: 'image/jpeg', sizeBytes: 1, status: 'ready' },
+    });
+    const prod = await prisma.product.findFirst({ where: { tenantId: tenantA } });
+    const ptBody = prod
+      ? [{ productId: prod.id, name: prod.name, category: prod.category, x: 0.25, y: 0.55 }]
+      : [];
+    const fpAttach = await request(base, `/api/plans/${aproj.id}/assets`, {
+      ...authA, method: 'PATCH', body: JSON.stringify({ assetId: fp.id, slot: 'floorplan', layoutPoints: ptBody }),
+    });
+    check('户型图与点位一次挂接成功', fpAttach.status === 200);
+
+    const afterFp = await prisma.planProject.findUnique({ where: { id: aproj.id } });
+    check('户型底图写进了方案', afterFp?.floorplanAssetId === fp.id);
+    check('点位坐标随挂接一起写进了方案（改点位→挂工程→PPT 拿得到）',
+      ptBody.length === 0 || JSON.stringify(afterFp?.layoutPoints ?? []).includes('0.25'));
+
+    await prisma.mediaAsset.delete({ where: { id: img.id } });
+    await prisma.mediaAsset.delete({ where: { id: foreignImg.id } });
+    await prisma.mediaAsset.delete({ where: { id: fp.id } });
+    await prisma.planProject.delete({ where: { id: aproj.id } });
+  }
+
   // ---------- 提交幂等（批次 10）：抢占语义 + 失败可重试 ----------
   // 此前只在方案/生图/生视频三处有幂等，产品 AI 批量、灯光问诊、接单接待、
   // 跟进建议这几处没有 —— 用户弱网重试会重复扣额度。

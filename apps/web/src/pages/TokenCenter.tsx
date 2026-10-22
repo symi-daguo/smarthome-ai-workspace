@@ -37,6 +37,8 @@ import { UserAvatar } from '../components/UserAvatar';
 import { useAuth, type UserProfile } from '../store/AuthContext';
 import { setShowBilling } from '../layouts/MainLayout';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
+import { getHiddenSidebarKeys, resetSidebarVisibility, setSidebarVisible } from '../lib/sidebarVisibility';
+import { SIDEBAR_ENTRIES, SIDEBAR_GROUPS } from '../data/sidebarEntries';
 import { INK_BLACK, pageContainerStyle } from '../theme/tokens';
 
 const { Text } = Typography;
@@ -99,6 +101,8 @@ export function TokenCenter(): ReactNode {
   const { user, logout, refresh, renewToken } = useAuth();
   const { mode, setMode } = useTheme();
   const [showBilling, setShowBillingState] = useState(() => localStorage.getItem('show_billing') === '1');
+  /** 侧栏里被关掉的入口 key 集合（空集合 = 全部显示） */
+  const [hiddenSidebarKeys, setHiddenSidebarKeys] = useState<Set<string>>(() => getHiddenSidebarKeys());
   const [renewing, setRenewing] = useState(false);
   const [balance, setBalance] = useState<TokenBalance | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
@@ -391,6 +395,60 @@ export function TokenCenter(): ReactNode {
             辅材与特殊施工费用按现场实际情况另计。
           </Text>
         </Space>
+      </Card>
+
+      {/*
+        侧栏功能显示设置。
+        诉求是「所有功能先全部恢复默认可见，再由每个客户自己决定显示哪些侧栏入口」。
+        所以这里只控制**显示**，不控制功能本身 —— 关掉的入口数据仍在，随时能再打开。
+        配置存在本机浏览器（localStorage）：侧栏是纯界面偏好，
+        门店大屏与笔记本想显示的东西本来就可能不同，不该绑到账号或租户数据上。
+      */}
+      <Card
+        title="侧栏功能显示"
+        style={{ marginBottom: 16 }}
+        styles={{ body: { padding: 20 } }}
+        extra={
+          <Button size="small" onClick={() => { resetSidebarVisibility(); setHiddenSidebarKeys(getHiddenSidebarKeys()); message.success('已恢复默认（全部显示）'); }}>
+            恢复默认
+          </Button>
+        }
+      >
+        <Text type="secondary" style={{ fontSize: 12.5, display: 'block', marginBottom: 14 }}>
+          默认全部显示。关掉用不上的入口，侧栏会立刻变清爽；功能本身没有被删除，随时可以再打开。
+        </Text>
+        {SIDEBAR_GROUPS.map((group) => {
+          const items = SIDEBAR_ENTRIES.filter((e) => e.group === group);
+          if (items.length === 0) return null;
+          return (
+            <div key={group} style={{ marginBottom: 14 }}>
+              <Text strong style={{ fontSize: 13 }}>{group}</Text>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {items.map((e) => {
+                  const on = !hiddenSidebarKeys.has(e.key);
+                  return (
+                    <div
+                      key={e.key}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <Text style={{ fontSize: 13 }}>{e.label}</Text>
+                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>{e.desc}</Text>
+                      </div>
+                      <Switch
+                        checked={on}
+                        onChange={(v) => {
+                          setSidebarVisible(e.key, v);
+                          setHiddenSidebarKeys(getHiddenSidebarKeys());
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </Card>
 
       {/* 两栏网格：左=资料与偏好，右=额度 */}

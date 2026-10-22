@@ -314,22 +314,69 @@ const [editing, setEditing] = useState<{
 
   // 支持从侧栏历史直接带 ?id= 进入，打开对应方案继续编辑（同页切换方案也生效）
   const planId = searchParams.get('id');
+
+  /**
+   * 重新拉取方案。
+   *
+   * 为什么要单独抽出来：点位是会反复改的 —— 用户在「平面图与点位」板块里挪了个点、
+   * 换了个型号，切回方案页时**必须**拿到最新的点位数据。
+   * 原来只在 planId 变化时拉一次，切回来 planId 没变，plan.layoutPoints 还是旧值，
+   * 于是点「导出 PPT」导出的还是改之前的点位 —— 改了点位却在交付件里看不到，
+   * 这是最伤信任的一种错。
+   */
+  const reloadPlan = useCallback(async (id: string, silent = false): Promise<void> => {
+    try {
+      const detail = await api<PlanDetail>(`/api/plans/${id}`);
+      setPlan(detail);
+      setStyle(detail.style);
+      setVersion(detail.edition as 'standard' | 'presale' | 'private');
+      setFpTpl(floorplanTemplate(detail.floorplanTemplate));
+      setMkTpl(markerTemplate(detail.markerTemplate));
+      setPageCount(detail.pageCount);
+      setActivePage(0);
+      setStep(1);
+      if (silent) message.success('已同步最新的点位与方案数据');
+    } catch {
+      if (!silent) message.error('方案打开失败，可能已被删除');
+    }
+  }, [message]);
+
   useEffect(() => {
     if (!planId) return;
-    api<PlanDetail>(`/api/plans/${planId}`)
-      .then((detail) => {
-        setPlan(detail);
-        setStyle(detail.style);
-        setVersion(detail.edition as 'standard' | 'presale' | 'private');
-        setFpTpl(floorplanTemplate(detail.floorplanTemplate));
-        setMkTpl(markerTemplate(detail.markerTemplate));
-        setPageCount(detail.pageCount);
-        setActivePage(0);
-        setStep(1);
-      })
-      .catch(() => {
-        message.error('方案打开失败，可能已被删除');
-      });
+    void reloadPlan(planId);
+  }, [planId, reloadPlan]);
+
+  /**
+   * 窗口重新获得焦点时，只同步**点位与户型图**相关字段。
+   *
+   * 为什么不是整份重拉：用户在方案页里可能正改着文案（还没保存），
+   * 整份覆盖会把这些改动冲掉 —— 那比点位不同步更糟。
+   * 点位是别人/另一个页面改的，文案是自己改的，两者的刷新策略必须分开。
+   *
+   * 只在数据真的变了时才提示，避免每次切窗口都弹一次「已同步」。
+   */
+  useEffect(() => {
+    if (!planId) return;
+    const onFocus = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      void (async () => {
+        try {
+          const fresh = await api<PlanDetail>(`/api/plans/${planId}`);
+          setPlan((prev) => {
+            if (!prev) return prev;
+            // 点位数量或户型图没变就不动，避免无谓的重渲染
+            const samePoints = (prev.layoutPoints?.length ?? 0) === (fresh.layoutPoints?.length ?? 0);
+            const sameImage = (prev.floorplanAssetId ?? null) === (fresh.floorplanAssetId ?? null);
+            if (samePoints && sameImage) return prev;
+            return { ...prev, layoutPoints: fresh.layoutPoints, floorplanAssetId: fresh.floorplanAssetId };
+          });
+        } catch {
+          // 拉不到就保持现状，不打断正在做的事
+        }
+      })();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [planId]);
 
   /** 选户型图：先本地校验（上限/去重/体积），通过再逐张上传拿 assetId */

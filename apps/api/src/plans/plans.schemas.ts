@@ -92,6 +92,46 @@ export const attachFloorplanSchema = z.object({
 export type CreatePlanDto = z.infer<typeof createPlanSchema>;
 export type AttachFloorplanDto = z.infer<typeof attachFloorplanSchema>;
 
+/**
+ * 把工具产物挂到工程（方案）上。
+ *
+ * 为什么要一个统一端点而不是每个类型各来一个：
+ * 百宝箱里的工具（生图、生视频、点位布置、灯光编排）产出的是同一类东西 ——
+ * MediaAsset。之前只有建方案时才能带渲染图、视频也只有 bindVideos 一条专用路，
+ * 工具页的产物挂不进已在做的工程里，等于工具之间彼此不相通。
+ *
+ * 一个端点按 kind 分派到方案上对应的字段，调用方不必知道字段名。
+ */
+export const attachAssetSchema = z.object({
+  /** 素材 id（MediaAsset.id） */
+  assetId: z.string().uuid(),
+  /**
+   * 挂到方案的哪一处：
+   * - render：装修效果图（renderAssetIds，≤5）
+   * - video：场景视频（videoAssetIds，≤2）
+   * - floorplan：户型底图（floorplanAssetId，同时可带 layoutPoints）
+   */
+  slot: z.enum(['render', 'video', 'floorplan']),
+  /** floorplan 时可同时写点位（点位编辑器改完直接一次提交） */
+  layoutPoints: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        name: z.string().max(60),
+        category: z.string().max(30),
+        room: z.string().max(20).optional(),
+        x: z.number().min(0).max(1),
+        y: z.number().min(0).max(1),
+      }),
+    )
+    .max(200)
+    .optional()
+    .nullable(),
+  /** render 时该图的空间分组名（与 renderAssetMeta 同序） */
+  room: z.string().max(30).optional().default(''),
+});
+export type AttachAssetDto = z.infer<typeof attachAssetSchema>;
+
 export const updatePlanPageSchema = z.object({
   /**
    * 乐观锁版本号：客户端打开时看到的 versionNo。

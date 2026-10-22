@@ -19,6 +19,7 @@ import { PlanStudio } from './pages/PlanStudio';
 import { PlanPrintView } from './pages/PlanPrintView';
 import { TreasureBox } from './pages/TreasureBox';
 import { DeviceLayout } from './pages/DeviceLayout';
+import { FloorplanStudio } from './pages/FloorplanStudio';
 import { LightingStudio } from './pages/LightingStudio';
 import { LightingDiagnosis } from './pages/LightingDiagnosis';
 import { ImageCanvas } from './pages/ImageCanvas';
@@ -55,6 +56,8 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="materials" element={<Navigate to="/benchmark" replace />} />
             <Route path="treasure" element={<TreasureBox />} />
             <Route path="device-layout" element={<DeviceLayout />} />
+            {/* 平面图与点位：专门板块入口。点位要反复改，改完能被方案与 PPT 拉取 */}
+            <Route path="floorplan" element={<FloorplanStudio />} />
             <Route path="lighting" element={<LightingStudio />} />
             <Route path="lighting-diagnosis" element={<LightingDiagnosis />} />
             <Route path="feedback" element={<Feedback />} />

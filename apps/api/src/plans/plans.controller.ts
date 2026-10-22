@@ -28,11 +28,13 @@ import { PlanPackageService } from './plan-package.service.js';
 import { PlanPreflightService } from './plan-preflight.service.js';
 import { PlansService } from './plans.service.js';
 import {
+  attachAssetSchema,
   attachFloorplanSchema,
   bindVideosSchema,
   createPlanSchema,
   updatePlanPageSchema,
   updatePlanTemplatesSchema,
+  type AttachAssetDto,
   type AttachFloorplanDto,
   type BindVideosDto,
   type CreatePlanDto,
@@ -217,6 +219,28 @@ export class PlansController {
     @Body(new ZodValidationPipe(bindVideosSchema)) dto: BindVideosDto,
   ) {
     return this.plans.bindVideos(user.activeTenantId as string, user.id, id, dto.videoAssetIds ?? []);
+  }
+
+  /**
+   * 把工具产物挂到工程（方案）上。
+   *
+   * 百宝箱里的每个工具都产出素材，但此前只有建方案时才能带渲染图、
+   * 视频也只有 bindVideos 一条专用路 —— 工具页出的东西挂不进已在做的工程，
+   * 工具之间因此彼此不相通。这一个端点让所有工具产物都能挂到当前工程。
+   */
+  @RequirePermissions('content:generate')
+  @Patch(':id/assets')
+  attachAsset(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(attachAssetSchema)) dto: AttachAssetDto,
+  ) {
+    return this.plans.attachAsset(user.activeTenantId as string, id, {
+      assetId: dto.assetId,
+      slot: dto.slot,
+      layoutPoints: dto.layoutPoints ?? null,
+      room: dto.room ?? '',
+    });
   }
 
   /**

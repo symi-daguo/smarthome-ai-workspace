@@ -334,7 +334,8 @@ export function Dashboard(): ReactNode {
     '空间效果图': '/image',
     '演示短视频': '/video',
     '9 页方案 PPT': '/plan',
-    '设备点位图': '/device-layout',
+    // 点位设计有专门板块：进板块页可以挑方案继续改，而不是直接开一张空白图纸
+    '设备点位图': '/floorplan',
     '智能报价': '/quote',
   };
 

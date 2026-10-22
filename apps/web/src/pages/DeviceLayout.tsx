@@ -178,6 +178,66 @@ export function DeviceLayout(): ReactNode {
     api<Product[]>('/api/products').then(setProducts).catch((e) => message.error((e as Error).message));
   }, [message]);
 
+  /**
+   * 从方案进入时回载已有点位与底图（点位要反复改，这是「改完能接着改」的前提）。
+   *
+   * 之前的缺口：带着 planId 进来是**空白画布** —— 底图不加载、已有点位不加载，
+   * 改点位只能从零重画一遍。点位是会反复改的（施工完挪个位置、换个型号），
+   * 所以这里必须把方案的现状读回来。
+   *
+   * 只回载，不覆盖用户刚做的操作：planLoadedRef 保证同一 planId 只载入一次。
+   */
+  const planLoadedRef = useRef('');
+  useEffect(() => {
+    if (!planId || planLoadedRef.current === planId) return;
+    planLoadedRef.current = planId;
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await api<{
+          title?: string;
+          floorplanAssetId?: string | null;
+          layoutPoints?: (Partial<LayoutPoint> & { x: number; y: number })[] | null;
+        }>(`/api/plans/${planId}`);
+        if (cancelled) return;
+        if (p.layoutPoints?.length) {
+          setPoints(p.layoutPoints.map((pt, i) => ({
+            id: `loaded-${i}`,
+            productId: pt.productId ?? '',
+            name: pt.name ?? '设备',
+            category: pt.category ?? '',
+            iconUrl: pt.iconUrl,
+            iconKey: pt.iconKey,
+            room: pt.room,
+            x: pt.x,
+            y: pt.y,
+          })));
+        }
+        if (p.floorplanAssetId) {
+          setAssetId(p.floorplanAssetId);
+          const url = fileUrl(`/api/media/assets/${p.floorplanAssetId}/file`);
+          loadImage(url)
+            .then((img) => {
+              if (cancelled) return;
+              setImgSrc(url);
+              setImgSize({ w: img.width, h: img.height });
+            })
+            .catch(() => {
+              if (!cancelled) message.warning('方案的户型图读取失败，请重新上传');
+            });
+        }
+        if (p.title) setTitle(`${p.title} 户型点位图`);
+        const n = p.layoutPoints?.length ?? 0;
+        if (n) message.info(`已载入方案的 ${n} 个点位，可直接拖拽修改`);
+      } catch (e) {
+        if (!cancelled) message.error((e as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [planId, message]);
+
   const grouped = useMemo(() => {
     const cats = MODE_CATS[mode];
     const map = new Map<string, Product[]>();
@@ -652,9 +712,10 @@ export function DeviceLayout(): ReactNode {
       };
       await api('/api/layouts', { method: 'POST', body: JSON.stringify(dto) });
       if (planId) {
+        // 点位是会反复改的：保存后**留在点位板**继续改，而不是跳回方案页 ——
+        // 跳回去就断了「改→存→再改」的循环。方案页随时能通过「返回方案」按钮回去。
         await api(`/api/plans/${planId}/floorplan`, { method: 'PATCH', body: JSON.stringify({ floorplanAssetId: assetId, layoutPoints: dto.points }) });
-        message.success('点位图已挂接到方案，返回方案页查看');
-        navigate(`/plan?id=${planId}`);
+        message.success(`点位已更新到方案（${dto.points.length} 个）· 再点一次「导出 PPT」即可拿到新点位`);
       } else {
         message.success('点位图已保存');
       }
@@ -903,12 +964,62 @@ export function DeviceLayout(): ReactNode {
 
         {/* 已布点位清单：编号与图上标记一致，房间名让「编号 ↔ 位置」当场可核对 */}
         {points.length > 0 && (
-          <Card size="small" title={<Text strong style={{ fontSize: 13 }}>本图点位（{points.length}）</Text>} styles={{ body: { padding: 12, maxHeight: 200, overflowY: 'auto' } }}>
+          <Card
+            size="small"
+            title={<Text strong style={{ fontSize: 13 }}>本图点位（{points.length}）</Text>}
+            styles={{ body: { padding: 12, maxHeight: 200, overflowY: 'auto' } }}
+            extra={
+              <Text type="secondary" style={{ fontSize: 11 }}>拖动图上标记可改位置，也可在这里输入坐标精确到 0.1%</Text>
+            }
+          >
             {points.map((p, i) => (
-              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '2px 0' }}>
+              <div
+                key={p.id}
+                onClick={() => setSelected(p.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '2px 0',
+                  cursor: 'pointer',
+                  background: selected === p.id ? 'rgba(91,91,240,.08)' : 'transparent',
+                  borderRadius: 6,
+                  paddingInline: 4,
+                }}
+              >
                 <span style={{ width: 18, height: 18, minWidth: 18, borderRadius: '50%', background: catMeta(p.category).color, color: '#fff', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>{p.name}</span>
                 {p.room ? <span style={{ color: 'rgba(0,0,0,.45)', flex: 'none' }}>{p.room}</span> : null}
+                {/*
+                  坐标微调：拖拽只能到「大概位置」，
+                  而点位图是要交给施工的 —— 差一点就装错地方。
+                  这里给到 0.1% 的精确输入（百分比），不靠手抖。
+                */}
+                <Space size={4} style={{ flex: 'none' }} onClick={(e) => e.stopPropagation()}>
+                  <InputNumber
+                    size="small"
+                    value={Number((p.x * 100).toFixed(1))}
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    addonAfter="%"
+                    style={{ width: 88 }}
+                    onChange={(v) => {
+                      const n = typeof v === 'number' ? v : 0;
+                      setPoints((prev) => prev.map((q) => (q.id === p.id ? { ...q, x: Math.min(1, Math.max(0, n / 100)) } : q)));
+                    }}
+                  />
+                  <InputNumber
+                    size="small"
+                    value={Number((p.y * 100).toFixed(1))}
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    addonAfter="%"
+                    style={{ width: 88 }}
+                    onChange={(v) => {
+                      const n = typeof v === 'number' ? v : 0;
+                      setPoints((prev) => prev.map((q) => (q.id === p.id ? { ...q, y: Math.min(1, Math.max(0, n / 100)) } : q)));
+                    }}
+                  />
+                </Space>
               </div>
             ))}
           </Card>

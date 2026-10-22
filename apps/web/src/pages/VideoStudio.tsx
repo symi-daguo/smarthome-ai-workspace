@@ -9,6 +9,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { api, fileUrl, VIDEO_TIMEOUT_MS } from '../lib/api';
 import { newRequestId } from '../lib/request-id';
 import { useActiveConfig } from '../lib/configStore';
+import { AttachToPlanButton } from '../components/AttachToPlanButton';
 import {
   AUDIO_MODES, DEFAULT_EFFECTS, DEFAULT_MUSIC, MAX_EFFECTS_LEN, MAX_MUSIC_LEN,
   audioSupportHint, normalizeAudio, withAudioPrompt, type AudioMode,
@@ -84,6 +85,8 @@ export function VideoStudio(): ReactNode {
   const [assets, setAssets] = useState<ImageAsset[]>([]);
   const [generating, setGenerating] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  /** 本次生成的视频素材 id：挂到工程时要用（后端 /api/media/videos 会返回） */
+  const [videoAssetId, setVideoAssetId] = useState<string>('');
   /** 提交幂等键：失败保留、成功清除，详见 lib/request-id.ts */
   const reqIdRef = useRef<string | null>(null);
 
@@ -136,7 +139,7 @@ export function VideoStudio(): ReactNode {
       // 音轨不是上游独立参数，而是编译进提示词交给模型理解
       const audio = normalizeAudio(audioMode, musicStyle, soundEffects);
       const fullPrompt = withAudioPrompt(desc.trim(), audio);
-      const r = await api<{ url: string; deduped?: boolean }>('/api/media/videos', {
+      const r = await api<{ id: string; url: string; deduped?: boolean }>('/api/media/videos', {
         method: 'POST',
         timeoutMs: VIDEO_TIMEOUT_MS,
         body: JSON.stringify({
@@ -150,6 +153,7 @@ export function VideoStudio(): ReactNode {
       });
       reqIdRef.current = null;
       setVideoUrl(fileUrl(`${r.url}?t=${Date.now()}`));
+      setVideoAssetId(r.id);
       message.success(
         r.deduped
           ? '这次提交此前已成功出片，直接取回原视频（未重复消耗算力）'
@@ -399,7 +403,11 @@ export function VideoStudio(): ReactNode {
           }}
         >
           {videoUrl ? (
-            <video src={videoUrl} controls autoPlay style={{ width: '100%', borderRadius: 16, background: '#000' }} />
+            <>
+              <video src={videoUrl} controls autoPlay style={{ width: '100%', borderRadius: 16, background: '#000' }} />
+              {/* 工具与工程的连接点：这条片可以直接挂进正在做的方案 */}
+              {videoAssetId ? <AttachToPlanButton assetId={videoAssetId} slot="video" label="挂到工程" /> : null}
+            </>
           ) : generating ? (
             <Text type="secondary">生成中（约 1-3 分钟，请勿离开）…</Text>
           ) : (

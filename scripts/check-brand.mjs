@@ -42,6 +42,8 @@ const ALLOWED_DOMAINS = new Set([
   'bailian.console.aliyun.com',
   // 包仓库与镜像
   'registry.npmjs.org', 'www.npmjs.com', 'registry.npmmirror.com',
+  // Prisma 官方引擎二进制分发站（@prisma/fetch-engine 的默认下载源）
+  'binaries.prisma.sh',
   // 代码托管与官方文档
   'github.com', 'www.w3.org', 'json.schemastore.org', 'www.prisma.io', 'itunes.apple.com',
   // 本机开发与示例
