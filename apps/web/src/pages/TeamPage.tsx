@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Alert, App as AntApp, Button, Card, Checkbox, Col, Divider, Empty, Form, Input, Modal, Popconfirm, Row, Select, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
-import { KeyOutlined, PlusOutlined, RobotOutlined, TeamOutlined } from '@ant-design/icons';
+import { EditOutlined, KeyOutlined, PlusOutlined, RobotOutlined, TeamOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { pageContainerStyle } from '../theme/tokens';
 import { downloadBlob } from '../lib/download';
+import { useAuth } from '../store/AuthContext';
 
 const { Text, Paragraph } = Typography;
 
@@ -71,15 +72,19 @@ const ROLE_TONE: Record<string, string> = {
   purchase: 'lime',
   marketing: 'pink',
   service: 'cyan',
+  operator: 'orange',
   viewer: 'default',
 };
 
 /** 权限 action 的人话说明与分组。
  *
- * 与后端 `rbac/permissions.ts` 的 PERMISSION_CATALOG 同源同口径：
+ * 与后端 `rbac/permissions.ts` 的 PERMISSION_CATALOG 同源同口径（**22 项，一项都不能少**）：
  * 读/写二元切分（Appwrite 的 resource.read / resource.write 模式），
  * 且「写隐含读」由后端 AbilityFactory 统一处理，这里不重复表达。
  * 界面上必须显示人话而不是 `quote:write` 这种串 —— 店长看不懂串，但看得懂「做报价、改产品库」。
+ *
+ * 少一项的代价是实打实的：后端改角色是「先全删再全建」，
+ * 前端少列一项就等于悄悄把这项权限从角色上抹掉，而且不报错。
  */
 const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
   { action: 'quote:read', label: '查看报价与产品库', group: '报价' },
@@ -93,6 +98,8 @@ const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
   { action: 'content:extract', label: '内容提取与解析', group: '内容' },
   { action: 'knowledge:read', label: '查阅知识库', group: '知识库' },
   { action: 'knowledge:manage', label: '维护知识库', group: '知识库' },
+  { action: 'benchmark:read', label: '查看对标账号与情报', group: '对标情报' },
+  { action: 'benchmark:write', label: '配置对标账号、触发分析', group: '对标情报' },
   { action: 'cs:read', label: '查看反馈与工单', group: '协作' },
   { action: 'cs:write', label: '提交与处理反馈', group: '协作' },
   { action: 'tenant:member:manage', label: '管理团队成员', group: '团队' },
@@ -110,21 +117,106 @@ const WRITE_IMPLIES_READ: Record<string, string> = {
   'order:write': 'order:read',
   'publish:write': 'publish:read',
   'content:generate': 'content:read',
+  'benchmark:write': 'benchmark:read',
   'cs:write': 'cs:read',
 };
 
 const MAX_PERMISSIONS = PERMISSION_CATALOG.length;
 
+/**
+ * 后端错误码 → 人话。
+ *
+ * Nest 的异常体有三种形态，这里都要认：
+ *   ① message 是「CODE: 中文说明」拼在一串（如 `ROLE_IN_USE: 还有 3 名成员在用这个角色…`）
+ *   ② message 就是裸 CODE（如 `ROLE_NOT_FOUND_OR_NOT_EDITABLE`）
+ *   ③ body 是对象（Zod 校验失败时是 `{ code: 'VALIDATION_FAILED' }`），码在 err.code 上
+ *
+ * 认不出来的一律退回中文兜底 —— 原始码对店长没有意义，也不该出现在界面上。
+ */
+function explainTeamError(e: unknown, kind: 'create' | 'edit' | 'delete' | 'assign' | 'remove'): string {
+  const fallback =
+    kind === 'delete' ? '删除失败'
+      : kind === 'edit' ? '保存失败'
+        : kind === 'create' ? '创建失败'
+          : kind === 'assign' ? '改角色失败'
+            : '移除失败';
+  const err = (e ?? {}) as { message?: unknown; code?: string };
+  const raw = typeof err.message === 'string' ? err.message.trim() : '';
+  const colon = raw.indexOf(':');
+  const head = colon > 0 ? raw.slice(0, colon).trim() : '';
+  const tail = colon > 0 ? raw.slice(colon + 1).trim() : '';
+  const code = (err.code || head || raw).toUpperCase();
+
+  switch (code) {
+    case 'ROLE_IN_USE':
+      // 后端已经把人数写进说明了，直接用它的中文，只去掉 CODE 前缀
+      return tail || '还有成员在用这个角色，请先把他们改到别的角色';
+    case 'ROLE_NOT_FOUND_OR_NOT_EDITABLE':
+      if (kind === 'delete') return '系统预置角色不能删除';
+      if (kind === 'edit') return '系统预置角色不能修改';
+      return '系统预置角色不能改';
+    case 'PRIVILEGE_ESCALATION':
+      return tail || '不能授予自己没有的权限';
+    case 'ROLE_NOT_FOUND':
+      return '这个角色找不到了，可能已被删除';
+    case 'VALIDATION_FAILED':
+      return '提交的内容没通过校验，请检查角色名与权限选择';
+    case 'CANNOT_DEMOTE_LAST_ADMIN':
+      return '这是最后一个管理员，降级后没人能再管理成员';
+    case 'CANNOT_REMOVE_LAST_ADMIN':
+      return '这是最后一个管理员，不能移出团队';
+    case 'CANNOT_REMOVE_SELF':
+      return '不能把自己移出团队';
+    case 'MEMBER_ALREADY_IN_TENANT':
+      return '这个人已经在团队里了';
+    case 'MEMBER_NOT_FOUND':
+      return '这个成员已经不在团队里了';
+    case 'NOT_A_SERVICE_ACCOUNT':
+      return '人类成员请用「移出团队」，那会保留其全局账号';
+    default:
+      break;
+  }
+  // 后端直接给的中文说明照用；纯英文（如 Bad Request）没有意义，退回中文兜底
+  if (/[\u4e00-\u9fa5]/.test(raw)) return raw;
+  return fallback;
+}
+
 export function TeamPage(): ReactNode {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
+  /** 当前登录人：自己的权限清单从这里取，不再单独拉一次 /api/auth/me */
+  const { user, loading: authLoading, refresh: refreshAuth } = useAuth();
   const [templates, setTemplates] = useState<RoleTemplate[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [svcs, setSvcs] = useState<ServiceAccount[]>([]);
   const [keys, setKeys] = useState<ApiKeyRow[]>([]);
-  const [ownPermissions, setOwnPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
+
+  /**
+   * 当前用户在本租户的权限 —— 防提权的前端一侧：只能勾自己也有的。
+   * 口径与服务端一致：取当前生效租户那条成员关系（没有 activeTenantId 时就是第一条，
+   * 服务端 TenantGuard 在没带租户头时也是取第一条）。
+   */
+  const activeMembership = user
+    ? (user.activeTenantId
+      ? user.memberships.find((m) => m.tenantId === user.activeTenantId)
+      : user.memberships[0])
+    : undefined;
+  const ownPermissions = activeMembership?.permissions ?? [];
+  /** 权限清单有没有拿到：没拿到就不能据此判断「你有没有这项权限」 */
+  const ownPermsReady = Boolean(user);
+
+  /**
+   * 成员角色用哪个标识传给后端：系统模板用可读 key，自定义角色用 uuid。
+   * 服务端 findRole 只认这两种（uuid 按 id 查自定义角色，key 按系统模板查）——
+   * 传自定义角色的 key（c-xxxx）会被判「角色不存在」，成员就永远用不上自定义角色。
+   */
+  const roleRef = (key: string): string => {
+    const t = templates.find((x) => x.key === key);
+    if (!t) return key;
+    return t.isSystem ? t.key : t.id;
+  };
 
   // 新建成员
   const [open, setOpen] = useState(false);
@@ -140,35 +232,78 @@ export function TeamPage(): ReactNode {
   const [issued, setIssued] = useState<{ token: string; name: string } | null>(null);
   const [keyFor, setKeyFor] = useState<string | undefined>(undefined);
 
-  // 自定义角色编辑器
+  // 自定义角色编辑器：新建与编辑共用一个弹窗
   const [roleOpen, setRoleOpen] = useState(false);
   const [roleSaving, setRoleSaving] = useState(false);
+  const [roleMode, setRoleMode] = useState<'create' | 'edit'>('create');
+  /** 正在编辑的自定义角色；新建时为 null */
+  const [editingRole, setEditingRole] = useState<RoleTemplate | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
-  const [roleForm] = Form.useForm();
+  const [roleForm] = Form.useForm<{ name: string; description?: string }>();
 
-  const openRoleEditor = (): void => {
-    setPicked([]);
-    roleForm.resetFields();
+  /** 这个角色里有、而当前用户没有的权限 —— 后端会判提权拒绝，所以这里不让动 */
+  const foreignPerms = roleMode === 'edit' && editingRole && ownPermsReady
+    ? editingRole.permissions.filter((p) => !ownPermissions.includes(p))
+    : [];
+  /**
+   * 锁住权限区的两种情况：① 自己的权限清单没拿到 ② 角色里有自己没有的权限。
+   * 这时保存**不提交 permissions**：后端收到空数组会清空角色权限，
+   * 收到超出自己权限的数组会 403 提权 —— 两种都不该在这里发生。
+   */
+  const permLocked = roleMode === 'edit' && (!ownPermsReady || foreignPerms.length > 0);
+
+  /** 权限有没有被改动：没改就不提交 permissions —— 改个名字不该重写一遍角色权限 */
+  const permsChanged = editingRole
+    ? picked.length !== editingRole.permissions.length
+      || picked.some((p) => !editingRole.permissions.includes(p))
+    : true;
+
+  /** 打开角色编辑器：不传参数=新建；传角色=编辑（回填它已有的名称、说明与权限） */
+  const openRoleEditor = (t?: RoleTemplate): void => {
+    if (t) {
+      setRoleMode('edit');
+      setEditingRole(t);
+      setPicked([...t.permissions]);
+    } else {
+      setRoleMode('create');
+      setEditingRole(null);
+      setPicked([]);
+    }
+    // 名字与说明先写进表单再开弹窗：destroyOnHidden 下表单是弹窗打开那一刻才挂载的，
+    // 值先落在表单 store 里，字段注册时自己取（与本仓库其它编辑弹窗同一套写法）
+    roleForm.setFieldsValue({
+      name: t?.name ?? '',
+      description: t?.description ?? '',
+    });
     setRoleOpen(true);
   };
 
   const saveRole = async (): Promise<void> => {
     const v = await roleForm.validateFields();
-    if (picked.length === 0) {
+    if (roleMode === 'create' && picked.length === 0) {
       message.warning('至少勾一项权限，否则这个角色什么都做不了');
       return;
     }
     setRoleSaving(true);
     try {
-      await api('/api/team/roles', {
-        method: 'POST',
-        body: JSON.stringify({ ...v, permissions: picked }),
-      });
-      message.success(`已创建角色「${v.name}」`);
+      if (roleMode === 'edit' && editingRole) {
+        const body: { name: string; description?: string; permissions?: string[] } = {
+          name: v.name,
+          description: v.description ?? '',
+        };
+        if (!permLocked && permsChanged) body.permissions = picked;
+        await api(`/api/team/roles/${editingRole.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+        message.success(`已保存角色「${v.name}」`);
+      } else {
+        await api('/api/team/roles', { method: 'POST', body: JSON.stringify({ ...v, permissions: picked }) });
+        message.success(`已创建角色「${v.name}」`);
+      }
       setRoleOpen(false);
       await load();
+      // 管理员可能正在改自己所属的角色：改完同步一次自己的权限清单
+      void refreshAuth();
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '创建失败');
+      message.error(explainTeamError(e, roleMode === 'edit' ? 'edit' : 'create'));
     } finally {
       setRoleSaving(false);
     }
@@ -180,7 +315,7 @@ export function TeamPage(): ReactNode {
       message.success('机器账号已删除，其 API Key 同时失效');
       await load();
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '删除失败');
+      message.error(explainTeamError(e, 'remove'));
     }
   };
 
@@ -190,7 +325,7 @@ export function TeamPage(): ReactNode {
       message.success('已删除');
       await load();
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '删除失败');
+      message.error(explainTeamError(e, 'delete'));
     }
   };
 
@@ -213,24 +348,17 @@ export function TeamPage(): ReactNode {
 
   useEffect(() => { void load(); }, [load]);
 
-  // 权限勾选器只允许勾「我自己也有的」——提前在界面上挡住，别让用户提交了才吃 403
-  useEffect(() => {
-    api<{ memberships: { tenantId: string; permissions: string[] }[] }>('/api/auth/me')
-      .then((me) => setOwnPermissions(me.memberships[0]?.permissions ?? []))
-      .catch(() => undefined);
-  }, []);
-
   const createMember = async (): Promise<void> => {
     const v = await form.validateFields();
     setSaving(true);
     try {
-      await api('/api/team/members', { method: 'POST', body: JSON.stringify(v) });
+      await api('/api/team/members', { method: 'POST', body: JSON.stringify({ ...v, roleKey: roleRef(v.roleKey) }) });
       message.success(`已创建成员 ${v.displayName}，把初始密码线下告知本人即可`);
       setOpen(false);
       form.resetFields();
       await load();
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '创建失败');
+      message.error(explainTeamError(e, 'create'));
     } finally {
       setSaving(false);
     }
@@ -238,11 +366,11 @@ export function TeamPage(): ReactNode {
 
   const changeRole = async (userId: string, next: string): Promise<void> => {
     try {
-      await api(`/api/team/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ roleKey: next }) });
+      await api(`/api/team/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ roleKey: roleRef(next) }) });
       message.success('已更新角色');
       await load();
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '更新失败');
+      message.error(explainTeamError(e, 'assign'));
       await load();
     }
   };
@@ -253,7 +381,7 @@ export function TeamPage(): ReactNode {
       message.success('已移出团队，其 API Key 同时失效');
       await load();
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '移除失败');
+      message.error(explainTeamError(e, 'remove'));
     }
   };
 
@@ -261,7 +389,7 @@ export function TeamPage(): ReactNode {
     const v = await svcForm.validateFields();
     setSvcSaving(true);
     try {
-      await api('/api/agent/service-accounts', { method: 'POST', body: JSON.stringify(v) });
+      await api('/api/agent/service-accounts', { method: 'POST', body: JSON.stringify({ ...v, roleKey: roleRef(v.roleKey) }) });
       message.success('机器账号已创建');
       setSvcOpen(false);
       svcForm.resetFields();
@@ -371,10 +499,26 @@ export function TeamPage(): ReactNode {
                       </Tooltip>
                     )}
                   </Space>
-                  {!t.isSystem && (
-                    <Popconfirm title="删除这个自定义角色？" onConfirm={(e) => { e?.stopPropagation(); void removeRole(t.id); }}>
-                      <Button size="small" danger block onClick={(e) => e.stopPropagation()}>删除角色</Button>
-                    </Popconfirm>
+                  {!t.isSystem ? (
+                    <Space size={6} style={{ width: '100%' }}>
+                      <Button
+                        size="small"
+                        icon={<EditOutlined />}
+                        style={{ flex: 1 }}
+                        onClick={(e) => { e.stopPropagation(); openRoleEditor(t); }}
+                      >
+                        编辑角色
+                      </Button>
+                      <Popconfirm title="删除这个自定义角色？" onConfirm={(e) => { e?.stopPropagation(); void removeRole(t.id); }}>
+                        <Button size="small" danger style={{ flex: 1 }} onClick={(e) => e.stopPropagation()}>删除角色</Button>
+                      </Popconfirm>
+                    </Space>
+                  ) : (
+                    <Tooltip title="系统预置角色由平台统一维护，不能改名也不能改权限；需要不一样的权限就新建一个自定义角色">
+                      <span style={{ display: 'block' }}>
+                        <Button size="small" disabled block>系统预置，不可修改</Button>
+                      </span>
+                    </Tooltip>
                   )}
                 </Space>
               </Card>
@@ -525,13 +669,13 @@ export function TeamPage(): ReactNode {
         )}
       </Card>
 
-      {/* ---------- 自定义角色：按业务分组勾权限 ---------- */}
+      {/* ---------- 自定义角色：新建与编辑共用一个弹窗 ---------- */}
       <Modal
         open={roleOpen}
-        title="自定义角色"
+        title={roleMode === 'edit' ? `编辑角色「${editingRole?.name ?? ''}」` : '自定义角色'}
         onCancel={() => setRoleOpen(false)}
         onOk={() => void saveRole()}
-        okText="创建角色"
+        okText={roleMode === 'edit' ? '保存修改' : '创建角色'}
         confirmLoading={roleSaving}
         width={720}
         destroyOnHidden
@@ -540,13 +684,21 @@ export function TeamPage(): ReactNode {
           type="info"
           showIcon
           style={{ marginBottom: 12, fontSize: 12 }}
-          message="只能勾你自己也拥有的权限 —— 你能给出去的，永远不会比你手上的多。这样任何人都无法靠建角色来提权。"
+          message={roleMode === 'edit'
+            ? '保存后立即生效：这个角色的权限一改，用它的成员立刻按新权限行事；名字与说明只影响展示。'
+            : '只能勾你自己也拥有的权限 —— 你能给出去的，永远不会比你手上的多。这样任何人都无法靠建角色来提权。'}
         />
         <Form form={roleForm} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="name" label="角色名" rules={[{ required: true, message: '请填角色名' }, { max: 30, message: '最多 30 字' }]}>
-                <Input placeholder="例如：门店店长助理" maxLength={30} />
+              <Form.Item name="name" label="角色名" rules={[{ required: true, whitespace: true, message: '请填角色名' }, { max: 30, message: '最多 30 字' }]}>
+                <Input
+                  placeholder="例如：门店店长助理"
+                  maxLength={30}
+                  // 编辑已有角色时输入框里是旧名，聚焦即全选 —— 否则用户不先清空就打字，
+                  // 名字会变成「旧名新名」粘在一起，存进去还得再改一次。
+                  onFocus={(e) => e.currentTarget.select()}
+                />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -568,11 +720,18 @@ export function TeamPage(): ReactNode {
             <Space size={[12, 4]} wrap style={{ marginTop: 4 }}>
               {items.map((c) => {
                 const allowed = ownPermissions.includes(c.action);
+                const tip = !ownPermsReady
+                  ? '权限清单还没取到，暂时不能勾选'
+                  : permLocked
+                    ? '权限区已锁定：现在只能改名字与说明'
+                    : allowed
+                      ? c.action
+                      : `${c.action}（你没有这项权限，不能授予别人）`;
                 return (
-                  <Tooltip key={c.action} title={allowed ? c.action : `${c.action}（你没有这项权限，不能授予别人）`}>
+                  <Tooltip key={c.action} title={tip}>
                     <Checkbox
                       checked={picked.includes(c.action)}
-                      disabled={!allowed}
+                      disabled={permLocked || !allowed}
                       onChange={(e) => {
                         if (e.target.checked) {
                           // 勾「写」自动带上它隐含的「读」，与后端 AbilityFactory 的规则一致
@@ -599,8 +758,22 @@ export function TeamPage(): ReactNode {
             </Space>
           </div>
         ))}
-        {ownPermissions.length === 0 && (
-          <Alert type="warning" showIcon message="未能取到你当前的权限列表，勾选框可能全部不可用，请刷新页面重试。" />
+        {!ownPermsReady && (
+          <Alert
+            type="warning"
+            showIcon
+            message={authLoading
+              ? '正在读取你的权限清单…'
+              : '未能取到你当前的权限列表，勾选框不可用，请刷新页面重试。'}
+          />
+        )}
+        {roleMode === 'edit' && foreignPerms.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 8 }}
+            message={`这个角色里有你没有的权限（${foreignPerms.join('、')}），后端不允许你动它：现在只能改名字与说明，要改权限请找权限更高的管理员。`}
+          />
         )}
       </Modal>
 
