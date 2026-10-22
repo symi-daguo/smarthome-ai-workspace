@@ -298,12 +298,18 @@ export class LlmService {
     /** 覆盖上游超时（批量任务要能快速失败重试，不能干等 4 分钟） */
     timeoutMs?: number;
     rag?: RagContext;
+    /**
+     * 附件 dataURL：图片走多模态，模型能**看**。
+     * 「看图识别」这类任务必须走这里——只给文字的话模型会明确回「未收到图片」。
+     */
+    attachments?: { name: string; dataUrl: string }[];
   }): Promise<T> {
     const { reply } = await this.chat({
       model: input.model ?? DEFAULT_CHAT_MODEL,
       maxTokens: input.maxTokens ?? 8192,
       timeoutMs: input.timeoutMs,
       rag: input.rag,
+      attachments: input.attachments,
       systemPrompt: `${input.systemPrompt}\n只返回一个 JSON 值（对象或数组），不要输出 markdown 代码块、解释或多余文字。`,
       prompt: input.prompt,
     });

@@ -57,6 +57,8 @@ export const createPlanSchema = z.object({
         productId: z.string().uuid(),
         name: z.string().max(60),
         category: z.string().max(30),
+        // 所属房间名：点位清单与交付页按它与图上的编号对应
+        room: z.string().max(20).optional(),
         x: z.number().min(0).max(1),
         y: z.number().min(0).max(1),
       }),
@@ -76,6 +78,8 @@ export const attachFloorplanSchema = z.object({
         productId: z.string().uuid(),
         name: z.string().max(60),
         category: z.string().max(30),
+        // 所属房间名：点位清单与交付页按它与图上的编号对应
+        room: z.string().max(20).optional(),
         x: z.number().min(0).max(1),
         y: z.number().min(0).max(1),
       }),

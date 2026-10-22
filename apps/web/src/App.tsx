@@ -16,6 +16,7 @@ import { AgentMarket } from './pages/AgentMarket';
 import { ImageStudio } from './pages/ImageStudio';
 import { VideoStudio } from './pages/VideoStudio';
 import { PlanStudio } from './pages/PlanStudio';
+import { PlanPrintView } from './pages/PlanPrintView';
 import { TreasureBox } from './pages/TreasureBox';
 import { DeviceLayout } from './pages/DeviceLayout';
 import { LightingStudio } from './pages/LightingStudio';
@@ -94,6 +95,14 @@ export function App(): ReactNode {
               <Route path="/login" element={<Login />} />
               {/* 客户分享页无需登录，微信内直接打开 */}
               <Route path="/share/plan/:token" element={<PlanShareView />} />
+              {/*
+                打印视图（导出高清 PDF）**放在鉴权之外**：
+                客户在微信里打开分享页时，要能自己把方案存成 PDF，
+                走的是 ?share=<token> 的免鉴权接口。挂在鉴权路由里会被弹回登录页，
+                「客户自己导出」这条用法就废了。
+                门店自己用 ?id=<planId> 打开同一个页面（需要登录时接口会自行报错提示）。
+              */}
+              <Route path="/plan-print" element={<PlanPrintView />} />
               <Route path="*" element={<ProtectedRoutes />} />
             </Routes>
           </BrowserRouter>

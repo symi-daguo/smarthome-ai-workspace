@@ -116,7 +116,7 @@ export const PRODUCT_FIELD_SPECS: ProductFieldSpec[] = [
   { name: 'rebateDesigner', required: false, type: 'number', desc: '设计师返点（%）', default: 0, range: '0 ~ 100 的整数', example: 2 },
   { name: 'pricingMode', required: false, type: 'enum', desc: '计价方式', default: 'per_unit', range: 'per_unit（按数量） / per_order（按单总价）', example: 'per_unit' },
   { name: 'perRoom', required: false, type: 'string', desc: '每房间用量说明', default: '', example: '每房间 1 个' },
-  { name: 'imageUrl', required: false, type: 'string', desc: '产品主图地址（品牌官网上的图直接用原地址）', default: '', example: 'https://example.com/img/z7.jpg' },
+  { name: 'imageUrl', required: false, type: 'string', desc: '产品主图地址（留空则用自绘品类图标；填外部地址前请确认有授权）', default: '', example: 'https://example.com/img/z7.jpg' },
   { name: 'iconKey', required: false, type: 'string', desc: '没有主图时用的品类图标 key', default: '', example: 'switch' },
 ];
 
@@ -310,7 +310,7 @@ export class ProductTransferService {
         '单次最多 2000 行',
         '价格与返点必须是整数；返点取值 0~100（百分数），价格 0~10000000',
         '不填的价格与返点按 0 处理；质保期默认 12 个月',
-        'imageUrl 可以直接填品牌官网上的图片地址',
+        'imageUrl 留空即可：产品图会自动用自绘的品类图标。填外部图片地址前请确认有授权 —— 交付物会长期依赖它',
       ],
     };
   }

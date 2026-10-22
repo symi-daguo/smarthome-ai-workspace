@@ -21,6 +21,7 @@ import { rankLocalChunks } from '../src/knowledge/knowledge-doc.service.js';
 import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../src/common/upstream-timeout.js';
 import { BrandSiteService } from '../src/layout/brand-site.service.js';
 import { guessModel } from '../src/layout/brand-import.service.js';
+import { assignByRoom, normalizeRooms, placeByRoom, roomTypeOf } from '../src/layout/floorplan-points.js';
 import { computeHotScore } from '../src/benchmark/benchmark.service.js';
 import { buildProjectionText, normalizeAnalysis } from '../src/benchmark/benchmark-analyze.service.js';
 
@@ -903,6 +904,86 @@ async function main(): Promise<void> {
     body: JSON.stringify({ title: '测试点位', mediaAssetId: '00000000-0000-0000-0000-000000000000', points: [{ productId: '00000000-0000-0000-0000-000000000000', name: 'x', category: 'switch', x: 2, y: 0 }] }),
   });
   check('点位坐标越界被校验拒绝', layoutBadPoint.status === 400);
+
+  // ---------- 户型图「AI 识别并布点」：路由 + 落位规则 ----------
+  {
+    // 端点存在且底图不存在时直接 404（不触发模型调用，冒烟不烧额度）
+    const detect404 = await request(base, '/api/floorplan/detect', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${regA.body.token}` },
+      body: JSON.stringify({ floorplanAssetId: '00000000-0000-0000-0000-000000000000' }),
+    });
+    check('户型图识别端点已注册且底图不存在返回 404', detect404.status === 404);
+
+    // 落位规则是纯函数，直接断言——这是「标记必须落在正确房间」的核心保证
+    const rooms = normalizeRooms({
+      rooms: [
+        { name: '客厅', box: [0.02, 0.02, 0.31, 0.36] },
+        { name: '主卫', box: [0.72, 0.40, 0.84, 0.73] },
+        { name: '反序', box: [0.9, 0.9, 0.1, 0.1] },
+        { name: '太小', box: [0.1, 0.1, 0.105, 0.105] },
+        { name: '客厅', box: [0.1, 0.1, 0.2, 0.2] },
+      ],
+    });
+    check(
+      '房间矩形归一化：反序纠正 / 过小丢弃 / 重名去重',
+      rooms.length === 3 && rooms[2].box[0] === 0.1 && rooms[2].box[2] === 0.9,
+      `rooms=${JSON.stringify(rooms.map((r) => r.name))}`,
+    );
+
+    const cands = [
+      { id: 'p1', name: '网关', category: 'gateway', perRoom: '' },
+      { id: 'p2', name: '吸顶灯A', category: 'light', perRoom: '' },
+      { id: 'p3', name: '吸顶灯B', category: 'light', perRoom: '' },
+      { id: 'p4', name: '开关', category: 'switch', perRoom: '' },
+    ];
+    const pts = placeByRoom(rooms, [
+      { i: 0, room: '客厅' },
+      { i: 1, room: '客厅' },
+      { i: 2, room: '客厅' },
+      { i: 3, room: '主卫' },
+      { i: 0, room: '不存在的房间' },
+      { i: 99, room: '客厅' },
+    ], cands);
+    check('落位：未知房间与越界候选下标被丢弃', pts.length === 4, `pts=${pts.length}`);
+    const inside = pts.every((p) => {
+      const r = rooms.find((x) => x.name === p.room);
+      return Boolean(r) && p.x >= r!.box[0] && p.x <= r!.box[2] && p.y >= r!.box[1] && p.y <= r!.box[3];
+    });
+    check('落位：每个点位都在它自己房间的矩形内', inside);
+    const gap = Math.hypot(pts[1].x - pts[2].x, pts[1].y - pts[2].y);
+    check('落位：同房间同类设备的标记不叠在一起', gap >= 0.044, `gap=${gap.toFixed(4)}`);
+
+    // 空间类型判定：顺序敏感（「主卧阳台」要判成阳台，不能判成主卧）
+    check(
+      '空间类型判定：阳台/玄关/主卫/主卧/次卧 各归各的',
+      roomTypeOf('主卧阳台') === 'balcony' && roomTypeOf('入户玄关') === 'entry'
+      && roomTypeOf('主卫') === 'bath' && roomTypeOf('主卧') === 'master' && roomTypeOf('次卧') === 'bedroom',
+    );
+
+    // 标准配置选型：同样的房间 + 同样的产品库，必须得到同一套结果
+    const lib = [
+      { id: 'gw', name: '亖米智能中枢网关', category: 'gateway', perRoom: '', own: true, price: 999 },
+      { id: 'ld', name: '亖米磁吸灯mesh版', category: 'light', perRoom: '', own: true, price: 499 },
+      { id: 'sw', name: '亖米一键开关', category: 'switch', perRoom: '', own: true, price: 129 },
+      { id: 'cu', name: '亖米智能窗帘电机', category: 'curtain', perRoom: '', own: true, price: 699 },
+    ];
+    const planRooms: { name: string; box: [number, number, number, number] }[] = [
+      { name: '客厅', box: [0.02, 0.02, 0.31, 0.36] },
+      { name: '次卧', box: [0.34, 0.39, 0.51, 0.7] },
+    ];
+    const plan = assignByRoom(planRooms, lib);
+    const idsOf = (room: string): string[] => plan.filter((a) => a.room === room).map((a) => lib[a.i].id).sort();
+    // 客厅配网关+灯+窗帘（该表里没有面板/音箱/摄像头品类，配不出来就不配）；
+    // 次卧配灯+窗帘+开关。两间房都不该出现对方没有的角色。
+    check(
+      '标准配置：客厅配网关+灯+窗帘，次卧配灯+窗帘+开关',
+      idsOf('客厅').join(',') === 'cu,gw,ld' && idsOf('次卧').join(',') === 'cu,ld,sw',
+      `客厅=${idsOf('客厅')} 次卧=${idsOf('次卧')}`,
+    );
+    const again = assignByRoom(planRooms, lib);
+    check('标准配置：同样的输入必须得到同样的输出（确定性）', JSON.stringify(plan) === JSON.stringify(again));
+  }
 
   const floorplan404 = await request(base, '/api/plans/00000000-0000-0000-0000-000000000000/floorplan', {
     method: 'PATCH',

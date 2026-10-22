@@ -16,6 +16,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   Progress,
   Radio,
   Row,
@@ -292,6 +293,37 @@ export function TokenCenter(): ReactNode {
 
   const membership = user?.memberships[0];
 
+  // —— 报价设置：安装调试费率 ——
+  // 报价清单在服务端按当前租户的费率算，PPTX / 讲稿 / 分享页三处同源。
+  // 这里改完立即生效，不需要重新生成方案。
+  const [installRate, setInstallRate] = useState<number | null>(null);
+  const [savingRate, setSavingRate] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api<{ installRate?: number }>('/api/tenants/current')
+      .then((t) => {
+        if (alive) setInstallRate(typeof t?.installRate === 'number' ? t.installRate : 20);
+      })
+      .catch(() => {
+        /* 拉不到就保持空，保存时再报错 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const saveInstallRate = async (): Promise<void> => {
+    if (installRate === null) return;
+    setSavingRate(true);
+    try {
+      await api('/api/tenants/current', { method: 'PATCH', body: JSON.stringify({ installRate }) });
+      message.success(`安装调试费率已设为 ${installRate}%`);
+    } catch (e) {
+      message.error((e as Error).message || '保存失败');
+    } finally {
+      setSavingRate(false);
+    }
+  };
+
   return (
     <div style={pageContainerStyle}>
       <PageHeader
@@ -317,6 +349,47 @@ export function TokenCenter(): ReactNode {
               </Text>
             </div>
           </div>
+        </Space>
+      </Card>
+
+      {/* 报价设置：安装调试费率（影响交付物里的报价清单） */}
+      <Card
+        title="报价设置"
+        style={{ marginBottom: 16 }}
+        styles={{ body: { padding: 20 } }}
+        extra={
+          <Button
+            type="primary"
+            size="small"
+            disabled={installRate === null || savingRate}
+            onClick={() => void saveInstallRate()}
+          >
+            {savingRate ? '保存中…' : '保存费率'}
+          </Button>
+        }
+      >
+        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+          <Space align="center" wrap>
+            <Text style={{ fontSize: 13 }}>安装调试费率</Text>
+            <InputNumber
+              min={0}
+              max={100}
+              step={1}
+              value={installRate ?? undefined}
+              onChange={(v) => setInstallRate(typeof v === 'number' ? v : null)}
+              addonAfter="%"
+              style={{ width: 120 }}
+              placeholder="默认 20"
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              按设备参考零售价的百分比计取（行业经验值 15%~25%）
+            </Text>
+          </Space>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            报价清单分两项：<Text strong>设备价</Text>（逐项可核对的硬件清单）+
+            <Text strong>安装调试费</Text>（设备价 × 本费率）= 整包合计。
+            辅材与特殊施工费用按现场实际情况另计。
+          </Text>
         </Space>
       </Card>
 

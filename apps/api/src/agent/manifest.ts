@@ -128,6 +128,7 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'PATCH /api/layouts/{id}': ['content:read'],
   'DELETE /api/layouts/{id}': ['content:generate'],
   'GET /api/layouts/{id}/summary': ['quote:read'],
+  'POST /api/floorplan/detect': ['content:generate'],
 
   'GET /api/lighting': ['content:read'],
   'POST /api/lighting': ['content:read'],
@@ -398,6 +399,7 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'PATCH', p: '/api/layouts/{id}', d: '改点位/改布局', risk: W },
       { m: 'DELETE', p: '/api/layouts/{id}', d: '删布局', risk: D },
       { m: 'GET', p: '/api/layouts/{id}/summary', d: '点位汇总（按品类聚合，用于报价）', risk: R },
+      { m: 'POST', p: '/api/floorplan/detect', d: '户型图识别房间并布点（读图，消耗算力）', risk: W },
     ],
   },
   {

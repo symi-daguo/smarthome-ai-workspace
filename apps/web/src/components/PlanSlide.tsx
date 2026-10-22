@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { compositePoints, type PointLike } from '../lib/pointOverlay';
 import { customerText } from '../lib/planSanitize';
 import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
-import { POINT_ROWS_PER_PAGE } from '../lib/planPages';
+import { POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, type QuoteSummary } from '../lib/planPages';
 
 interface SlidePlan {
   store: string;
@@ -17,6 +17,8 @@ interface SlidePlan {
   /** 交付模版（与 PPTX 同源，见 data/planTemplates.ts） */
   floorplanTemplate?: string | null;
   markerTemplate?: string | null;
+  /** 设备清单与报价（与 PPTX 同源，见 lib/planPages.ts） */
+  quoteSummary?: QuoteSummary | null;
 }
 
 /**
@@ -43,6 +45,8 @@ interface BudgetItem {
 export const PAGE_BULLET_LIMIT: Record<PlanPage['type'], number> = {
   // 户型与点位页是图示页：只有整页大图 + 品类汇总，没有可编辑的要点条
   floorplan: 0,
+  // 报价页是表页：内容由点位与产品库价格推出，不接受人工改要点
+  quote: 0,
   cover: 3,
   brand: 4,
   needs: 5,
@@ -97,15 +101,14 @@ function pageImage(page: PlanPage): string {
 function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit: 'cover' | 'contain' } {
   const useRendered = Boolean(plan.renderedFloorplanUrl);
   /**
-   * 底图优先级：精装修效果图 > 原始户型图。
+   * 底图优先级：**原始户型图** > 精装修效果图。
    *
-   * 关键改动：底图和点位是**两件事**，不是二选一。此前写成
-   * `hasFloorplan = !useRendered && ...`，于是生成了精装修图之后
-   * **点位直接消失** —— 用户传图、配点位、跑渲染，一路都对，
-   * 唯独交付物里那个叫「户型与设备点位」的页面上找不到任何设备。
-   * 这属于承诺了却不给，不是「少个功能」。
+   * 为什么点位要叠在原始户型图上：点位坐标是门店在**客户上传的那张户型图**上标的，
+   * 换成 AI 渲染图当底图，两张图的构图只要有出入（模型改了布局、加了边距、
+   * 改了开口位置），点位就与实际位置对不上 —— 而点位图是施工交底的依据，
+   * 位置错了比没有图更糟。AI 精装修效果图仍然出现在空间动线页（看效果用）。
    */
-  const base = (useRendered ? plan.renderedFloorplanUrl : plan.floorplanUrl) as string | null | undefined;
+  const base = (plan.floorplanUrl ?? plan.renderedFloorplanUrl) as string | null | undefined;
   // render 模版刻意不叠加点位（它就是「只放效果图」的展示型模版），与 PPTX 同规则
   const fpTpl = floorplanTemplate(plan.floorplanTemplate);
   const mkTpl = markerTemplate(plan.markerTemplate);
@@ -129,7 +132,7 @@ function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit:
   if (needCompose && base) {
     return {
       src: composite ?? base,
-      label: useRendered ? '精装修效果图 · 设备点位图' : '客户户型 · 设备点位图',
+      label: '客户户型 · 设备点位图',
       fit: 'cover',
     };
   }
@@ -137,7 +140,7 @@ function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit:
   return { src: '', label: '空间动线实景', fit: 'cover' };
 }
 
-export function PlanSlide({ page: raw, index, plan, t, listNo = 0 }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme; listNo?: number }): ReactNode {
+export function PlanSlide({ page: raw, index, plan, t, listNo = 0, quoteNo = 0 }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme; listNo?: number; quoteNo?: number }): ReactNode {
   // 客户可见的出口在这里统一净化一次。
   //
   // 为什么放在组件里而不是 4 个调用点各自处理：PlanSlide 被编辑预览、客户放映、
@@ -165,6 +168,7 @@ export function PlanSlide({ page: raw, index, plan, t, listNo = 0 }: { page: Pla
     case 'budget': return <BudgetSlide page={page} index={index} plan={plan} t={t} />;
     case 'delivery': return <DeliverySlide page={page} index={index} plan={plan} t={t} />;
     case 'floorplan': return <FloorplanSlide page={page} index={index} plan={plan} t={t} listNo={listNo} />;
+    case 'quote': return <QuoteSlide page={page} index={index} plan={plan} t={t} quoteNo={quoteNo} />;
   }
 }
 
@@ -445,6 +449,91 @@ function SceneSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
 }
 
 /** 预算规划：左文+合规，右阴影面板内条形图 */
+/**
+ * 设备清单与报价页（React 版，与 PPTX 的 quoteSlide 同口径）。
+ *
+ * 数据来自产品库与真实点位：数量 = 该款设备在平面图上的点位个数，
+ * 单价 = 参考零售价。**不含**辅材、布线、安装与调试 —— 口径写在页脚，
+ * 否则客户会把设备价当整包价。
+ */
+function QuoteSlide({ page, index, plan, t, quoteNo }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme; quoteNo: number }): ReactNode {
+  const sum = plan.quoteSummary;
+  const rows = sum ? sum.items.slice(quoteNo * QUOTE_ROWS_PER_PAGE, (quoteNo + 1) * QUOTE_ROWS_PER_PAGE) : [];
+  const pageSubtotal = rows.reduce((s, it) => s + it.subtotal, 0);
+  const isLast = !sum || quoteNo * QUOTE_ROWS_PER_PAGE + rows.length >= sum.items.length;
+  const cols = ['5%', '44%', '12%', '9%', '15%', '15%'];
+  const heads = ['序号', '设备名称', '品类', '数量', '参考单价', '小计'];
+  return (
+    <Frame t={t} style={{ padding: '4.5% 5% 5%' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ width: '62%' }}>
+            <Folio page={page} index={index} t={t} />
+            <Claim page={page} t={t} />
+            <div style={{ fontSize: 'clamp(6px,1.2cqw,10.5px)', color: t.sub, lineHeight: 1.6, marginTop: '1cqw' }}>{page.body}</div>
+          </div>
+          <div style={{ width: '30%', background: t.surface, borderRadius: '1.4cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a`, padding: '1.6cqw 2cqw' }}>
+            <div style={{ fontSize: 'clamp(6px,1.15cqw,10px)', fontWeight: 800, color: t.sub }}>整包合计（含安装调试）</div>
+            <div style={{ fontSize: 'clamp(16px,3.4cqw,30px)', fontWeight: 800, color: t.accent, lineHeight: 1.2, marginTop: '0.5cqw' }}>
+              {sum ? `¥${sum.grandTotal.toLocaleString('zh-CN')}` : '—'}
+            </div>
+            <div style={{ fontSize: 'clamp(5px,1.05cqw,9px)', color: t.sub, marginTop: '0.4cqw' }}>
+              {sum ? `设备 ¥${sum.total.toLocaleString('zh-CN')} · 安装调试 ${sum.installRate}% ¥${sum.installFee.toLocaleString('zh-CN')}` : ''}
+            </div>
+            <div style={{ fontSize: 'clamp(5px,1.05cqw,9px)', color: t.sub, marginTop: '0.2cqw' }}>
+              {sum ? `共 ${sum.kindCount} 种设备 · ${sum.deviceCount} 台` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, marginTop: '1.6cqw', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ display: 'flex', background: t.accent, color: '#FFFFFF', borderRadius: '0.6cqw 0.6cqw 0 0', padding: '0.7cqw 0' }}>
+            {heads.map((h, i) => (
+              <div key={h} style={{ width: cols[i], fontSize: 'clamp(6px,1.15cqw,10px)', fontWeight: 800, textAlign: i >= 3 ? 'right' : 'left', paddingRight: i >= 3 ? '1cqw' : 0, paddingLeft: i < 3 ? '0.9cqw' : 0 }}>{h}</div>
+            ))}
+          </div>
+          {rows.map((it, ri) => (
+            <div key={it.name} style={{ display: 'flex', alignItems: 'center', padding: '0.42cqw 0', background: ri % 2 ? `${t.surface}` : 'transparent', borderBottom: `1px solid ${t.accent}18` }}>
+              <div style={{ width: cols[0], fontSize: 'clamp(6px,1.1cqw,9.5px)', fontWeight: 800, color: t.accent, paddingLeft: '0.9cqw' }}>{quoteNo * QUOTE_ROWS_PER_PAGE + ri + 1}</div>
+              <div style={{ width: cols[1], fontSize: 'clamp(6px,1.15cqw,10px)', fontWeight: 700, color: t.text, paddingLeft: '0.9cqw', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+              <div style={{ width: cols[2], fontSize: 'clamp(6px,1.05cqw,9px)', color: t.sub, paddingLeft: '0.9cqw' }}>{catMeta(it.category).label}</div>
+              <div style={{ width: cols[3], fontSize: 'clamp(6px,1.1cqw,9.5px)', color: t.text, textAlign: 'right', paddingRight: '1cqw' }}>{it.qty}</div>
+              <div style={{ width: cols[4], fontSize: 'clamp(6px,1.1cqw,9.5px)', color: t.sub, textAlign: 'right', paddingRight: '1cqw' }}>¥{it.unitPrice.toLocaleString('zh-CN')}</div>
+              <div style={{ width: cols[5], fontSize: 'clamp(6px,1.1cqw,9.5px)', fontWeight: 700, color: t.text, textAlign: 'right', paddingRight: '1cqw' }}>¥{it.subtotal.toLocaleString('zh-CN')}</div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', alignItems: 'center', paddingTop: '0.8cqw' }}>
+            <div style={{ flex: 1 }} />
+            {isLast ? (
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '1cqw' }}>
+                <span style={{ fontSize: 'clamp(6px,1.1cqw,9.5px)', color: t.sub }}>设备 ¥{(sum?.total ?? 0).toLocaleString('zh-CN')}</span>
+                <span style={{ fontSize: 'clamp(6px,1.1cqw,9.5px)', color: t.sub }}>安装调试 {sum?.installRate ?? 0}% ¥{(sum?.installFee ?? 0).toLocaleString('zh-CN')}</span>
+                <span style={{ fontSize: 'clamp(6px,1.1cqw,9.5px)', fontWeight: 700, color: t.sub }}>整包合计</span>
+                <span style={{ fontSize: 'clamp(7px,1.4cqw,12px)', fontWeight: 800, color: t.accent }}>¥{(sum?.grandTotal ?? 0).toLocaleString('zh-CN')}</span>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 'clamp(6px,1.1cqw,9.5px)', fontWeight: 700, color: t.sub }}>本页小计</div>
+                <div style={{ width: '15%', textAlign: 'right', fontSize: 'clamp(6px,1.1cqw,9.5px)', fontWeight: 800, color: t.text, paddingRight: '1cqw' }}>
+                  ¥{pageSubtotal.toLocaleString('zh-CN')}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div style={{ fontSize: 'clamp(5px,1cqw,9px)', color: t.sub, marginTop: '0.8cqw' }}>
+          说明：设备价为参考零售价；安装调试费按设备价比例计取（比例在工作台设置里定）。辅材与特殊施工费用按现场实际情况另计。
+        </div>
+        <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <QuoteBar quote={page.quote} t={t} />
+          <Footer plan={plan} t={t} />
+        </div>
+      </div>
+    </Frame>
+  );
+}
+
 function BudgetSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
   const items = parseBudget(page.bullets)?.slice(0, 6);
   const maxVal = items ? Math.max(...items.map((it) => it.max)) : 0;
@@ -596,6 +685,10 @@ function FloorplanSlide({ page, index, plan, t, listNo = 0 }: { page: PlanPage; 
                     <div key={`${pt.name}-${no}`} style={{ display: 'flex', alignItems: 'center', gap: '0.8cqw', padding: '0.35cqw 0.7cqw', background: t.surface, borderRadius: '0.6cqw', border: `1px solid ${t.accent}1a`, flex: '1 1 0', minHeight: 0 }}>
                       <span style={{ width: '1.6cqw', height: '1.6cqw', minWidth: '1.6cqw', borderRadius: '50%', background: meta.color, color: '#fff', fontSize: 'clamp(5px,0.85cqw,8px)', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>{no}</span>
                       <span style={{ fontSize: 'clamp(5px,1.05cqw,9.5px)', color: t.text, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>{pt.name}</span>
+                      {/* 房间列：与 PPTX 同口径。没有房间名时不渲染（不写占位符） */}
+                      {pt.room ? (
+                        <span style={{ fontSize: 'clamp(5px,0.9cqw,8px)', color: t.accent, flex: 'none', maxWidth: '5.6cqw', overflow: 'hidden', whiteSpace: 'nowrap' }}>{pt.room}</span>
+                      ) : null}
                       <span style={{ fontSize: 'clamp(5px,0.95cqw,8.5px)', color: t.sub, flex: 'none' }}>{meta.label}</span>
                     </div>
                   );

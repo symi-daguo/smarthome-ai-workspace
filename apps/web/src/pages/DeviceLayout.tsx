@@ -72,8 +72,16 @@ interface LayoutPoint {
   /** 产品主图相对路径（有图点位显示产品照片） */
   iconUrl?: string;
   iconKey?: string;
+  /** 所属房间名：点位清单与交付页按它与图上的编号对应 */
+  room?: string;
   x: number;
   y: number;
+}
+
+/** 户型图里识别出的房间（归一化矩形，原点左上） */
+interface DetectRoom {
+  name: string;
+  box: [number, number, number, number];
 }
 
 let pointSeq = 0;
@@ -127,6 +135,10 @@ export function DeviceLayout(): ReactNode {
   const [assetId, setAssetId] = useState('');
   const [imgSrc, setImgSrc] = useState('');
   const [points, setPoints] = useState<LayoutPoint[]>([]);
+  /** AI 识别出的房间矩形（画在底图上，便于核对点位是否落在正确房间） */
+  const [rooms, setRooms] = useState<DetectRoom[]>([]);
+  /** AI 识别布点进行中（与墙体识别分开，两个是不同任务） */
+  const [aiDetecting, setAiDetecting] = useState(false);
   const [pending, setPending] = useState<Product | null>(null);
   const [selected, setSelected] = useState('');
   const [title, setTitle] = useState(planId ? '方案户型点位图' : '未命名点位图');
@@ -193,6 +205,7 @@ export function DeviceLayout(): ReactNode {
       setAssetId(res.id);
       setImgSrc(fileUrl(res.url));
       setPoints([]);
+      setRooms([]);
       setWalls([]);
       setSelWall(null);
       message.success('户型图已上传，点击右侧产品后在图上布点');
@@ -224,6 +237,49 @@ export function DeviceLayout(): ReactNode {
       setBeautifying(false);
     }
   }, [imgSrc, title, message]);
+
+  /**
+   * AI 识别并布点：读户型图 → 房间矩形 + 设备选型 → 服务端算好落位坐标。
+   *
+   * 为什么不让模型直接给 24 个点位坐标：相邻房间（主卫/客卫、四个阳台）极易串位，
+   * 客户一眼就能看出「这个开关画到隔壁房间去了」。改成「模型只给房间框、
+   * 点位由品类规则算」之后，落位是确定性的，且**必然落在正确房间**。
+   * 人工仍可拖拽微调——AI 出的是建议稿，不是终稿。
+   */
+  const runDetect = useCallback(async () => {
+    if (!assetId) {
+      message.warning('请先上传户型图');
+      return;
+    }
+    setAiDetecting(true);
+    try {
+      const res = await api<{
+        rooms: DetectRoom[];
+        points: { productId: string; name: string; category: string; room: string; x: number; y: number }[];
+      }>('/api/floorplan/detect', { method: 'POST', body: JSON.stringify({ floorplanAssetId: assetId }) });
+      const byId = new Map(products.map((p) => [p.id, p]));
+      setRooms(res.rooms ?? []);
+      setPoints((res.points ?? []).map((p) => {
+        const prod = byId.get(p.productId);
+        return {
+          id: nextPointId(),
+          productId: p.productId,
+          name: p.name,
+          category: p.category,
+          iconUrl: prod?.imageUrl || undefined,
+          iconKey: prod?.iconKey || undefined,
+          room: p.room,
+          x: p.x,
+          y: p.y,
+        };
+      }));
+      message.success(`识别到 ${res.rooms?.length ?? 0} 个房间，已布 ${res.points?.length ?? 0} 个点位，可拖拽微调`);
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setAiDetecting(false);
+    }
+  }, [assetId, products, message]);
 
   const stagePos = useCallback((clientX: number, clientY: number): { x: number; y: number } | null => {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -583,7 +639,16 @@ export function DeviceLayout(): ReactNode {
       const dto = {
         title,
         mediaAssetId: assetId,
-        points: points.map(({ productId, name, category, iconUrl, iconKey, x, y }) => ({ productId, name, category, ...(iconUrl ? { iconUrl } : {}), ...(iconKey ? { iconKey } : {}), x: +x.toFixed(4), y: +y.toFixed(4) })),
+        points: points.map(({ productId, name, category, iconUrl, iconKey, room, x, y }) => ({
+          productId,
+          name,
+          category,
+          ...(iconUrl ? { iconUrl } : {}),
+          ...(iconKey ? { iconKey } : {}),
+          ...(room ? { room } : {}),
+          x: +x.toFixed(4),
+          y: +y.toFixed(4),
+        })),
       };
       await api('/api/layouts', { method: 'POST', body: JSON.stringify(dto) });
       if (planId) {
@@ -645,6 +710,9 @@ export function DeviceLayout(): ReactNode {
               {imgSrc && (
                 <>
                   <Button size="small" loading={beautifying} onClick={() => void beautify()}>美化图纸</Button>
+                  {mode === 'device' && (
+                    <Button size="small" type="primary" ghost loading={aiDetecting} onClick={() => void runDetect()}>AI 识别布点</Button>
+                  )}
                   {mode === 'wifi' ? (
                     <Button size="small" onClick={() => void exportWifiPng()}>导出热力图 PNG</Button>
                   ) : (
@@ -671,6 +739,26 @@ export function DeviceLayout(): ReactNode {
               style={{ position: 'relative', cursor: pending ? 'crosshair' : 'default', userSelect: 'none', outline: 'none', borderRadius: 8, overflow: 'hidden' }}
             >
               <img src={imgSrc} alt="户型平面图" draggable={false} style={{ display: 'block', width: '100%' }} />
+              {/* 房间框：AI 识别出的房间区域，画出来让方案师一眼核对点位有没有落错房间 */}
+              {rooms.map((r) => (
+                <div
+                  key={r.name}
+                  style={{
+                    position: 'absolute',
+                    left: `${r.box[0] * 100}%`,
+                    top: `${r.box[1] * 100}%`,
+                    width: `${(r.box[2] - r.box[0]) * 100}%`,
+                    height: `${(r.box[3] - r.box[1]) * 100}%`,
+                    border: '1px dashed rgba(24,119,242,.5)',
+                    background: 'rgba(24,119,242,.05)',
+                    boxSizing: 'border-box',
+                    pointerEvents: 'none',
+                    zIndex: 1,
+                  }}
+                >
+                  <span style={{ position: 'absolute', left: 2, top: 2, fontSize: 11, lineHeight: '15px', color: 'rgba(24,119,242,.95)', background: 'rgba(255,255,255,.72)', padding: '0 3px', borderRadius: 3 }}>{r.name}</span>
+                </div>
+              ))}
               {/* WiFi 叠加层：热力 + 墙线 + 每米网格 + 等值环；压在底图之上、点位之下，故点位拖拽不受影响 */}
               {mode === 'wifi' && (
                 <canvas
@@ -688,7 +776,7 @@ export function DeviceLayout(): ReactNode {
                     onPointerDown={(e) => onPointerDownPoint(e, p.id)}
                     style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%,-50%)', cursor: 'grab', zIndex: isSel ? 3 : 2 }}
                   >
-                    <Tooltip title={`${p.name}（拖动调整位置，选中后按 Delete 或点右侧删除）`}>
+                    <Tooltip title={`${p.room ? `${p.room} · ` : ''}${p.name}（拖动调整位置，选中后按 Delete 或点右侧删除）`}>
                       {p.iconUrl ? (
                         <img
                           src={fileUrl(p.iconUrl)}
@@ -810,6 +898,19 @@ export function DeviceLayout(): ReactNode {
                 </div>
               )}
             </Space>
+          </Card>
+        )}
+
+        {/* 已布点位清单：编号与图上标记一致，房间名让「编号 ↔ 位置」当场可核对 */}
+        {points.length > 0 && (
+          <Card size="small" title={<Text strong style={{ fontSize: 13 }}>本图点位（{points.length}）</Text>} styles={{ body: { padding: 12, maxHeight: 200, overflowY: 'auto' } }}>
+            {points.map((p, i) => (
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '2px 0' }}>
+                <span style={{ width: 18, height: 18, minWidth: 18, borderRadius: '50%', background: catMeta(p.category).color, color: '#fff', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>{p.name}</span>
+                {p.room ? <span style={{ color: 'rgba(0,0,0,.45)', flex: 'none' }}>{p.room}</span> : null}
+              </div>
+            ))}
           </Card>
         )}
 

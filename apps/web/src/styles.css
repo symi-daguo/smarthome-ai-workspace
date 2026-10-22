@@ -53,6 +53,57 @@ body,
   }
 }
 
+/* ---------- 方案打印视图（导出高清 PDF）---------- */
+
+/*
+ * 页面尺寸固定成 16:9（13.333in × 7.5in），与 PPTX 的画布 1:1 对应，
+ * 打印出来的 PDF 与 PPT 逐页同版式。
+ *
+ * 边距必须为 0：@page 的可用区域会减去边距，留边距就会把内容压小、
+ * 底部被裁掉。内容超出一页时靠 `break-after: page` 强制换页。
+ */
+@page {
+  size: 13.333in 7.5in;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  /* 屏幕上的提示条与外层留白都不进 PDF。
+     注意必须把 **padding 整体** 归零：只清 padding-top 的话，
+     根容器那 48px 底部留白会溢出到最后一页之后，导出的 PDF 末尾多一张空白页。 */
+  .plan-print-hint,
+  .plan-print-root {
+    padding: 0 !important;
+  }
+  .plan-print-hint {
+    display: none !important;
+  }
+  .plan-print-page {
+    /* 每页独占一张纸：高度按 @page 的 7.5in 扣掉 1px 边框，避免多出空白页 */
+    width: 13.333in !important;
+    height: 7.49in !important;
+    margin: 0 !important;
+    overflow: hidden;
+    break-after: page;
+    page-break-after: always;
+  }
+  .plan-print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  /* 背景色与图片必须强制打印，否则深色底版与配图会丢 */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
 /* ---------- 右下角任务球 ---------- */
 
 /* 轨道旋转：只在有任务在跑时加（有 CSS 类才转），提示「它还在干活」 */

@@ -22,13 +22,16 @@ export class TenantsController {
   @UseGuards(PermissionsGuard)
   @RequirePermissions('tenant:member:manage')
   @Patch('current')
-  rename(@CurrentUser() user: AuthProfile, @Body(new ZodValidationPipe(updateTenantSchema)) dto: UpdateTenantDto) {
-    return this.tenants.rename(user.activeTenantId as string, dto.name);
+  update(@CurrentUser() user: AuthProfile, @Body(new ZodValidationPipe(updateTenantSchema)) dto: UpdateTenantDto) {
+    return this.tenants.update(user.activeTenantId as string, dto.name, dto.installRate);
   }
 
   @Get('current')
-  current(@CurrentUser() user: AuthProfile) {
-    return this.tenants.current(user);
+  async current(@CurrentUser() user: AuthProfile) {
+    // 工作台设置（名称 + 安装调试费率）走租户表，不走登录时的 membership 快照 ——
+    // 改了费率后不用重新登录就能读到新值。
+    const settings = await this.tenants.settings(user.activeTenantId as string);
+    return settings ?? this.tenants.current(user);
   }
 
   @Get('current/tokens')

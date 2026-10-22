@@ -141,6 +141,8 @@ export const createLayoutSchema = z.object({
         category: z.string().max(30),
         // 产品主图（有图点位用产品照片作图标，无图回退品类 SVG）
         iconUrl: z.string().max(200).optional(),
+        // 所属房间名：右侧清单与交付页按它与图上的编号对应（缺失按「未标注」处理）
+        room: z.string().max(20).optional(),
         x: z.number().min(0).max(1),
         y: z.number().min(0).max(1),
       }),
@@ -148,6 +150,12 @@ export const createLayoutSchema = z.object({
     .max(200, '点位过多（上限 200）'),
 });
 export type CreateLayoutDto = z.infer<typeof createLayoutSchema>;
+
+/** 户型图「AI 识别并布点」：底图资产 id */
+export const floorplanDetectSchema = z.object({
+  floorplanAssetId: z.string().uuid('缺少户型底图'),
+});
+export type FloorplanDetectDto = z.infer<typeof floorplanDetectSchema>;
 
 export const updateLayoutSchema = z.object({
   title: z.string().min(1).max(100).optional(),

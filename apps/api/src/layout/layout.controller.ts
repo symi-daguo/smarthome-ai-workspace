@@ -22,6 +22,7 @@ import { TenantGuard } from '../tenants/tenant.guard.js';
 import { LayoutService } from './layout.service.js';
 import { ProductTransferService } from './product-transfer.service.js';
 import { BrandImportService } from './brand-import.service.js';
+import { FloorplanDetectService } from './floorplan-detect.service.js';
 import {
   createLayoutSchema,
   createProductSchema,
@@ -32,6 +33,7 @@ import {
   exportProductsSchema,
   importProductsSchema,
   brandFetchSchema,
+  floorplanDetectSchema,
   type CreateLayoutDto,
   type CreateProductDto,
   type CreateCategoryDto,
@@ -41,6 +43,7 @@ import {
   type ExportProductsDto,
   type ImportProductsDto,
   type BrandFetchDto,
+  type FloorplanDetectDto,
 } from './layout.schemas.js';
 
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
@@ -50,6 +53,7 @@ export class LayoutController {
     private readonly layout: LayoutService,
     private readonly transfer: ProductTransferService,
     private readonly brandImport: BrandImportService,
+    private readonly floorplanDetect: FloorplanDetectService,
   ) {}
 
   /** 产品目录（公共库+我的库合并，布点/报价选品数据源） */
@@ -230,6 +234,21 @@ export class LayoutController {
   @Get('layouts/:id/summary')
   summary(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
     return this.layout.summary(user.activeTenantId as string, id);
+  }
+
+  /**
+   * 户型图「AI 识别并布点」：读图识别房间 + 选设备，返回落好位的点位坐标。
+   *
+   * 结果只是**建议**：前端回填到点位编辑器，人可继续拖拽微调后再挂接方案。
+   * 消耗算力，按 content:generate 计费。
+   */
+  @RequirePermissions('content:generate')
+  @Post('floorplan/detect')
+  detectFloorplan(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Body(new ZodValidationPipe(floorplanDetectSchema)) dto: FloorplanDetectDto,
+  ) {
+    return this.floorplanDetect.detect(user.activeTenantId as string, user.id, dto.floorplanAssetId);
   }
 
   @RequirePermissions('content:read')

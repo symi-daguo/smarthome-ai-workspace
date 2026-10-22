@@ -14,9 +14,40 @@ export class TenantsService {
     return { memberships: user.memberships };
   }
 
-  /** 改工作台名称：只有租户管理员能动（能改名字=能管这个团队） */
-  async rename(tenantId: string, name: string): Promise<{ id: string; name: string }> {
-    const t = await this.prisma.tenant.update({ where: { id: tenantId }, data: { name }, select: { id: true, name: true } });
+  /**
+   * 改工作台设置：名称与安装调试费率。
+   * 只有租户管理员能动（能改报价口径 = 能管这个团队的对外报价）。
+   *
+   * installRate 不传就不动它 —— 改名的人不该顺带把费率重置回默认。
+   */
+  async update(
+    tenantId: string,
+    name?: string,
+    installRate?: number,
+  ): Promise<{ id: string; name: string; installRate: number }> {
+    // 两项都可选：只改费率时不能把名字写成空串（Prisma 的 update 会照写）
+    const data: { name?: string; installRate?: number } = {};
+    if (name !== undefined) data.name = name;
+    if (installRate !== undefined) data.installRate = installRate;
+    const t = await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data,
+      select: { id: true, name: true, installRate: true },
+    });
+    return t;
+  }
+
+  /**
+   * 当前租户的工作台设置。
+   *
+   * 为什么单独查一次租户表：AuthProfile 里的 membership 是登录时缓存的快照，
+   * 不含 installRate（改了费率后不必重新登录就能读到新值）。
+   */
+  async settings(tenantId: string): Promise<{ id: string; name: string; installRate: number } | null> {
+    const t = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, name: true, installRate: true },
+    });
     return t;
   }
 

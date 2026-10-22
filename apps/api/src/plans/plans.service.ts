@@ -18,6 +18,7 @@ import { LlmService } from '../llm/llm.service.js';
 import { ModelConfigService } from '../llm/model-config.service.js';
 import { generateViaComfyui, generateViaMinimax, generateViaOpenai } from '../media/image-provider.js';
 import type { CreatePlanDto } from './plans.schemas.js';
+import { buildQuoteSummary, quotePointsOf, type QuoteSummary } from './plan-quote.js';
 
 /**
  * 方案页结构（9 页标准方案模板）：
@@ -598,7 +599,37 @@ export class PlansService {
     if (!plan) throw new NotFoundException('PLAN_NOT_FOUND');
     // reviewedRevision 与 versionNo 相等 = 当前这版已逐页校对过。
     // 附一份给前端直接用的判定结果，省得每个调用点各写一遍比较逻辑。
-    return { ...plan, reviewed: plan.reviewedRevision !== null && plan.reviewedRevision === plan.versionNo };
+    return {
+      ...plan,
+      reviewed: plan.reviewedRevision !== null && plan.reviewedRevision === plan.versionNo,
+      quoteSummary: await this.quoteSummaryOf(tenantId, plan.layoutPoints),
+    };
+  }
+
+  /**
+   * 设备清单与报价：由「真实点位 + 产品库参考零售价」算出。
+   *
+   * 为什么在这算而不是各端各算：PPTX、讲稿、分享页三处都要这份清单，
+   * 放前端会出现「分享页有价格、PPT 没价格」这类静默错位。
+   * 点位为空就没有清单（不返回空表页）。
+   *
+   * 安装调试费率取当前租户的设置（默认 20%），
+   * 门店的施工与调试成本不同，费率由门店自己定。
+   */
+  private async quoteSummaryOf(tenantId: string, layoutPoints: unknown): Promise<QuoteSummary | null> {
+    const points = quotePointsOf(layoutPoints);
+    if (!points.length) return null;
+    const ids = [...new Set(points.map((p) => p.productId).filter((v): v is string => Boolean(v)))];
+    const [products, tenant] = await Promise.all([
+      ids.length
+        ? this.prisma.product.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, name: true, category: true, priceRetail: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { installRate: true } }),
+    ]);
+    return buildQuoteSummary(points, products, tenant?.installRate ?? 20);
   }
 
   /**
@@ -739,6 +770,9 @@ export class PlansService {
       floorplanAssetId: plan.floorplanAssetId,
       renderedFloorplanAssetId: plan.renderedFloorplanAssetId,
       layoutPoints: plan.layoutPoints,
+      // 设备清单与报价：分享页是免鉴权公开页，客户端拿不到产品库价格，
+      // 所以在这里算好随方案一起下发，PPTX 与分享页看到的是同一份清单。
+      quoteSummary: await this.quoteSummaryOf(plan.tenantId, plan.layoutPoints),
       // 分享页据此内联播放；显式挑字段而非整行返回，避免把 clientRequestId、
       // reviewedRevision 之类内部字段暴露到免鉴权端点上。
       videoAssetIds: plan.videoAssetIds,

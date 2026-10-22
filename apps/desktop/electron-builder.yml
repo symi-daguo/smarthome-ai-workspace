@@ -108,6 +108,10 @@ dmg:
 win:
   # 用 512×512 PNG：electron-builder 会自行转成多尺寸 .ico
   icon: build/icon.png
+  # 产物名必须纯 ASCII：electron-builder 的 nsis 默认用 productName 拼出
+  # 「智能家居AI工作台 Setup 1.0.3.exe」—— GitHub 会剥掉资产名里的中文，
+  # CI 里再传一次还会被改名。这里显式给一份 ASCII 名。
+  artifactName: smarthome-ai-workspace-${version}-${arch}.${ext}
   target:
     - target: nsis
     - target: zip

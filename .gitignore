@@ -9,13 +9,15 @@ uploads/
 # 桌面端打包产物：
 # - runtime/  prepare-runtime 产出的运行时资源（PG 二进制 + 生产依赖，几百 MB，脚本可重建）
 # - release/  electron-builder 的安装包输出（.app 约 570MB + dmg 约 225MB + zip 约 225MB）
-# - build/ 下只忽略由 scripts/make-icons.mjs 生成的图标；
+# - build/ 下只忽略由 scripts/make-icons.mjs 生成的 **macOS 专用** 图标；
 #   entitlements.mac.plist 是 electron-builder.yml 引用的源文件，必须入库，
-#   否则新克隆的仓库编不出 mac 包（hardened runtime 的授权全靠它）
+#   否则新克隆的仓库编不出 mac 包（hardened runtime 的授权全靠它）；
+#   icon.png 同理必须入库 —— Windows 打包要它，而生成它的 make-icons.mjs
+#   依赖 macOS 独有的 qlmanage/iconutil，干净克隆在别的系统上根本生成不出来。
+#   icon.png 由 apps/web/public/icon.svg 生成（自有品牌图形，207KB）。
 apps/desktop/runtime/
 apps/desktop/release/
 apps/desktop/build/icon.icns
-apps/desktop/build/icon.png
 # 参考截图与采集素材（含第三方品牌 UI，仅本地留存，不入库）
 .ref-site/
 # 过程记录整体不入库：

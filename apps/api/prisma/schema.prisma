@@ -53,6 +53,10 @@ model Tenant {
   plan         Plan     @default(BASIC)
   status       Status   @default(ACTIVE)
   tokenBalance Int      @default(80000)
+  // 安装调试费率（百分比）：报价清单里「安装调试费」按设备参考零售合计的百分比计取。
+  // 默认 20 —— 行业经验值是设备价的 15%~25%，20% 居中。
+  // 存在租户上而不是写死：每家门店的施工与调试成本不同，费率由门店自己定。
+  installRate  Int      @default(20)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

@@ -2,7 +2,7 @@ import PptxGenJS from 'pptxgenjs';
 import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } from '../data/planThemes';
 import { catMeta, compositePoints } from './pointOverlay';
 import { customerText } from './planSanitize';
-import { floorplanListPageNo, POINT_ROWS_PER_PAGE, deliverPages, deliverPointCount } from './planPages';
+import { floorplanListPageNo, quoteListPageNo, POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPages, deliverPointCount, type QuoteSummary } from './planPages';
 import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
 
 /**
@@ -25,11 +25,13 @@ export interface PlanForExport {
   floorplanUrl?: string | null;
   /** AI 渲染的精装修效果图（与原始户型图共存时优先用此图，覆盖点位叠加） */
   renderedFloorplanUrl?: string | null;
-  layoutPoints?: { name: string; category: string; iconKey?: string; x: number; y: number }[] | null;
+  layoutPoints?: { name: string; category: string; iconKey?: string; room?: string; x: number; y: number }[] | null;
   /** 户型图设计模版：annotated(点位标注) | compare(原图对照) | render(单图效果) */
   floorplanTemplate?: string | null;
   /** 产品放置模版：numbered(编号+名称) | icon(产品图+名称) | dot(色点+编号) */
   markerTemplate?: string | null;
+  /** 设备清单与报价（按点位聚合，单价取产品库参考零售价） */
+  quoteSummary?: QuoteSummary | null;
 }
 
 // 16:9 = 13.333 x 7.5 英寸
@@ -249,7 +251,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
   const fpTpl = floorplanTemplate(plan.floorplanTemplate);
   const mkTpl = markerTemplate(plan.markerTemplate);
   if (plan.layoutPoints?.length && fpTpl !== 'render') {
-    const base = (plan.renderedFloorplanUrl ?? plan.floorplanUrl) as string | null | undefined;
+    const base = (plan.floorplanUrl ?? plan.renderedFloorplanUrl) as string | null | undefined;
     if (base) {
       try {
         const composed = await compositePoints(base, plan.layoutPoints, 1400, mkTpl);
@@ -285,6 +287,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
     const slide = pptx.addSlide();
     slide.background = { color: hex(t.bg) };
     const listNo = floorplanListPageNo(finalPages, i);
+    const quoteNo = quoteListPageNo(finalPages, i);
     switch (p.type) {
       case 'cover': coverSlide(slide, p, plan, t, img(p)); break;
       case 'brand': brandSlide(slide, p, i, plan, t, img(p)); break;
@@ -295,6 +298,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
       case 'budget': budgetSlide(slide, p, i, plan, t, pptx); break;
       case 'delivery': deliverySlide(slide, p, i, plan, t, img(p), pptx); break;
       case 'floorplan': floorplanSlide(slide, p, i, plan, t, img(p), floorplan, leftImage, listNo); break;
+      case 'quote': quoteSlide(slide, p, i, plan, t, quoteNo); break;
     }
     if (p.narration) slide.addNotes(p.narration);
   });
@@ -598,8 +602,12 @@ function floorplanSlide(
       const dot = Math.min(0.22, rowH * 0.86);
       slide.addShape('ellipse', { x: x + 0.1, y: y + rowH / 2 - dot / 2, w: dot, h: dot, fill: { color: catMeta(pt.category).color.replace('#', '') } });
       slide.addText(String(no), { x: x + 0.1, y: y + rowH / 2 - dot / 2, w: dot, h: dot, fontSize: 7.5, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: FONT, margin: 0 });
-      slide.addText(pt.name, { x: x + 0.4, y, w: rightW - 1.15, h: rowH, fontSize: 9.5, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0 });
-      slide.addText(catMeta(pt.category).label, { x: x + rightW - 1.1, y, w: 0.98, h: rowH, fontSize: 8, color: hex(t.sub), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
+      slide.addText(pt.name, { x: x + 0.4, y, w: 1.95, h: rowH, fontSize: 9, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0 });
+      // 房间列：点位表的标准列。没有房间名时留空（不写「-」占位，避免看起来像真信息）
+      if (pt.room) {
+        slide.addText(pt.room, { x: x + 2.42, y, w: 0.62, h: rowH, fontSize: 7.5, color: hex(t.accent), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
+      }
+      slide.addText(catMeta(pt.category).label, { x: x + rightW - 1.0, y, w: 0.9, h: rowH, fontSize: 8, color: hex(t.sub), align: 'right', valign: 'middle', fontFace: FONT, margin: 0 });
     });
     // 分页提示：只在不是最后一张时显示「续下页」
     const more = points.length - start - rows.length;
@@ -668,7 +676,7 @@ function floorplanSlide(
     ? '空间实景示意（非客户户型）'
     : tpl === 'render'
       ? 'AI 精装修效果示意（不含设备点位）'
-      : plan.renderedFloorplanUrl ? 'AI 精装修效果 · 点位同步' : '客户户型 · 设备点位图';
+      : '客户户型 · 设备点位图';
   slide.addText(caption, { x: 0.22, y: H - 0.75, w: boxW - 0.44, h: 0.32, fontSize: 9.5, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 35 }, fontFace: FONT, valign: 'middle', margin: 0 });
 }
 
@@ -710,6 +718,133 @@ function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanF
     const ch = Math.min(0.66, 4.6 / Math.max(bullets.length, 1));
     bullets.forEach((b, bi) => pointCard(slide, b, bi + 1, x + 0.25, 1.3 + bi * (ch + 0.12), w - 0.5, ch, t));
   }
+}
+
+/**
+ * 设备清单与报价页。
+ *
+ * 数据全部来自**产品库与真实点位**：数量 = 该款设备在平面图上的点位个数，
+ * 单价 = 产品库参考零售价。不引用方案文案里的预算区间 ——
+ * 那是模型给的估算区间，没有依据（实测点位设备参考价 9776 元，模型区间写 53000-80000 元）。
+ *
+ * 口径必须写清楚：设备参考零售价**不含**辅材、布线、安装与调试，
+ * 否则客户拿这一页的合计当整包总价，差距会到好几倍。
+ */
+function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, pageNo: number): void {
+  const sum = plan.quoteSummary;
+  const fullW = W - MX * 2;
+  const yuan = (n: number) => `¥${Math.round(n).toLocaleString('zh-CN')}`;
+  folio(slide, p, i, t, MX, 0.5, fullW);
+  claim(slide, p, t, MX, 1.0, 8.2, 0.8, 20);
+  slide.addText(p.body, { x: MX, y: 1.86, w: 8.2, h: 0.72, fontSize: 10, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.5, valign: 'top', margin: 0 });
+
+  // 右上合计卡：整页的锚点数字
+  const cardX = MX + 8.62;
+  const cardW = fullW - 8.62;
+  slide.addShape('roundRect', { x: cardX, y: 0.95, w: cardW, h: 1.58, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: SHADOW });
+  slide.addText('整包合计（含安装调试）', { x: cardX + 0.22, y: 1.06, w: cardW - 0.44, h: 0.3, fontSize: 9.5, bold: true, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
+  slide.addText(sum ? yuan(sum.grandTotal) : '—', { x: cardX + 0.22, y: 1.33, w: cardW - 0.44, h: 0.62, fontSize: 27, bold: true, color: hex(t.accent), fontFace: FONT, valign: 'middle', margin: 0 });
+  // 拆项：设备价 + 安装调试费（费率来自租户设置，默认 20%）
+  slide.addText(
+    sum
+      ? [
+          { text: `设备 ${yuan(sum.total)}`, options: { fontSize: 8.5, color: hex(t.sub) } },
+          { text: '  +  ', options: { fontSize: 8.5, color: hex(t.sub) } },
+          { text: `安装调试 ${sum.installRate}% ${yuan(sum.installFee)}`, options: { fontSize: 8.5, color: hex(t.sub) } },
+        ]
+      : '',
+    { x: cardX + 0.22, y: 1.97, w: cardW - 0.44, h: 0.3, fontFace: FONT, valign: 'middle', margin: 0 },
+  );
+  slide.addText(sum ? `共 ${sum.kindCount} 种设备 · ${sum.deviceCount} 台` : '', { x: cardX + 0.22, y: 2.22, w: cardW - 0.44, h: 0.28, fontSize: 8.5, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
+
+  if (!sum || !sum.items.length) {
+    slide.addText('本套方案未产生设备报价', { x: MX, y: 3.0, w: fullW, h: 0.5, fontSize: 12, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
+    quoteBar(slide, p, t, MX, 6.5, fullW);
+    footer(slide, plan, t, MX, 6.98, fullW);
+    return;
+  }
+
+  // 表格：序号 / 设备名称 / 品类 / 数量 / 参考单价 / 小计
+  const cols = [
+    { key: 'no', w: 0.55, align: 'center' as const },
+    { key: 'name', w: 5.4, align: 'left' as const },
+    { key: 'cat', w: 1.45, align: 'left' as const },
+    { key: 'qty', w: 0.85, align: 'right' as const },
+    { key: 'unit', w: 1.85, align: 'right' as const },
+    { key: 'sub', w: 1.85, align: 'right' as const },
+  ];
+  const headY = 2.62;
+  const rowH = 0.225;
+  const headH = 0.32;
+  // 表头
+  slide.addShape('roundRect', { x: MX, y: headY, w: fullW, h: headH, fill: { color: hex(t.accent) }, line: { type: 'none' }, rectRadius: 0.05 });
+  const heads: Record<string, string> = { no: '序号', name: '设备名称', cat: '品类', qty: '数量', unit: '参考单价', sub: '小计' };
+  let cx = MX;
+  cols.forEach((c) => {
+    slide.addText(heads[c.key], {
+      x: cx + (c.align === 'right' ? 0 : 0.1), y: headY, w: c.w - 0.1, h: headH,
+      fontSize: 9.5, bold: true, color: 'FFFFFF', align: c.align, fontFace: FONT, valign: 'middle', margin: 0,
+    });
+    cx += c.w;
+  });
+
+  // 数据行（按页切片，与点位清单页同一套分页规则）
+  const start = pageNo * QUOTE_ROWS_PER_PAGE;
+  const rows = sum.items.slice(start, start + QUOTE_ROWS_PER_PAGE);
+  rows.forEach((it, ri) => {
+    const y = headY + headH + ri * rowH;
+    if (ri % 2 === 1) {
+      slide.addShape('rect', { x: MX, y, w: fullW, h: rowH, fill: { color: hex(t.surface), transparency: 35 }, line: { type: 'none' } });
+    }
+    const cells: { text: string; options: Record<string, unknown> }[] = [
+      { text: String(start + ri + 1), options: { color: hex(t.accent), bold: true } },
+      { text: it.name, options: { color: hex(t.text), bold: true } },
+      { text: catMeta(it.category).label, options: { color: hex(t.sub) } },
+      { text: `${it.qty}`, options: { color: hex(t.text) } },
+      { text: yuan(it.unitPrice), options: { color: hex(t.sub) } },
+      { text: yuan(it.subtotal), options: { color: hex(t.text), bold: true } },
+    ];
+    let x = MX;
+    cols.forEach((c, ci) => {
+      slide.addText([cells[ci]], {
+        x: x + (c.align === 'right' ? 0 : 0.1), y, w: c.w - 0.1, h: rowH,
+        fontSize: 9.5, color: hex(t.text), align: c.align, fontFace: FONT, valign: 'middle', margin: 0,
+      });
+      x += c.w;
+    });
+    slide.addShape('line', { x: MX, y: y + rowH, w: fullW, h: 0, line: { color: hex(t.accent), transparency: 88, width: 0.5 } });
+  });
+
+  // 合计行：末页显示「设备 + 安装调试 + 整包」三项，非末页显示本页设备小计
+  // 纵向位置：表头 0.32 + 14 行 × 0.225 = 3.47，表格底落在 6.09，
+  // 合计行 6.15~6.49，引言条 6.5 起 —— 三者不叠。
+  // （此前行高 0.245 时表格底到 6.13，合计行与引言条压在一起，已修）
+  const pageSubtotal = rows.reduce((s, it) => s + it.subtotal, 0);
+  const isLast = start + rows.length >= sum.items.length;
+  const totalY = headY + headH + rows.length * rowH + 0.06;
+  if (isLast) {
+    // 末页：设备价 / 安装调试费 / 整包合计 并排，一行说清
+    const runs: { text: string; options: Record<string, unknown> }[] = [
+      { text: `设备 ${yuan(sum.total)}`, options: { fontSize: 9.5, color: hex(t.sub) } },
+      { text: '   ·   ', options: { fontSize: 9.5, color: hex(t.sub) } },
+      { text: `安装调试 ${sum.installRate}% ${yuan(sum.installFee)}`, options: { fontSize: 9.5, color: hex(t.sub) } },
+      { text: '   ·   ', options: { fontSize: 9.5, color: hex(t.sub) } },
+      { text: '整包合计 ', options: { fontSize: 9.5, bold: true, color: hex(t.sub) } },
+      { text: yuan(sum.grandTotal), options: { fontSize: 12, bold: true, color: hex(t.accent) } },
+    ];
+    slide.addText(runs, { x: MX + 4.4, y: totalY, w: 7.55, h: 0.32, align: 'right', fontFace: FONT, valign: 'middle', margin: 0 });
+  } else {
+    slide.addText('本页小计', {
+      x: MX + 6.9, y: totalY, w: 2.6, h: 0.32, fontSize: 9.5, bold: true, color: hex(t.sub), align: 'right', fontFace: FONT, valign: 'middle', margin: 0,
+    });
+    slide.addText(yuan(pageSubtotal), {
+      x: MX + 9.55, y: totalY, w: 2.4, h: 0.32, fontSize: 10, bold: true,
+      color: hex(t.text), align: 'right', fontFace: FONT, valign: 'middle', margin: 0,
+    });
+  }
+
+  quoteBar(slide, p, t, MX, 6.5, fullW);
+  footer(slide, plan, t, MX, 6.98, fullW);
 }
 
 function deliverySlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, img: string, pptx: PptxGenJS): void {

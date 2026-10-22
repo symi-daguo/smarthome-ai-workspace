@@ -5,6 +5,7 @@ import {
   DownloadOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
+  FilePdfOutlined,
   FileTextOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
@@ -23,7 +24,7 @@ import { api, fileUrl, PLAN_TIMEOUT_MS } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { newRequestId } from '../lib/request-id';
 import { compressImage } from '../lib/compress';
-import { deliverPages, floorplanListPageNo } from '../lib/planPages';
+import { deliverPages, floorplanListPageNo, quoteListPageNo, type QuoteSummary } from '../lib/planPages';
 import { FLOORPLAN_MAX, appendFloorplanFiles, type FloorplanSlot } from '../lib/floorplan';
 import {
   RENDER_MAX, ROOM_OPTIONS, checkRenderUpload, checkRenderReady,
@@ -178,7 +179,9 @@ interface PlanDetail {
   }[];
   /** AI 渲染的精装修效果图（基于客户户型图按方案风格+生态生成） */
   renderedFloorplanAssetId?: string | null;
-  layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+  /** 设备清单与报价（服务端按「真实点位 + 产品库参考零售价」算好，三处同源） */
+  quoteSummary?: QuoteSummary | null;
+  layoutPoints?: { name: string; category: string; room?: string; x: number; y: number }[] | null;
   /** 服务端判定：当前这版文案已逐页校对过（reviewedRevision === versionNo） */
   reviewed?: boolean;
 }
@@ -206,11 +209,12 @@ interface PlanListItem {
  * 而 `plan` 上只有 assetId、没有可直接加载的 URL。少传一次，门店拿到的讲稿就少两页，
  * 照着讲稿讲会讲错页。户型图 URL 在前端拼（带登录 token），不能落在服务端。
  */
-const exportPayload = (p: PlanDetail): PlanForExport => ({
+const exportPayload = (p: PlanDetail, quoteSummary?: QuoteSummary | null): PlanForExport => ({
   ...p,
   floorplanUrl: p.floorplanAssetId ? fileUrl(`/api/media/assets/${p.floorplanAssetId}/file`) : null,
   renderedFloorplanUrl: p.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${p.renderedFloorplanAssetId}/file`) : null,
   layoutPoints: p.layoutPoints ?? null,
+  quoteSummary: quoteSummary ?? null,
 });
 
 export function PlanStudio(): ReactNode {
@@ -734,7 +738,7 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     setExporting(true);
     try {
-      const { blob, fileName } = await exportPlanPptx(exportPayload(plan));
+      const { blob, fileName } = await exportPlanPptx(exportPayload(plan, quoteSummary));
       downloadBlob(blob, fileName);
       message.success('PPTX 已下载（16:9 原生幻灯片，可直接编辑）');
     } catch (e) {
@@ -747,6 +751,27 @@ const [editing, setEditing] = useState<{
   const downloadPptx = (): void => requireReview(() => void doExportPptx());
 
   /**
+   * 导出高清 PDF：新开打印视图，由浏览器原生「另存为 PDF」出稿。
+   *
+   * 为什么走打印而不是在浏览器里拼 PDF：
+   * - 服务端不引无头浏览器（既定原则），前端也不引 jspdf / html2canvas；
+   * - 打印输出是**矢量** PDF：文字可选中可搜索，报价单上的数字放大不糊；
+   * - 打印视图用的是预览同一套 `PlanSlide` 组件，所见即所得。
+   *
+   * 页序与 PPTX 共用 `deliverPages()`，PDF 与 PPT 页页对得上。
+   */
+  const openPrintView = (): void => {
+    if (!plan) return;
+    const url = `/plan-print?id=${encodeURIComponent(plan.id)}`;
+    const w = window.open(url, '_blank');
+    if (!w) {
+      message.warning('浏览器拦截了新窗口，请允许弹出窗口后重试');
+      return;
+    }
+    w.focus();
+  };
+
+  /**
    * 交付三件套：PPTX + 完整讲稿 + 图片包，打成一个 zip 给客户。
    *
    * 为什么不直接下载：浏览器 blob 下载的文件名由宿主决定，实测一律落成随机名，
@@ -757,7 +782,7 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     setPackaging(true);
     try {
-      const payload = exportPayload(plan);
+      const payload = exportPayload(plan, quoteSummary);
       const { blob } = await exportPlanPptx(payload);
       const fd = new FormData();
       fd.append('pptx', new File([blob], `${plan.title}.pptx`, { type: 'application/octet-stream' }));
@@ -808,7 +833,7 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     // 走共用的 downloadBlob：本地那版在 a.click() 之后立刻 revokeObjectURL，
     // 下载还没开始就被撤掉，讲稿点了没反应。共用的那版延迟 5 秒释放。
-    downloadBlob(new Blob([buildNarrationText(exportPayload(plan))], { type: 'text/markdown;charset=utf-8' }), `${plan.title}-完整讲稿.md`);
+    downloadBlob(new Blob([buildNarrationText(exportPayload(plan, quoteSummary))], { type: 'text/markdown;charset=utf-8' }), `${plan.title}-完整讲稿.md`);
   };
 
   // 讲稿同样是发出去的文件，和 PPTX 走同一道门
@@ -827,11 +852,15 @@ const [editing, setEditing] = useState<{
 
   const t = planTheme(plan?.style ?? style);
   // 幻灯片 plan 视图：带户型图与点位（空间动线页配图）
+  // 设备清单与报价：**服务端算好的**（真实点位 + 产品库参考零售价）。
+  // 没有它，交付件里就只有模型写的预算区间，客户看不到自己买了哪几台、各多少钱。
+  const quoteSummary = plan?.quoteSummary ?? null;
   const slidePlan = {
     store: plan?.store ?? '',
     floorplanUrl: plan?.floorplanAssetId ? fileUrl(`/api/media/assets/${plan.floorplanAssetId}/file`) : null,
     renderedFloorplanUrl: plan?.renderedFloorplanAssetId ? fileUrl(`/api/media/assets/${plan.renderedFloorplanAssetId}/file`) : null,
     layoutPoints: plan?.layoutPoints ?? null,
+    quoteSummary,
   };
   // 页数档位：默认基数 / 12 页，自定义另开输入
   const pageChoices = useMemo(() => [CORE_MODULES, CORE_MODULES + 3], []);
@@ -869,9 +898,10 @@ const [editing, setEditing] = useState<{
       layoutPoints: plan?.layoutPoints ?? null,
       floorplanTemplate: plan?.floorplanTemplate ?? null,
       markerTemplate: plan?.markerTemplate ?? null,
+      quoteSummary,
     }),
     [plan?.pages, plan?.layoutPoints, plan?.floorplanTemplate, plan?.markerTemplate,
-      slidePlan.floorplanUrl, slidePlan.renderedFloorplanUrl],
+      slidePlan.floorplanUrl, slidePlan.renderedFloorplanUrl, quoteSummary],
   );
   const realIndexOf = (viewIndex: number): number =>
     viewIndex - view.virtualAt.filter((v) => v <= viewIndex).length;
@@ -1484,7 +1514,7 @@ const [editing, setEditing] = useState<{
                 whiteSpace: 'pre-wrap',
               }}
             >
-              <Text style={{ fontSize: 13.5 }}>{buildNarrationText(exportPayload(plan))}</Text>
+              <Text style={{ fontSize: 13.5 }}>{buildNarrationText(exportPayload(plan, quoteSummary))}</Text>
             </div>
           ) : null}
         </>
@@ -1508,7 +1538,7 @@ const [editing, setEditing] = useState<{
               }}
             >
               <div style={{ padding: '10px 10px 0' }}>
-                <PlanSlide page={p} index={i} plan={slidePlan} t={t} listNo={floorplanListPageNo(view.pages, i)} />
+                <PlanSlide page={p} index={i} plan={slidePlan} t={t} listNo={floorplanListPageNo(view.pages, i)} quoteNo={quoteListPageNo(view.pages, i)} />
               </div>
               <div style={{ padding: '12px 16px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1604,7 +1634,7 @@ const [editing, setEditing] = useState<{
                 修改当前页
               </Button>
             </div>
-            <PlanSlide page={active} index={activePage} plan={slidePlan} t={t} listNo={floorplanListPageNo(view.pages, activePage)} />
+            <PlanSlide page={active} index={activePage} plan={slidePlan} t={t} listNo={floorplanListPageNo(view.pages, activePage)} quoteNo={quoteListPageNo(view.pages, activePage)} />
             <div style={{ marginTop: 12 }}>
               <Button size="small" type="text" onClick={() => setShowNarration(!showNarration)}>
                 {showNarration ? '▾' : '▸'} 本页的讲解词（客户阅读视图下不展示）
@@ -1666,6 +1696,11 @@ const [editing, setEditing] = useState<{
               </Button>
               <Button size="large" icon={<DownloadOutlined />} loading={exporting} onClick={downloadPptx}>
                 只下载 PPTX
+              </Button>
+              {/* 高清 PDF：新开打印视图 → 浏览器原生「另存为 PDF」，矢量输出、文字可选中。
+                  零新增依赖（不引 jspdf/html2canvas，也不让服务端装无头浏览器）。 */}
+              <Button size="large" icon={<FilePdfOutlined />} onClick={() => requireReview(() => openPrintView())}>
+                导出高清 PDF
               </Button>
               <Button size="large" icon={<FileTextOutlined />} onClick={downloadScript}>
                 只下载讲稿
@@ -2013,7 +2048,7 @@ interface ReaderSlidePlan {
   store: string;
   floorplanUrl?: string | null;
   renderedFloorplanUrl?: string | null;
-  layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+  layoutPoints?: { name: string; category: string; room?: string; x: number; y: number }[] | null;
 }
 
 /** 跟随系统「减少动态效果」偏好，并在偏好变化时实时更新 */
@@ -2212,7 +2247,7 @@ function PlanReader({
       {/* 舞台：页内容（PlanSlide 内部按 cqw 自适应缩放，窄屏无需额外适配） */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isNarrow ? 8 : 20, overflow: 'hidden' }}>
         <div ref={stageRef} style={{ width: '100%', maxWidth: isNarrow ? '100%' : 1280, willChange: 'transform, opacity' }}>
-          <PlanSlide page={page} index={index} plan={slidePlan} t={t} listNo={floorplanListPageNo(pages, index)} />
+          <PlanSlide page={page} index={index} plan={slidePlan} t={t} listNo={floorplanListPageNo(pages, index)} quoteNo={quoteListPageNo(pages, index)} />
         </div>
       </div>
 

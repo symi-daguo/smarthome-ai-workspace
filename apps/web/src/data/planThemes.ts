@@ -39,7 +39,7 @@ export function planTheme(styleKey: string): PlanTheme {
 }
 
 export interface PlanPage {
-  type: 'cover' | 'brand' | 'layout' | 'needs' | 'ecosystem' | 'scene' | 'budget' | 'delivery' | 'floorplan';
+  type: 'cover' | 'brand' | 'layout' | 'needs' | 'ecosystem' | 'scene' | 'budget' | 'delivery' | 'floorplan' | 'quote';
   heading: string;
   subtitle: string;
   body: string;
@@ -60,6 +60,7 @@ export const PAGE_TYPE_LABEL: Record<PlanPage['type'], string> = {
   budget: '预算规划与性价比方案',
   delivery: '落地交付与售后闭环',
   floorplan: '户型与设备点位',
+  quote: '设备清单与报价',
 };
 
 /**
@@ -69,6 +70,8 @@ export const PAGE_TYPE_LABEL: Record<PlanPage['type'], string> = {
 export const PAGE_IMAGE: Record<PlanPage['type'], string> = {
   // 户型页优先用门店上传的图，这里只是没上传时的兜底实景
   floorplan: '/images/cases/c4.jpg',
+  // 报价页是表格式页面，配图只做右侧窄栏点缀
+  quote: '/images/cases/c5.jpg',
   cover: '/images/cases/c1.jpg',
   brand: '/images/cases/c5.jpg',
   layout: '/images/cases/c3.jpg',

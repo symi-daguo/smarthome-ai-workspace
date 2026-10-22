@@ -14,6 +14,8 @@ export interface PointLike {
   iconUrl?: string;
   /** 产品级图标 key（同品类下不同产品用不同图标，否则一排标记分不清谁是谁） */
   iconKey?: string;
+  /** 所属房间名：清单与图上编号按它对应（图上不画文字，名称由清单承担） */
+  room?: string;
   x: number;
   y: number;
 }
@@ -143,20 +145,17 @@ export async function compositePoints(
       ctx.textBaseline = 'middle';
       ctx.fillText(marker === 'numbered' ? no : p.name.slice(0, 1), x, y + r * 0.05);
     }
-    // dot 模版不带名称标签（名称全在右侧清单里），其余两种都带
-    if (dot) return;
-    const tw = ctx.measureText(p.name).width;
-    const lx = x + r + 6;
-    const ly = y - r * 0.7;
-    const pad = r * 0.45;
-    ctx.fillStyle = 'rgba(20,15,10,.72)';
-    ctx.beginPath();
-    ctx.roundRect(lx - pad, ly - pad, tw + pad * 2, r * 1.5 + pad, r * 0.5);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(p.name, lx, ly + r * 0.35);
+    /**
+     * **不在图上画名称标签**（2026-10-22 实测后改）。
+     *
+     * 改前每个点位后面都挂一块深色名称牌，24 个点位在 140㎡ 户型上直接糊成一片：
+     * 「亖米双色温灯带控制器mesh版」和「亖米Mesh二键开关Ultra-X30」互相压叠，
+     * 客户根本读不出哪个标记是哪台设备 —— 图反而成了障碍。
+     *
+     * 现在图上只留**编号**（或品类图标），名称与编号的对应关系由右侧点位清单承担：
+     * 清单逐条列「编号 + 名称 + 品类」，客户按编号对回图上的标记即可。
+     * 行业规范要的「符号说明（图例）」在清单下方照旧保留。
+     */
   });
   return canvas.toDataURL('image/png');
 }

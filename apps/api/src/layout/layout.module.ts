@@ -10,10 +10,11 @@ import { LayoutService } from './layout.service.js';
 import { ProductTransferService } from './product-transfer.service.js';
 import { BrandSiteService } from './brand-site.service.js';
 import { BrandImportService } from './brand-import.service.js';
+import { FloorplanDetectService } from './floorplan-detect.service.js';
 
 @Module({
   imports: [AuthModule, RbacModule, BillingModule, LlmModule, MediaModule],
   controllers: [LayoutController],
-  providers: [LayoutService, IdempotencyService, ProductTransferService, BrandSiteService, BrandImportService],
+  providers: [LayoutService, IdempotencyService, ProductTransferService, BrandSiteService, BrandImportService, FloorplanDetectService],
 })
 export class LayoutModule {}

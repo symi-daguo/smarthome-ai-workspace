@@ -300,7 +300,19 @@ export class BrandImportService {
         unit: (extra?.unit ?? '').trim() || '台',
         warranty: 12,
         pricingMode: 'per_unit',
-        imageUrl: p.imageUrl,
+        // 官网主图**不落库**，产品图一律用自绘品类图标（apps/web/src/lib/product-icons.ts）。
+        //
+        // 为什么不用官网原图（实测 2026-10-22，SYMI 官网图托管在第三方 CDN
+        // 29363083.s21i.faiusr.com）：
+        // 1. **热链**——导出的 PPTX 交给客户后，客户机器直接去请求那个 CDN。
+        //    对方下线或改路径，交付给客户的方案就缺图；客户 IP 也白白漏给第三方。
+        // 2. **授权**——官网图是对方站点的资源，交付物里长期依赖它，
+        //    等于把「有没有授权」变成一个我们无法自证的外部依赖。
+        // 3. 自绘图标是 SVG，画布合成与 PPT 嵌入都无损，39 个品类全覆盖，
+        //    同品类靠编号 + 名称标签区分，不需要靠图片细节辨识。
+        //
+        // 门店自己拍的实拍图不受影响：那是自有素材，走产品中心的图片上传接口。
+        imageUrl: '',
         sourceCategory: p.categoryName,
         sourceUrl: p.detailUrl,
       };

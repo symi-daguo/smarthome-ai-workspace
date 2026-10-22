@@ -131,3 +131,77 @@ jobs:
       # 桌面端的运行时自证（起库→迁移→种子→登录）依赖 macOS 的内嵌 PG 二进制，
       # 只在 macOS runner 上有意义；签名与公证只能在有 Developer ID 证书的机器上做，
       # 两者都留在本机门禁里，不放到 CI。
+
+  desktop-windows:
+    name: 桌面端 Windows 打包（安装包 + zip）
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    # 为什么必须单独一个 Windows runner：
+    # electron-builder 的 win 目标在 macOS 上要靠 wine 交叉编译 ——
+    # wine 装不稳、签名工具链在 wine 下也容易翻车。CI 的 Windows runner 是原生环境。
+    #
+    # 产物只作为 CI artifact 上传，不自动发 Release：
+    # 本项目没有 Windows 代码签名证书，未签名安装包会触发 SmartScreen 提示，
+    # 直接挂到 Release 上客户会以为是坏包。签名要用客户自己的证书。
+    #
+    # 注意：Windows 版不跑 verify:signature —— 那道闸门校验的是 codesign 封印，
+    # 是 macOS 专属机制。Windows 的等价检查是「安装包能不能真的跑起来」，
+    # 由下面 verify:runtime 覆盖。
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: 安装依赖
+        # 必须全量安装：桌面端运行时要把 api 的编译产物、web 的产物、
+        # Prisma Client 与生产依赖一起裁进 runtime/，少装一个包都编不出能跑的安装包。
+        # pnpm store 有缓存，第二次跑不会重复下载。
+        run: pnpm install --frozen-lockfile
+
+      - name: 生成 Prisma Client
+        # Prisma 7 起不再随安装自动 generate
+        run: pnpm --filter @app/api prisma:generate
+
+      - name: 编译 API 与前端
+        run: pnpm --filter @app/api build && pnpm --filter @app/web build
+
+      - name: 编译桌面端主进程
+        run: pnpm --filter @app/desktop build
+
+      - name: 准备运行时（内嵌 PG + 生产依赖）
+        run: pnpm --filter @app/desktop prepare:runtime
+
+      - name: 运行时自证（起库→迁移→种子→登录）
+        # 与 macOS 同一条门禁：证明裁剪后的 runtime 在 Windows 上真的能起内嵌 PG。
+        # 这一步不过，安装包发出去也是跑不起来的 —— 宁可 job 红，不发跑不起来的包。
+        run: pnpm --filter @app/desktop verify:runtime
+
+      - name: 构建 Windows 安装包
+        run: pnpm --filter @app/desktop exec electron-builder --win
+
+      - name: 校准产物名
+        # 产物名必须纯 ASCII：GitHub 会剥掉资产名里的中文，
+        # 传上去再被改名就找不到对应文件了。
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem apps/desktop/release -Recurse -Include *.exe, *.zip
+          if (-not $files) { throw "没有产出 Windows 安装包" }
+          foreach ($f in $files) {
+            if ($f.Name -match '[^\x00-\x7F]') { throw "产物名含非 ASCII 字符：$($f.Name)" }
+            "{0,12:N0}  {1}" -f $f.Length, $f.Name
+          }
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+          if-no-files-found: error
+          retention-days: 14

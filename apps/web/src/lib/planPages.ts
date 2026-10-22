@@ -56,6 +56,52 @@ export function withFloorplanPage(
  */
 export const POINT_ROWS_PER_PAGE = 9;
 
+/**
+ * 设备清单与报价的一行。
+ *
+ * 口径：**按点位聚合**——同一款设备在平面图上有几个点就算几台，
+ * 单价取产品库的参考零售价。这样清单与点位图天然一一对应，
+ * 客户对着平面图就能核对清单，不需要信任任何一份「大概的预算」。
+ */
+export interface QuoteItem {
+  name: string;
+  category: string;
+  /** 台数（同款设备在平面图上的点位个数） */
+  qty: number;
+  /** 参考零售价（元/台） */
+  unitPrice: number;
+  /** 小计 = qty × unitPrice */
+  subtotal: number;
+}
+
+/** 报价汇总 */
+export interface QuoteSummary {
+  items: QuoteItem[];
+  /** 设备参考零售合计（元） */
+  total: number;
+  /** 台数合计 */
+  deviceCount: number;
+  /** 品类数 */
+  kindCount: number;
+  /** 安装调试费率（百分比，租户级设置） */
+  installRate: number;
+  /** 安装调试费（元）= 设备合计 × 费率 */
+  installFee: number;
+  /** 整包合计（元）= 设备合计 + 安装调试费 */
+  grandTotal: number;
+}
+
+/** 报价页的固定文案：它是表页，文案只做口径说明，不逐条罗列 */
+const QUOTE_PAGE: PlanPage = {
+  type: 'quote',
+  heading: '设备清单与报价',
+  subtitle: '每一台设备、每一笔价格，都可逐条核对',
+  body: '下表是本方案实际选用的设备与参考零售价，数量与上一页的点位一一对应。安装调试费按设备价的一定比例计取，比例由门店在工作台设置里定。辅材与特殊施工费用按现场实际情况另计，最终报价以门店方案师现场核算为准。',
+  quote: '每一台设备都对得上号',
+  bullets: [],
+  narration: '这是本方案的实际设备清单，每一项的数量都和上一页的点位图一一对应。上面的合计是设备价加上按比例算的安装调试费，辅材与特殊施工费用我们会按您家的现场情况单独核算后给到您。',
+};
+
 /** 需要几张点位清单页（含首页） */
 export function pointListPageCount(pointCount: number): number {
   return pointCount <= 0 ? 1 : Math.ceil(pointCount / POINT_ROWS_PER_PAGE);
@@ -111,6 +157,65 @@ export function floorplanListPageNo(pages: PlanPage[], i: number): number {
 }
 
 /**
+ * 第 `i` 页属于第几张报价页。
+ *
+ * 与 floorplanListPageNo 同一套算法：靠「它前面有几个 quote 页」定位，
+ * 不靠标题文字匹配 —— 标题可能被门店改过。
+ */
+export function quoteListPageNo(pages: PlanPage[], i: number): number {
+  let n = 0;
+  for (let k = 0; k < i && k < pages.length; k += 1) if (pages[k].type === 'quote') n += 1;
+  return n;
+}
+
+/** 报价页每页放多少行（表头另算） */
+export const QUOTE_ROWS_PER_PAGE = 14;
+
+/** 需要几张报价页（含首页） */
+export function quotePageCount(kindCount: number): number {
+  return kindCount <= 0 ? 0 : Math.ceil(kindCount / QUOTE_ROWS_PER_PAGE);
+}
+
+/**
+ * 在「预算规划」页之前插入「设备清单与报价」页。
+ *
+ * 为什么挨着预算页：设备清单（按点位算出来的实际价）与预算规划（工程口径的区间）
+ * 是同一件事的两个视角，放在一起客户的疑问当场有着落 ——
+ * 「设备才 1 万，预算为什么写 5 万？」答案是辅材与人工，页面上写明了。
+ * 放前面（紧跟点位清单）会被需求页和生态页隔开，两张表对不上。
+ *
+ * **必须分页而不是截断**：报价单少列几项，客户会以为那几项不用买。
+ * 设备种类多的时候（复式/大平层）一页放不下，所以按 QUOTE_ROWS_PER_PAGE 转页，
+ * 页序与点位清单页同一套规则。
+ *
+ * 没有报价数据就不插页：空表页在交付件里等于「没做完」。
+ */
+export function withQuotePages(
+  pages: PlanPage[],
+  summary?: QuoteSummary | null,
+): { pages: PlanPage[]; insertedAt: number[] } {
+  const need = quotePageCount(summary?.items.length ?? 0);
+  if (!need) return { pages, insertedAt: [] };
+  // 已有报价页够数就不再插 —— 否则把已算好的页序再喂回来会多出报价页。
+  const have = pages.reduce((n, p) => (n + p.type === 'quote' ? 1 : n), 0);
+  if (have >= need) return { pages, insertedAt: [] };
+  // 插在预算页之前；没有预算页（少见）就放末尾
+  const budgetAt = pages.findIndex((p) => p.type === 'budget');
+  const at = budgetAt >= 0 ? budgetAt : pages.length;
+  const next = [...pages];
+  const insertedAt: number[] = [];
+  for (let k = have; k < need; k += 1) {
+    next.splice(at + (k - have), 0, {
+      ...QUOTE_PAGE,
+      heading: k === 0 ? QUOTE_PAGE.heading : '设备清单与报价（续）',
+      subtitle: `第 ${k + 1} / ${need} 页 · 共 ${summary?.kindCount ?? 0} 种设备 · ${summary?.deviceCount ?? 0} 台`,
+    });
+    insertedAt.push(at + (k - have));
+  }
+  return { pages: next, insertedAt };
+}
+
+/**
  * 交付页序列的输入：只要「有没有户型图」「有多少点位」「用哪套模版」三件事。
  * PPTX、讲稿、分享页都从这里取页序。
  */
@@ -121,6 +226,8 @@ export interface DeliveryPlanLike {
   layoutPoints?: unknown[] | null;
   floorplanTemplate?: string | null;
   markerTemplate?: string | null;
+  /** 设备清单与报价（按点位聚合，页序据此插页） */
+  quoteSummary?: QuoteSummary | null;
 }
 
 /**
@@ -151,5 +258,9 @@ export function deliverPages(plan: DeliveryPlanLike): { pages: PlanPage[]; virtu
   const fpIndex = fp.pages.findIndex((p) => p.type === 'floorplan');
   if (fpIndex < 0) return { pages: fp.pages, virtualAt: [] };
   const list = withPointListPages(fp.pages, fpIndex, deliverPointCount(plan));
-  return { pages: list.pages, virtualAt: [...fp.virtualAt, ...list.insertedAt].sort((a, b) => a - b) };
+  const quote = withQuotePages(list.pages, plan.quoteSummary);
+  return {
+    pages: quote.pages,
+    virtualAt: [...fp.virtualAt, ...list.insertedAt, ...quote.insertedAt].sort((a, b) => a - b),
+  };
 }

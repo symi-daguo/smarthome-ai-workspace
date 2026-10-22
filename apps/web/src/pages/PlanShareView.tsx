@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { planTheme, type PlanPage } from '../data/planThemes';
 import { PlanSlide } from '../components/PlanSlide';
-import { deliverPages, floorplanListPageNo } from '../lib/planPages';
+import { deliverPages, floorplanListPageNo, quoteListPageNo, type QuoteSummary } from '../lib/planPages';
 
 const { Text } = Typography;
 
@@ -20,7 +20,9 @@ interface SharePlan {
   pages: PlanPage[];
   floorplanAssetId?: string | null;
   renderedFloorplanAssetId?: string | null;
-  layoutPoints?: { name: string; category: string; x: number; y: number }[] | null;
+  layoutPoints?: { name: string; category: string; room?: string; x: number; y: number }[] | null;
+  /** 设备清单与报价（服务端算好：真实点位 + 产品库参考零售价） */
+  quoteSummary?: QuoteSummary | null;
   /** 交付模版（分享页必须与交付 PPT 同模版，否则客户看到的和收到手的不一样） */
   floorplanTemplate?: string | null;
   markerTemplate?: string | null;
@@ -68,6 +70,7 @@ export function PlanShareView(): ReactNode {
     layoutPoints: plan.layoutPoints ?? null,
     floorplanTemplate: plan.floorplanTemplate ?? null,
     markerTemplate: plan.markerTemplate ?? null,
+    quoteSummary: plan.quoteSummary ?? null,
   };
 
   const videoCount = Math.min(plan.videoAssetIds?.length ?? 0, 2);
@@ -86,6 +89,7 @@ export function PlanShareView(): ReactNode {
       layoutPoints: plan.layoutPoints ?? null,
       floorplanTemplate: plan.floorplanTemplate ?? null,
       markerTemplate: plan.markerTemplate ?? null,
+      quoteSummary: plan.quoteSummary ?? null,
     });
     const fpIndex = r.pages.findIndex((p) => p.type === 'floorplan');
     return { pages: r.pages, syntheticAt: fpIndex };
@@ -125,7 +129,7 @@ export function PlanShareView(): ReactNode {
           </div>
         ) : null}
         {shown.pages.map((p, i) => (          <div key={i} style={{ boxShadow: '0 2px 16px rgba(0,0,0,.08)' }}>
-            <PlanSlide page={p} index={i} plan={slidePlan} t={t} listNo={floorplanListPageNo(shown.pages, i)} />
+            <PlanSlide page={p} index={i} plan={slidePlan} t={t} listNo={floorplanListPageNo(shown.pages, i)} quoteNo={quoteListPageNo(shown.pages, i)} />
           </div>
         ))}
         <div style={{ textAlign: 'center', marginTop: 16 }}>
