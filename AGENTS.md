@@ -69,6 +69,21 @@ node apps/web/scripts/check-delivery-templates.mjs
 脚本里用 `module.registerHooks` 补了一个解析钩子把 `../data/x` 映射到 `.ts`。
 **不要为了跑脚本把源码改成 `.ts` 后缀**（TS 默认不允许 `allowImportingTsExtensions`）。
 
+## 前端注释隐藏：JSX 注释块不能嵌套
+
+把整块 JSX 收进 `{/* ... */}` 注释时，有两个必须避开的坑：
+
+1. **块内原有的 `{/* ... */}` 会提前闭合外层注释** —— 编译期报
+   `TS1381: Unexpected token`。解法：把块内的内层注释删掉（信息并进外层说明）。
+2. **说明文字自己不能写 `*/`** —— 写了它就自成一对，代码块末尾的 `*/}` 会变成孤立语法错误。
+   正确写法：说明文字**不闭合**，由代码块末尾统一收口。
+
+被注释掉代码里的变量会变成未使用，但 `apps/web/tsconfig.json` **没有开**
+`noUnusedLocals`，所以不会报类型错误 —— 可以放心「藏起来而不删掉」。
+
+用 `/* ... */` 注释代码、用 `{/* ... */}` 注释 JSX，两者在 JSX 表达式上下文里都能用，
+但**嵌套时都只会认第一个 `*/`**。
+
 ## 技术栈版本纪律
 
 **依赖一律用当前最新稳定版**，且必须联网核对，不能凭印象：
@@ -206,6 +221,20 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     本机 node_modules 早就装好、日常又只跑 `pnpm build`（不做 install 校验），
     不一致能藏很久 —— **只有 CI 或干净克隆才会暴露**。
     改完依赖记得跑一次 `pnpm install` 并复测 `--frozen-lockfile`（全量与 filter 两种）。
+15. **公证上传会断流，两个 S3 端点表现不一样。** 2026-10-22 发 1.0.3 时实测：
+    `--s3-acceleration` 连传两次都在 25 分钟后被判死（`abortedUpload`，
+    Apple 侧探不到该记录），换 `--no-s3-acceleration` 一次过。
+    脚本自带「死记录重传」容错，但**第一次就失败会白白多花 25 分钟**——
+    跨境链路不稳时优先手工用 `--no-s3-acceleration` 提交。
+16. **公证脚本可幂等续跑，中断后重跑即可。** 它会跳过「app 已有 Accepted 提交
+    且当前 app 已带有效签章」与「dmg 已有 Accepted 提交」的部分，只补做没做完的步骤
+    （装订 dmg、生成分发用 zip）。所以**跑挂了直接重跑，不要从头再来**。
+    但注意 `notarytool submit --wait` 超过 30 分钟会被外层超时砍掉，
+    这时 dmg 可能已提交但没等结果 —— 查 `notarytool history` 确认状态再决定是否重跑。
+17. **dmg 本身没有代码签名，这是正常的。** `codesign -dv <dmg>` 会报
+    `code object is not signed at all`，因为签名在 dmg **里面的 app** 上；
+    dmg 上挂的是公证票据，用 `xcrun stapler validate <dmg>` 验证。
+    验 app 才用 `spctl -a -vvv -t exec <app>`（应看到 `accepted / Notarized Developer ID`）。
 
 ### CI（GitHub Actions）
 
