@@ -55,12 +55,16 @@ mac:
   icon: build/icon.icns
   darkModeSupport: true
   target:
+    # 产物名用 ASCII：默认会拼中文 productName（智能家居AI工作台-1.0.4-arm64.dmg），
+    # GitHub 上传资产时会剥掉非 ASCII 字符，下载到的文件名与实际文件对不上。
     - target: dmg
       arch:
         - arm64
+      artifactName: smarthome-ai-workspace-${version}-${arch}.${ext}
     - target: zip
       arch:
         - arm64
+      artifactName: smarthome-ai-workspace-${version}-${arch}-mac.${ext}
   # hardened runtime 是公证的前置条件：不开的话 notarytool 直接拒收
   hardenedRuntime: true
   gatekeeperAssess: false

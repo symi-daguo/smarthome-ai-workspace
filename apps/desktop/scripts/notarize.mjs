@@ -353,8 +353,11 @@ async function submitAndWait(file, label) {
     log(`  ${fileName} 的历史记录（${already.id}）是上传中断留下的死记录 —— 重新上传`);
   }
 
-  // 第 1 次用加速端点，之后改用常规端点：两个端点在跨境链路上表现不一样
-  const variants = ['--s3-acceleration', '--no-s3-acceleration'];
+  // 第 1 次用**常规**端点，之后才退回加速端点。
+  // 依据（2026-10-22 发 1.0.3 时实测）：`--s3-acceleration` 连传两次都在 25 分钟后被判死
+  // （abortedUpload，Apple 侧探不到该记录），换 `--no-s3-acceleration` 一次过。
+  // 跨境链路不稳时加速端点反而更慢，所以把常规端点排在前面。
+  const variants = ['--no-s3-acceleration', '--s3-acceleration'];
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const flag = variants[attempt - 1];
@@ -627,8 +630,16 @@ run('node', [join(HERE, 'verify-signature.mjs'), APP]);
 // ---------------------------------------------------------------- 5. 用装订后的 .app 重打 dmg
 
 const ARCH = macDirs[0].replace('mac-', '');
-const DMG = join(OUT_DIR, `${PRODUCT}-${VERSION}-${ARCH}.dmg`);
-const ZIP_OUT = join(OUT_DIR, `${PRODUCT}-${VERSION}-${ARCH}-mac.zip`);
+/**
+ * 分发资产名用 ASCII。
+ *
+ * 为什么不用中文 productName：GitHub 上传 Release 资产时会剥掉非 ASCII 字符，
+ * 下载到的文件名与实际文件对不上（历史上就是这么踩的）。
+ * 产物名与 electron-builder.yml 的 artifactName 保持一致。
+ */
+const ASSET_BASE = 'smarthome-ai-workspace';
+const DMG = join(OUT_DIR, `${ASSET_BASE}-${VERSION}-${ARCH}.dmg`);
+const ZIP_OUT = join(OUT_DIR, `${ASSET_BASE}-${VERSION}-${ARCH}-mac.zip`);
 
 // dmg 打到独立暂存目录：release/ 里本来就躺着上一次构建的同名 dmg，
 // 靠「修改时间比 app 新」来猜哪个是新的并不可靠（stapler 不一定改 app 目录的 mtime）。

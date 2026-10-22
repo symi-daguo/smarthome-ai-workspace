@@ -20,7 +20,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,8 +53,10 @@ function check(name, ok, detail = '') {
 function pgEnv() {
   return {
     ...process.env,
-    PATH: `${join(PG_DIR, 'bin')}:${process.env.PATH ?? ''}`,
-    DYLD_LIBRARY_PATH: join(PG_DIR, 'lib'),
+    // 分隔符要跟平台走：Windows 是 ';'，Unix 是 ':'（写死 ':' 会让 PG 的 bin 目录
+    // 进不了 PATH，Windows 上表现为找不到 libpq 等依赖）
+    PATH: `${join(PG_DIR, 'bin')}${delimiter}${process.env.PATH ?? ''}`,
+    ...(process.platform === 'darwin' ? { DYLD_LIBRARY_PATH: join(PG_DIR, 'lib') } : {}),
   };
 }
 

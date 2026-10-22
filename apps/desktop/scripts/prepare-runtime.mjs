@@ -416,12 +416,19 @@ for (const name of readdirSync(join(NM, '.cache', 'jiti'))) {
  * （见 apps/desktop/src/migrate.ts），复制源就是这里记下的路径。
  */
 const ENGINE_NAME = `schema-engine-${process.platform}-${process.arch}`;
+/**
+ * Windows 上 Prisma 引擎带 `.exe` 后缀（schema-engine-win32-x64.exe），
+ * Unix 上没有。两种名字都要试，否则在 Windows 上必然报「找不到引擎」。
+ */
 function findSchemaEngine() {
   if (!existsSync(NM_PNPM)) return null;
+  const names = process.platform === 'win32' ? [ENGINE_NAME, `${ENGINE_NAME}.exe`] : [ENGINE_NAME];
   for (const entry of readdirSync(NM_PNPM)) {
     if (!entry.startsWith('@prisma+engines@')) continue;
-    const p = join(NM_PNPM, entry, 'node_modules', '@prisma', 'engines', ENGINE_NAME);
-    if (existsSync(p)) return { path: p, version: entry.slice('@prisma+engines@'.length) };
+    for (const name of names) {
+      const p = join(NM_PNPM, entry, 'node_modules', '@prisma', 'engines', name);
+      if (existsSync(p)) return { path: p, name, version: entry.slice('@prisma+engines@'.length) };
+    }
   }
   return null;
 }
@@ -609,7 +616,8 @@ writeFileSync(
   `${JSON.stringify({
     platform: `${process.platform}-${process.arch}`,
     schemaEngine: engineRelative,
-    schemaEngineName: ENGINE_NAME,
+    // 用**实际文件名**（Windows 上带 .exe）：桌面端复制到 bundle 外时按它命名
+    schemaEngineName: engine.name,
     // 引擎版本进清单：桌面端用它给「bundle 外的引擎副本」命名，
     // 升级到新的 Prisma 版本时会自动换新文件名，不会误用旧引擎。
     schemaEngineVersion: engine.version,
