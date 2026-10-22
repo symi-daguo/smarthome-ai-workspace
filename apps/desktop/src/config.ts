@@ -23,7 +23,12 @@ export interface DesktopConfig {
   dbInitialized: boolean;
   /** 是否已跑过 migrate + seed */
   migrated: boolean;
-  /** 管理员密码是否已被用户改过（改过后不再用默认密码提示） */
+  /**
+   * 预置的管理员凭据是否已经失效（手机号或密码被改过）。
+   * 每次启动用「默认手机号 + 默认密码」试登一次：登得进去说明还在用公开示例值，
+   * 就提醒用户去个人中心改掉；登不进去说明已经改过，不再打扰。
+   * 以前这个字段只写 false、从不变 true，导致「首次启动」弹窗每次启动都弹。
+   */
   adminPasswordChanged: boolean;
 }
 

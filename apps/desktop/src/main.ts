@@ -188,17 +188,46 @@ async function bootstrap(): Promise<void> {
   });
   await mainWindow.loadURL(`http://127.0.0.1:${server.port}/`);
 
-  if (!cfg.adminPasswordChanged) {
+  /**
+   * 预置的管理员凭据还能不能用？
+   *
+   * 用默认手机号 + 默认密码试登一次（登录不消耗额度）：
+   * - 登进去 = 用户还在用写在文档里的公开示例值 → 提醒去个人中心改掉
+   * - 登不进去 = 手机号或密码已经被改过 → 记下来，以后不再打扰
+   *
+   * 为什么不用「用户点过按钮」这种标记：改密码是在网页界面里操作的，
+   * 主进程没有事件源，只能靠「默认凭据是否还有效」这个真实事实来判断。
+   */
+  const defaultCredsStillWork = await (async (): Promise<boolean> => {
+    try {
+      const r = await fetch(`http://127.0.0.1:${server.port}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: DEFAULT_ADMIN_PHONE, password: DEFAULT_ADMIN_PASSWORD }),
+      });
+      return r.ok;
+    } catch {
+      // 连不上就当「还用默认」：宁可多提醒一次，也不要让公开凭据悄悄留着。
+      return true;
+    }
+  })();
+
+  if (defaultCredsStillWork) {
     void dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: '首次启动',
-      message: '已为你初始化本地数据库并预置管理员账号',
+      type: 'warning',
+      title: '管理员账号还是预置的，请改成你自己的',
+      message: '当前登录用的还是预置管理员账号',
       detail: `管理员手机号：${DEFAULT_ADMIN_PHONE}\n管理员密码：${DEFAULT_ADMIN_PASSWORD}\n\n`
-        + '这两个账号用于第一次登录。登录后请到「个人设置」里修改密码。\n'
+        + '这两个值是写在公开文档里的示例值，任何拿到这个应用的人都能用它们登录。\n'
+        + '登录后请到「个人中心」把手机号和密码都改成你自己的：手机号决定你能用什么账号登录，'
+        + '密码决定别人能不能进来。改完当前会话会立即失效，用新凭据重新登录即可。\n\n'
         + 'AI 功能需要你自己填模型 API Key（设置 → 模型配置），本应用不内置任何第三方额度。',
       buttons: ['知道了'],
       defaultId: 0,
     });
+  } else if (!cfg.adminPasswordChanged) {
+    // 凭据已失效，把状态落盘，之后不再做这次试登。
+    saveConfig({ ...cfg, adminPasswordChanged: true });
   }
 }
 
