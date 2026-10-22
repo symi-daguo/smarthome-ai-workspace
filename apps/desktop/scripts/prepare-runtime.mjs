@@ -432,9 +432,61 @@ function findSchemaEngine() {
   }
   return null;
 }
-const engine = findSchemaEngine();
+
+/**
+ * 引擎缺失时主动补一次下载。
+ *
+ * 为什么要补：@prisma/engines 的 postinstall 负责把**当前平台**的 schema engine
+ * 下载到包里，而它的下载是 `failSilent: true` —— 失败只写进 DEBUG 日志，安装照样成功。
+ * pnpm 在某些平台/配置下还会跳过这个 postinstall（Windows 的 CI 上就出现过：
+ * 安装日志里只有 prisma 的 preinstall，没有 engines 的 postinstall）。
+ * 结果就是「装好了、能 generate，但一 migrate 就说找不到引擎」。
+ *
+ * 这里显式跑一次 postinstall，并打开 DEBUG 让失败原因可见；
+ * 跑完还是找不到，就把原因写清楚抛出去，而不是丢一句「目录异常」。
+ */
+function retryEngineDownload() {
+  if (!existsSync(NM_PNPM)) return;
+  for (const entry of readdirSync(NM_PNPM)) {
+    if (!entry.startsWith('@prisma+engines@')) continue;
+    const script = join(NM_PNPM, entry, 'node_modules', '@prisma', 'engines', 'scripts', 'postinstall.js');
+    if (!existsSync(script)) continue;
+    // 重试是必须的：引擎要从 binaries.prisma.sh 下载，CI 上偶发超时就会静默失败。
+    // 退避 3s → 8s → 15s，总共最多 3 次，避免在网络抖动时一次就放弃。
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      log(`未找到 schema engine，第 ${attempt}/3 次补跑 @prisma/engines 的 postinstall（下载失败默认是静默的）`);
+      try {
+        execFileSync(process.execPath, [script], {
+          cwd: dirname(script),
+          stdio: 'inherit',
+          env: { ...process.env, DEBUG: 'prisma:download' },
+        });
+      } catch (e) {
+        log(`postinstall 执行失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (findSchemaEngine()) return;
+      if (attempt < 3) {
+        const wait = [3000, 8000][attempt - 1];
+        log(`仍然找不到引擎，等待 ${wait / 1000}s 后再试`);
+        // 同步睡眠：Atomics.wait 是 Node 里唯一不靠子进程、不靠事件循环的等待方式
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+      }
+    }
+  }
+}
+
+let engine = findSchemaEngine();
 if (!engine) {
-  throw new Error(`运行时里找不到 ${ENGINE_NAME}（@prisma/engines 目录异常）`);
+  retryEngineDownload();
+  engine = findSchemaEngine();
+}
+if (!engine) {
+  throw new Error(
+    `运行时里找不到 ${ENGINE_NAME}（@prisma/engines 目录异常）。`
+    + `该引擎由 @prisma/engines 的 postinstall 从 binaries.prisma.sh 下载，`
+    + `下载失败默认是静默的 —— 请检查网络能否访问该域名，或手动执行一次 `
+    + `node node_modules/@prisma/engines/scripts/postinstall.js`,
+  );
 }
 const schemaEngine = engine.path;
 const engineRelative = schemaEngine.slice(API_DIR.length + 1);
