@@ -19,6 +19,17 @@ export const changePasswordSchema = z.object({
   newPassword: z.string().min(8).max(64),
 });
 
+/**
+ * 改登录手机号：只校验新号格式，不收旧密码。
+ *
+ * 为什么不要旧密码：改手机号的典型场景正是「默认号码是别人的、我不拥有它」，
+ * 要求旧密码等于把这类人堵死。安全边界靠「已登录 + 本人操作」保证，
+ * 与改密的威胁模型不同，所以单独一个 schema。
+ */
+export const changePhoneSchema = z.object({
+  phone: phoneSchema,
+});
+
 export const updateProfileSchema = z.object({
   displayName: z.string().min(1).max(32).optional(),
   avatarColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, '颜色需为 #RRGGBB').optional(),
@@ -31,4 +42,5 @@ export const updateProfileSchema = z.object({
 export type RegisterDto = z.infer<typeof registerSchema>;
 export type LoginDto = z.infer<typeof loginSchema>;
 export type ChangePasswordDto = z.infer<typeof changePasswordSchema>;
+export type ChangePhoneDto = z.infer<typeof changePhoneSchema>;
 export type UpdateProfileDto = z.infer<typeof updateProfileSchema>;

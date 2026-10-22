@@ -1217,6 +1217,117 @@ async function main(): Promise<void> {
   authA = { headers: { Authorization: `Bearer ${relogin.body.token}` } };
   await request(base, '/api/admin/model-config/chat', { ...authA, method: 'DELETE' });
 
+  // ---------- 改登录手机号（本人操作，不校验旧密码） ----------
+  // 紧挨改密断言：两者共用「自增 tokenVersion → 旧会话立即失效」这一条机制，
+  // 挨着对比着跑，哪条机制坏了能一眼看出。
+  //
+  // 被测账号用**独立的临时成员**，不动主账号：改手机号会自增 tokenVersion，
+  // 主账号的旧 token 当场失效，后面仍在用那枚 token 的断言会全变成 401（实测踩过）。
+  {
+    const phoneTmp = randomPhone();
+    const tmpMember = await request<{ id: string }>(base, '/api/team/members', {
+      method: 'POST', ...authA,
+      body: JSON.stringify({ phone: phoneTmp, displayName: '改手机号验证', roleKey: 'viewer', password: 'Smoke12345' }),
+    });
+    const tmpLogin = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: phoneTmp, password: 'Smoke12345' }),
+    });
+    const tmpAuth = { headers: { Authorization: `Bearer ${tmpLogin.body.token}` } };
+
+    // ① 号码格式非法：zod 层拦下（400 VALIDATION_FAILED）
+    const badPhone = await request(base, '/api/auth/change-phone', {
+      ...tmpAuth,
+      method: 'POST',
+      body: JSON.stringify({ phone: '12345' }),
+    });
+    check('改手机号：格式非法的号码被拒（400）', badPhone.status === 400, `status=${badPhone.status}`);
+
+    // ② 已被别人占用 → 409 PHONE_EXISTS（手机号在 User 表全局唯一）
+    const dupPhone = await request<{ message?: string }>(base, '/api/auth/change-phone', {
+      ...tmpAuth,
+      method: 'POST',
+      body: JSON.stringify({ phone: phoneA }),
+    });
+    check(
+      '改手机号：占用他人号码被拒（409 PHONE_EXISTS）',
+      dupPhone.status === 409 && /PHONE_EXISTS/.test(dupPhone.body.message ?? ''),
+      `status=${dupPhone.status} message=${dupPhone.body?.message ?? ''}`,
+    );
+
+    // ③ 成功改号，且库里真的改了（不能只看接口返回 201）
+    const newPhone = randomPhone();
+    const changedPhone = await request(base, '/api/auth/change-phone', {
+      ...tmpAuth,
+      method: 'POST',
+      body: JSON.stringify({ phone: newPhone }),
+    });
+    const dbPhone = (await prisma.user.findUnique({ where: { id: tmpMember.body.id } }))?.phone;
+    check(
+      '改手机号成功且已落库',
+      changedPhone.status === 201 && dbPhone === newPhone,
+      `status=${changedPhone.status} db=${dbPhone ?? ''}`,
+    );
+    check(
+      '真改号返回 changed=true（前端据此要求重新登录）',
+      (changedPhone.body as { changed?: boolean } | undefined)?.changed === true,
+      `changed=${String((changedPhone.body as { changed?: boolean } | undefined)?.changed)}`,
+    );
+
+    // ④ 旧 token 立即失效：与改密同一条 tokenVersion 机制
+    const oldTokenAfterPhone = await request(base, '/api/auth/me', { headers: tmpAuth.headers });
+    check('改手机号后旧 token 立即失效（401）', oldTokenAfterPhone.status === 401, `status=${oldTokenAfterPhone.status}`);
+
+    // ⑤ 用新号码重新登录
+    const reloginPhone = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ phone: newPhone, password: 'Smoke12345' }),
+    });
+    check('改手机号后可用新号码登录', reloginPhone.status === 201 && Boolean(reloginPhone.body.token), `status=${reloginPhone.status}`);
+
+    // ⑥ 填回当前号码是幂等操作：不该误报「已被占用」，也不该把自己的会话作废
+    const tmpAuth2 = { headers: { Authorization: `Bearer ${reloginPhone.body.token}` } };
+    const samePhone = await request(base, '/api/auth/change-phone', {
+      ...tmpAuth2,
+      method: 'POST',
+      body: JSON.stringify({ phone: newPhone }),
+    });
+    const meAfterSame = await request(base, '/api/auth/me', { headers: tmpAuth2.headers });
+    check(
+      '填回当前号码是幂等操作（不误报占用、不作废会话）',
+      samePhone.status === 201 && meAfterSame.status === 200,
+      `status=${samePhone.status} me=${meAfterSame.status}`,
+    );
+    // changed 标志：前端靠它决定要不要把用户踢下线重登。
+    // 幂等场景必须报 changed=false，否则用户只是确认一下号码却被登出。
+    check(
+      '幂等改号返回 changed=false（前端据此不强制重登）',
+      (samePhone.body as { changed?: boolean } | undefined)?.changed === false,
+      `changed=${String((samePhone.body as { changed?: boolean } | undefined)?.changed)}`,
+    );
+
+    // ⑦ 机器账号不能改：它的号码位是 svc_ 占位符，没有「本人手机号」可改
+    const svcAcc = await request<{ id: string }>(base, '/api/agent/service-accounts', {
+      method: 'POST', ...authA, body: JSON.stringify({ name: '改手机号验证机器账号', roleKey: 'viewer' }),
+    });
+    const svcKey = await request<{ token: string }>(base, '/api/agent/keys', {
+      method: 'POST', ...authA, body: JSON.stringify({ name: '改手机号验证 Key', serviceAccountId: svcAcc.body.id }),
+    });
+    const svcChange = await request<{ message?: string }>(base, '/api/auth/change-phone', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${svcKey.body.token}` },
+      body: JSON.stringify({ phone: randomPhone() }),
+    });
+    check(
+      '机器账号不能改手机号（400 SERVICE_ACCOUNT_PHONE_IMMUTABLE）',
+      svcChange.status === 400 && /SERVICE_ACCOUNT_PHONE_IMMUTABLE/.test(svcChange.body.message ?? ''),
+      `status=${svcChange.status} message=${svcChange.body?.message ?? ''}`,
+    );
+
+    // 清理：临时成员与机器账号，别给演示库留垃圾
+    await request(base, `/api/team/members/${tmpMember.body.id}`, { method: 'DELETE', ...authA });
+    await request(base, `/api/team/service-accounts/${svcAcc.body.id}`, { method: 'DELETE', ...authA });
+  }
+
   // ---------- 对标账号情报：配置 → 契约 → 采集提交 → 热度排序 → 保留期清理 ----------
   // 用例顺序有意为之：先提交内容再清理，最后 analyze 时账号已无内容，
   // 走的是 NO_CONTENT 分支（不调模型），smoke 全程不依赖外网与模型。

@@ -6,7 +6,7 @@
  *   GET /api/agent/manifest            → 索引（分组 + 危险操作清单），实测约 2.8 KB
  *   GET /api/agent/manifest?group=quote → 只取报价这一组的详细操作，实测约 2.8 KB
  *   GET /api/agent/manifest?effective=1 → 按调用者权限过滤，实测约 21 KB
- * 全量取（?full=1，实测约 25 KB，150 条操作）只在需要通盘了解时用。
+ * 全量取（?full=1，实测约 25 KB，164 条操作）只在需要通盘了解时用。
  *
  * 漂移防护：apps/api/test/smoke.ts 会用真实路由表逐条比对，
  * 新增接口忘了写进清单 → 门禁 FAIL。清单漏项不会被静默放过。
@@ -61,6 +61,10 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/auth/refresh': [],
   'PATCH /api/auth/profile': [],
   'POST /api/auth/change-password': [],
+  // 改自己账号的手机号：与改密同口径，不挂额外权限。
+  // 现有 22 个 action 全是租户业务资源（报价/接单/发布/内容/知识库/对标/客服/团队/平台），
+  // 没有任何一个覆盖「本人账号设置」；硬套业务权限反而会让 viewer 改不了自己的号码。
+  'POST /api/auth/change-phone': [],
 
   'GET /api/team/role-templates': ['tenant:member:manage'],
   'GET /api/team/members': ['tenant:member:manage'],
@@ -290,6 +294,7 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'POST', p: '/api/auth/refresh', d: '用旧 token 换新 token', risk: R },
       { m: 'PATCH', p: '/api/auth/profile', d: '改昵称/头像底色', risk: W },
       { m: 'POST', p: '/api/auth/change-password', d: '改密码。会自增令牌版本，旧 token 全部立即失效', risk: W },
+      { m: 'POST', p: '/api/auth/change-phone', d: '改登录手机号（不校验旧密码）。会自增令牌版本，旧 token 全部立即失效', risk: W },
     ],
   },
   {

@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.module.js';
@@ -6,6 +6,14 @@ import type { LoginDto, RegisterDto } from './auth.schemas.js';
 
 // 新注册租户默认额度：入门版点数 80,000 按 1:1 折算为 token
 const DEFAULT_TENANT_TOKENS = 80_000;
+
+/** Prisma 唯一约束冲突错误码：命中 User.phone 的 @unique */
+const UNIQUE_VIOLATION = 'P2002';
+
+/** 判断是否唯一约束冲突：避免把原始数据库错误抛给前端 */
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === UNIQUE_VIOLATION;
+}
 
 @Injectable()
 export class AuthService {
@@ -114,6 +122,46 @@ export class AuthService {
       data: { passwordHash: await argon2.hash(dto.newPassword), tokenVersion: { increment: 1 } },
     });
     return { ok: true };
+  }
+
+  /**
+   * 修改登录手机号（本人操作，不校验旧密码）。
+   *
+   * 手机号在 User 表是**全局唯一**，租户归属在 Membership 表 —— 同一个人可以属于多个租户，
+   * 所以这里必须全局查重，不能按租户查。
+   *
+   * 不要求旧密码：改手机号的典型场景正是「默认号码是别人的、我不拥有它」，
+   * 要求旧密码等于把人堵死。安全边界是「已登录 + 本人操作」。
+   *
+   * 改完自增 tokenVersion：与改密同一条机制，所有旧 JWT（含其他设备）立即失效，
+   * 强制用新手机号重新登录 —— 否则旧 token 还能继续用，等于换号没换身份。
+   *
+   * 返回值里的 `changed` 告诉调用方「号码到底有没有变」：
+   * 填回自己当前的号码是幂等操作，什么都不改、会话也不该失效。
+   * 前端必须按这个标志决定要不要让用户重新登录 —— 否则用户只是确认了一下号码，
+   * 却被莫名其妙踢下线。
+   */
+  async changePhone(userId: string, phone: string): Promise<{ ok: true; changed: boolean }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('USER_NOT_FOUND');
+    // 机器账号的号码位是 svc_ 前缀的占位符，只经 API Key 访问，没有「本人手机号」可改
+    if (user.isServiceAccount) throw new BadRequestException('SERVICE_ACCOUNT_PHONE_IMMUTABLE');
+    const existing = await this.prisma.user.findUnique({ where: { phone } });
+    // 填回自己当前的号码：按无变化处理（幂等），不该报「已被占用」也不该作废自己的会话
+    if (existing?.id === userId) return { ok: true, changed: false };
+    if (existing) throw new ConflictException('PHONE_EXISTS');
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { phone, tokenVersion: { increment: 1 } },
+      });
+    } catch (e) {
+      // 竞态兜底：两个用户同时改成同一个新号时，后到的那一个会撞 User.phone 的唯一索引。
+      // 不兜住就是 500，兜住才与前置查重给出的 409 一致。
+      if (isUniqueViolation(e)) throw new ConflictException('PHONE_EXISTS');
+      throw e;
+    }
+    return { ok: true, changed: true };
   }
 
   /** 个人设置：更新显示名 / 头像底色 */

@@ -16,7 +16,7 @@
 
 | 方式 | 端点 | 适合 |
 |---|---|---|
-| **能力清单**（推荐起点） | `GET /api/agent/manifest` | 所有平台。返回 19 组、163 条操作、权限、风险等级与用法说明 |
+| **能力清单**（推荐起点） | `GET /api/agent/manifest` | 所有平台。返回 19 组、164 条操作、权限、风险等级与用法说明 |
 | **OpenAPI** | `GET /api/docs`（页面）<br>`GET /api/docs-json`（机器可读） | 需要自动生成客户端 / 补全 / 调试台。**生产环境（`NODE_ENV=production`）已关闭 Swagger**，这两个端点只在开发环境可用 |
 | **REST** | `http://<host>:3080/api/*` | 一切。API Key 即 Bearer token |
 
@@ -141,7 +141,7 @@ POST /api/agent/snapshots {label}          → 拿 snapshotId
 接入完成后跑一遍这三件事，就能确认是通的：
 
 ```bash
-# 1) 认证 + 拿到清单（应看到 19 组、162 条、25 个破坏性操作）
+# 1) 认证 + 拿到清单（应看到 19 组、164 条、25 个破坏性操作）
 curl -s "$API/api/agent/manifest?index=1" -H "Authorization: Bearer $KEY"
 
 # 2) 权限感知（换一把只读 Key 再跑，结果应明显变少）

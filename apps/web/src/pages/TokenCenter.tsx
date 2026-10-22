@@ -17,6 +17,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Progress,
   Radio,
   Row,
@@ -109,6 +110,10 @@ export function TokenCenter(): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [pwdForm] = Form.useForm();
   const [pwdLoading, setPwdLoading] = useState(false);
+  /** 修改登录手机号（1.0.4）：手机号是登录账号本身，部署预置的是公开示例值，必须能换成自己的 */
+  const [phoneModalOpen, setPhoneModalOpen] = useState(false);
+  const [phoneForm] = Form.useForm<{ phone: string }>();
+  const [phoneLoading, setPhoneLoading] = useState(false);
   const [profileForm] = Form.useForm<{ displayName: string; avatarColor: string | { toHexString?: () => string } }>();
   const [profileSaving, setProfileSaving] = useState(false);
   const [backing, setBacking] = useState(false);
@@ -117,6 +122,8 @@ export function TokenCenter(): ReactNode {
   const [storage, setStorage] = useState<StorageStat | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const isAdmin = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
+  /** 是不是租户/平台管理员（管理员账号本身要能改手机号，也才谈得上「换人管」） */
+  const isTenantAdmin = user?.memberships.some((m) => m.roleKey === 'super_admin' || m.roleKey === 'tenant_admin') ?? false;
 
   // 管理员进入页面即拉取产物占用（存储治理卡）
   useEffect(() => {
@@ -161,6 +168,48 @@ export function TokenCenter(): ReactNode {
       message.error(raw === 'INVALID_CREDENTIALS' ? '原密码不正确' : raw);
     } finally {
       setPwdLoading(false);
+    }
+  };
+
+  /**
+   * 修改登录手机号（1.0.4）。
+   *
+   * 手机号是**登录账号本身**：部署时预置的管理员手机号写在公开文档里，
+   * 任何拿到部署地址的人都能用它登录，所以必须有一个地方能换成自己的。
+   *
+   * 不要求输入原密码 —— 改手机号的场景正是「这号本来就不是我的」，
+   * 要求旧密码等于把路堵死。安全边界是「已登录 + 本人操作」，
+   * 改完服务端自增 tokenVersion，所有旧会话立即失效。
+   */
+  const changePhone = async (values: { phone: string }): Promise<void> => {
+    setPhoneLoading(true);
+    try {
+      const res = await api<{ ok: true; changed: boolean }>('/api/auth/change-phone', {
+        method: 'POST',
+        body: JSON.stringify({ phone: values.phone }),
+      });
+      setPhoneModalOpen(false);
+      phoneForm.resetFields();
+      // 后端只在号码**真的改了**时才自增令牌版本。
+      // 填回自己当前的号码是幂等操作（什么也没改、会话也没失效）——
+      // 这时要是也让用户重新登录，就成了「只是想确认一下号码却被踢下线」。
+      if (!res?.changed) {
+        message.info('手机号没有变化，未做修改');
+        return;
+      }
+      // 令牌已失效：主动登出，引导用新手机号重新登录
+      message.success('手机号已更新，请用新手机号重新登录');
+      await refresh().catch(() => undefined);
+      setTimeout(() => logout(), 800);
+    } catch (err: unknown) {
+      const raw = err instanceof Error ? err.message : String(err);
+      message.error(
+        raw === 'PHONE_EXISTS' ? '这个手机号已经被别的账号占用了'
+          : raw === 'SERVICE_ACCOUNT_PHONE_IMMUTABLE' ? '机器账号不能改手机号'
+            : raw,
+      );
+    } finally {
+      setPhoneLoading(false);
     }
   };
 
@@ -347,11 +396,21 @@ export function TokenCenter(): ReactNode {
               {membership ? <Tag color={PLAN_META[membership.plan]?.color ?? 'default'}>{PLAN_META[membership.plan]?.label ?? membership.plan}</Tag> : null}
             </Space>
             <div>
-              <Text type="secondary" style={{ fontSize: 13 }}>
-                {user?.phone ? `${user.phone.slice(0, 3)}****${user.phone.slice(7)}` : ''}
-                {membership ? ` · 公司 ${membership.tenantName}` : ''}
-              </Text>
+              <Space size={8} wrap>
+                <Text type="secondary" style={{ fontSize: 13 }}>
+                  {user?.phone ? `${user.phone.slice(0, 3)}****${user.phone.slice(7)}` : ''}
+                  {membership ? ` · 公司 ${membership.tenantName}` : ''}
+                </Text>
+                <Button size="small" type="link" onClick={() => setPhoneModalOpen(true)}>
+                  修改手机号
+                </Button>
+              </Space>
             </div>
+            {isTenantAdmin && (
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                要把管理员换给别人：去「团队与接入」把对方设成管理员，再把自己降级（最后一个管理员不能降级，会被拦住）。
+              </Text>
+            )}
           </div>
         </Space>
       </Card>
@@ -708,6 +767,34 @@ export function TokenCenter(): ReactNode {
           </Card>
         </Col>
       </Row>
+
+      {/* 修改登录手机号：登录账号本身，不是成员资料 */}
+      <Modal
+        title="修改登录手机号"
+        open={phoneModalOpen}
+        onCancel={() => setPhoneModalOpen(false)}
+        onOk={() => void phoneForm.submit()}
+        okText="保存新手机号"
+        confirmLoading={phoneLoading}
+        destroyOnHidden
+      >
+        <Text type="secondary" style={{ fontSize: 12.5, display: 'block', marginBottom: 12 }}>
+          手机号是你的登录账号，也是别人给你发消息、找你的联系方式。
+          部署时预置的管理员手机号是公开示例值，建议第一时间换成自己的。
+          改完当前会话会立即失效，请用新手机号重新登录。
+        </Text>
+        <Form form={phoneForm} layout="vertical" onFinish={changePhone} requiredMark={false}>
+          <Form.Item
+            name="phone"
+            rules={[
+              { required: true, message: '请输入新手机号' },
+              { pattern: /^1[3-9]\d{9}$/, message: '手机号格式不对（11 位，1 开头）' },
+            ]}
+          >
+            <Input placeholder="新手机号" maxLength={11} />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Card title="账本明细" style={{ marginTop: 16 }} styles={{ body: { padding: 0 } }}>
         <Table<LedgerEntry>

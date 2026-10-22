@@ -212,6 +212,12 @@ export function MainLayout(): ReactNode {
     }
   }, [user]);
 
+  /**
+   * 是不是管理员（只有管理员需要立刻处理「预置账号」这件事）。
+   * 普通成员看不到这条提示，避免第一次打开就收到与自己无关的警告。
+   */
+  const isAdmin = !!user?.memberships?.some((m) => m.roleKey === 'super_admin' || m.roleKey === 'tenant_admin');
+
   const historyItems = useMemo<HistoryItem[]>(
     () =>
       [
@@ -780,6 +786,36 @@ export function MainLayout(): ReactNode {
             <Text style={{ display: 'block', marginBottom: 12 }}>
               开源自部署：模型与算力由部署者自备，不设付费墙，不提供在线充值。
             </Text>
+            {isAdmin && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: `1px solid ${token.colorWarningBorder}`,
+                  background: token.colorWarningBg,
+                  marginBottom: 12,
+                }}
+              >
+                <Text strong style={{ display: 'block' }}>
+                  先把管理员账号改成你自己的
+                </Text>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                  部署时预置的管理员手机号与默认密码是写在文档里的公开示例值，
+                  任何拿到这个部署地址的人都能用它们登录。手机号与密码都可以在「个人中心」改，
+                  改完当前会话会立即失效，用新手机号重新登录即可。
+                </Text>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setGuideOpen(false);
+                    navigate('/tokens');
+                  }}
+                  style={{ marginTop: 8 }}
+                >
+                  去个人中心修改
+                </Button>
+              </div>
+            )}
             {/*
             {GUIDE_PRICE_ROWS.map((row) => (
               <div
