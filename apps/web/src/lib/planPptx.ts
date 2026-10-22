@@ -1,6 +1,6 @@
 import PptxGenJS from 'pptxgenjs';
 import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } from '../data/planThemes';
-import { catMeta, compositePoints } from './pointOverlay';
+import { catMeta, compositePoints, COMPOSITE_WIDTH } from './pointOverlay';
 import { customerText } from './planSanitize';
 import { floorplanListPageNo, quoteListPageNo, POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPages, deliverPointCount, type QuoteSummary } from './planPages';
 import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
@@ -251,7 +251,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
     const base = (plan.floorplanUrl ?? plan.renderedFloorplanUrl) as string | null | undefined;
     if (base) {
       try {
-        const composed = await compositePoints(base, plan.layoutPoints, 1400, mkTpl);
+        const composed = await compositePoints(base, plan.layoutPoints, COMPOSITE_WIDTH, mkTpl);
         // 先合成点位再裁剪：点位图标已经画在图上，跟着一起裁，不会与点位错位
         if (fpTpl === 'compare') {
           // 原图对照模版左栏要放**未叠加点位**的原始户型，对照才有意义

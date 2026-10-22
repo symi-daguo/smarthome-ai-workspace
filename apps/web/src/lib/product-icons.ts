@@ -178,17 +178,26 @@ export function iconDataUrl(iconKey: string, color = '#ffffff'): string {
  * 为什么不直接写数字：之前同一屏出现过 20 / 18 / **17** 三个尺寸 ——
  * 其中 17 明显是看着"差不多"随手调的，导致图标选择器展开时是 17px、收起后变 16px，
  * 同一个图标在开合之间会跳一下。尺寸集中在这里定义，各处引用，不再各写各的。
+ *
+ * **档位按「容器边长的占比」定，不按绝对像素定**（1.0.4）：
+ * 一个产品有两种图 —— 门店自己拍的照片，和系统自绘的品类图标。
+ * 照片用 `object-fit: cover` 铺满容器，自绘图标却是居中的小图，
+ * 之前缩略图是 40 容器放 20px（占 50%）、点位标记是 26 容器放 16px（占 62%）。
+ * 同一列里一个有图一个没图，视觉大小差一截，看着像两套东西。
+ * 现在自绘图标统一占到容器的 **80%**：
+ * lucide 是 24×24 viewBox 的线条图，图形实际约占 viewBox 的 83%，
+ * 于是有效占比落在 66% 上下，与 canvas 合成图里自绘图标铺满（约 83%）观感接近。
  */
 export const ICON_SIZE = {
   /** 行内小图标（表格行、列表行、菜单项） */
   inline: 16,
   /** 选择器网格、品类管理表头这类中等容器 */
   medium: 18,
-  /** 产品缩略图 40×40 盒内 */
-  thumb: 20,
-  /** 点位标记：未选中 / 选中 */
-  marker: 16,
-  markerActive: 20,
+  /** 产品缩略图 40×40 盒内（占 80%） */
+  thumb: 32,
+  /** 点位标记：未选中 26px 圆 / 选中 32px 圆（各占 80%） */
+  marker: 21,
+  markerActive: 26,
 } as const;
 
 export function productIconDataUrl(category: string, iconKey: string | undefined, color = '#ffffff'): string {

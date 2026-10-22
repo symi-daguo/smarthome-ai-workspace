@@ -8,8 +8,11 @@
  * 跑法：node apps/web/scripts/check-delivery-templates.mjs
  */
 import { registerHooks } from 'node:module';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const WEB_SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
 /**
  * Node 的 ESM 解析要求完整扩展名，而项目源码按 Vite/TS 惯例写无扩展名相对导入。
@@ -134,6 +137,61 @@ check('虚拟页映射回真实页下标（户型页 → 上一真实页）', to
 check('续页映射回真实页下标（与户型页同一处）', toReal(dFull.virtualAt[1]) === dFull.virtualAt[0] - 1);
 check('续页之后的真实页下标正确', toReal(dFull.virtualAt[1] + 1) === dFull.virtualAt[1] + 1 - 2);
 check('无虚拟页时映射是恒等', deliverPages({ pages: pages4, layoutPoints: pts12 }).virtualAt.length === 0);
+
+// —— 8. 图标尺寸与合成宽度：同一套口径，不许各处写死 ——
+// 背景：一个产品有两种图 —— 门店自己拍的照片（object-fit: cover 铺满容器）
+// 与系统自绘的品类图标（居中的小图）。以前缩略图是 40 容器放 20px（占 50%）、
+// 点位标记是 26 容器放 16px（占 62%），同一列里一个有图一个没图，视觉大小差一截。
+// 现在自绘图标统一占容器的 80%，且尺寸只允许从 ICON_SIZE 档位取。
+//
+// 另外 canvas 合成图此前三端各传各的宽度（分享页 1200 / PPTX 1400 / 导出 1600），
+// 底图分辨率低时会合成出三张不同大小的图，标记像素跟着变 —— 统一到 COMPOSITE_WIDTH。
+const iconSrc = readFileSync(join(WEB_SRC, 'lib/product-icons.ts'), 'utf8');
+const overlaySrc = readFileSync(join(WEB_SRC, 'lib/pointOverlay.ts'), 'utf8');
+
+const iconSizeBlock = iconSrc.match(/export const ICON_SIZE\s*=\s*\{([\s\S]*?)\}\s*as const;/);
+check('ICON_SIZE 档位表存在', !!iconSizeBlock);
+const sizeOf = (key) => {
+  const m = iconSizeBlock?.[1].match(new RegExp(`${key}\\s*:\\s*(\\d+)`));
+  return m ? Number(m[1]) : NaN;
+};
+for (const key of ['inline', 'medium', 'thumb', 'marker', 'markerActive']) {
+  check(`ICON_SIZE.${key} 有值`, Number.isFinite(sizeOf(key)), String(sizeOf(key)));
+}
+// 80% 口径：缩略图 40 盒、点位标记 26 / 32 圆
+check('ICON_SIZE.thumb = 40 容器的 80%', sizeOf('thumb') === 32, String(sizeOf('thumb')));
+check('ICON_SIZE.marker = 26 圆的 80%', sizeOf('marker') === 21, String(sizeOf('marker')));
+check('ICON_SIZE.markerActive = 32 圆的 80%', sizeOf('markerActive') === 26, String(sizeOf('markerActive')));
+
+// 所有图标调用点都不许写死数字（此前只扫两个文件，canvas / PPTX / 分享页全在盲区里）
+const iconCallFiles = [
+  'lib/product-icons.ts',
+  'lib/pointOverlay.ts',
+  'lib/planPptx.ts',
+  'components/PlanSlide.tsx',
+  'pages/ProductCenter.tsx',
+  'pages/DeviceLayout.tsx',
+];
+const straySizes = [];
+for (const rel of iconCallFiles) {
+  const src = readFileSync(join(WEB_SRC, rel), 'utf8');
+  for (const m of src.matchAll(/(?:productIconSvg|categoryIconSvg|iconSvgByKey)\([^)]*?,\s*(\d+)\s*,/g)) {
+    straySizes.push(`${rel}:${m[1]}`);
+  }
+}
+check(`图标调用点不再写死尺寸（发现 ${straySizes.length} 处）`, straySizes.length === 0, straySizes.join(' '));
+
+// 合成宽度：三端必须用同一个常量
+check('COMPOSITE_WIDTH 有定义', /export const COMPOSITE_WIDTH\s*=\s*\d+/.test(overlaySrc));
+for (const fn of ['compositePoints', 'compositeHeatmap', 'compositeLightPlan']) {
+  const m = overlaySrc.match(new RegExp(`export async function ${fn}\\([^)]*targetW\\s*=\\s*([A-Za-z_0-9]+)`));
+  check(`${fn} 默认宽度取自 COMPOSITE_WIDTH`, m?.[1] === 'COMPOSITE_WIDTH', m?.[1] ?? '未匹配');
+}
+for (const rel of ['lib/planPptx.ts', 'components/PlanSlide.tsx', 'pages/DeviceLayout.tsx']) {
+  const src = readFileSync(join(WEB_SRC, rel), 'utf8');
+  const literal = src.match(/composite(?:Points|Heatmap|LightPlan)\([^)]*?,\s*(\d{3,5})\s*,/);
+  check(`${rel} 调用合成时不传字面量宽度`, !literal, literal?.[1] ?? '');
+}
 
 console.log(`\n小计: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

@@ -26,6 +26,18 @@ export const catMeta = (c: string): { label: string; color: string } => {
   return { label, color };
 };
 
+/**
+ * 合成图统一宽度（1.0.4）。
+ *
+ * 之前三端各传各的：分享页 1200、PPTX 1400、PNG 导出 1600。
+ * 底图分辨率够高时三者结果相同（缩放倍数被下限 1 钳住，都按原图尺寸合成），
+ * 但底图分辨率低的时候（比如 800px），三端会合成出 1200 / 1400 / 1600 三张不同大小的图，
+ * 标记的**绝对像素**跟着变 —— 同一个方案在分享页、PPT、导出图里长得不一样。
+ * 统一到 1600（PNG 导出的既有值，保真度最高的那一档）后，
+ * 同一张底图 + 同一批点位，三端产出的是**同一张**合成图。
+ */
+export const COMPOSITE_WIDTH = 1600;
+
 export function loadImage(src: string): Promise<HTMLImageElement> {
   const img = new Image();
   return new Promise((resolve, reject) => {
@@ -49,7 +61,7 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
 export async function compositePoints(
   baseSrc: string,
   points: PointLike[],
-  targetW = 1600,
+  targetW = COMPOSITE_WIDTH,
   marker: MarkerTemplate = 'icon',
 ): Promise<string> {
   const img = await loadImage(baseSrc);
@@ -199,7 +211,7 @@ function addGlowLayer(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, 
 }
 
 /** WiFi 信号覆盖热力图：网关/AP 点位为热源，绿(弱)→黄→红(强)叠加，重叠区增强 */
-export async function compositeHeatmap(baseSrc: string, sources: PointLike[], targetW = 1600): Promise<string> {
+export async function compositeHeatmap(baseSrc: string, sources: PointLike[], targetW = COMPOSITE_WIDTH): Promise<string> {
   const prepared = await prepareCanvas(baseSrc, targetW);
   if (!prepared) return baseSrc;
   const { canvas, ctx } = prepared;
@@ -297,7 +309,7 @@ export async function enhanceFloorplan(baseSrc: string, targetW = 2000): Promise
 }
 
 /** 灯光点位效果图：灯具点位画暖光光晕 + 徽章标注 */
-export async function compositeLightPlan(baseSrc: string, lights: PointLike[], targetW = 1600): Promise<string> {
+export async function compositeLightPlan(baseSrc: string, lights: PointLike[], targetW = COMPOSITE_WIDTH): Promise<string> {
   const prepared = await prepareCanvas(baseSrc, targetW);
   if (!prepared) return baseSrc;
   const { canvas, ctx } = prepared;

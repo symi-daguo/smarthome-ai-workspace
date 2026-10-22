@@ -2,7 +2,7 @@ import { catMeta } from '../lib/pointOverlay';
 import { PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, imgFilter, imgPosition, imgSize, CARD_SHADOW, CARD_SHADOW_SOFT, type PlanPage, type PlanTheme } from '../data/planThemes';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { compositePoints, type PointLike } from '../lib/pointOverlay';
+import { compositePoints, COMPOSITE_WIDTH, type PointLike } from '../lib/pointOverlay';
 import { customerText } from '../lib/planSanitize';
 import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
 import { POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, type QuoteSummary } from '../lib/planPages';
@@ -121,7 +121,7 @@ function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit:
       return;
     }
     let alive = true;
-    void compositePoints(base, plan.layoutPoints ?? [], 1200, mkTpl)
+    void compositePoints(base, plan.layoutPoints ?? [], COMPOSITE_WIDTH, mkTpl)
       .then((url) => { if (alive) setComposite(url); })
       .catch(() => { if (alive) setComposite(null); });
     return () => { alive = false; };

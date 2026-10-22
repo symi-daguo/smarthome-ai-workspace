@@ -6,7 +6,7 @@ import { api, fileUrl } from '../lib/api';
 import { loadCategoryDict } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
 import { downloadBlob } from '../lib/download';
-import { catMeta, compositePoints, compositeHeatmap, compositeLightPlan, enhanceFloorplan, loadImage } from '../lib/pointOverlay';
+import { catMeta, compositePoints, compositeHeatmap, compositeLightPlan, enhanceFloorplan, loadImage, COMPOSITE_WIDTH } from '../lib/pointOverlay';
 import {
   compositeWifiPlan,
   computeSignalField,
@@ -91,7 +91,7 @@ const nextPointId = (): string => `p${Date.now().toString(36)}${(pointSeq += 1)}
 async function exportAnnotatedPng(baseSrc: string, points: LayoutPoint[], title: string, mode: Mode): Promise<void> {
   const fn = mode === 'wifi' ? compositeHeatmap : mode === 'light' ? compositeLightPlan : compositePoints;
   const suffix = mode === 'wifi' ? 'WiFi热力图' : mode === 'light' ? '灯光点位图' : '点位图';
-  const dataUrl = await fn(baseSrc, points);
+  const dataUrl = await fn(baseSrc, points, COMPOSITE_WIDTH);
   const res = await fetch(dataUrl);
   const blob = await res.blob();
   downloadBlob(blob, `${title || '设备点位图'}-${suffix}.png`);
