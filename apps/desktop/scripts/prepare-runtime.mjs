@@ -28,6 +28,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { downloadEngine, findEnginesPackageDir, findSchemaEngine } from './engine-locator.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DESKTOP_DIR = resolve(HERE, '..');
@@ -414,78 +415,30 @@ for (const name of readdirSync(join(NM, '.cache', 'jiti'))) {
  * 而包内引擎是 app bundle 的一部分，被改掉就破坏封印 → 公证被拒。
  * 所以桌面端启动时要把引擎**复制到 bundle 之外**再用
  * （见 apps/desktop/src/migrate.ts），复制源就是这里记下的路径。
- */
-const ENGINE_NAME = `schema-engine-${process.platform}-${process.arch}`;
-/**
- * Windows 上 Prisma 引擎带 `.exe` 后缀（schema-engine-win32-x64.exe），
- * Unix 上没有。两种名字都要试，否则在 Windows 上必然报「找不到引擎」。
- */
-function findSchemaEngine() {
-  if (!existsSync(NM_PNPM)) return null;
-  const names = process.platform === 'win32' ? [ENGINE_NAME, `${ENGINE_NAME}.exe`] : [ENGINE_NAME];
-  for (const entry of readdirSync(NM_PNPM)) {
-    if (!entry.startsWith('@prisma+engines@')) continue;
-    for (const name of names) {
-      const p = join(NM_PNPM, entry, 'node_modules', '@prisma', 'engines', name);
-      if (existsSync(p)) return { path: p, name, version: entry.slice('@prisma+engines@'.length) };
-    }
-  }
-  return null;
-}
-
-/**
- * 引擎缺失时主动补一次下载。
  *
- * 为什么要补：@prisma/engines 的 postinstall 负责把**当前平台**的 schema engine
- * 下载到包里，而它的下载是 `failSilent: true` —— 失败只写进 DEBUG 日志，安装照样成功。
- * pnpm 在某些平台/配置下还会跳过这个 postinstall（Windows 的 CI 上就出现过：
- * 安装日志里只有 prisma 的 preinstall，没有 engines 的 postinstall）。
- * 结果就是「装好了、能 generate，但一 migrate 就说找不到引擎」。
- *
- * 这里显式跑一次 postinstall，并打开 DEBUG 让失败原因可见；
- * 跑完还是找不到，就把原因写清楚抛出去，而不是丢一句「目录异常」。
+ * 定位与下载的具体规则（Windows 上引擎到底叫什么、postinstall 为什么靠不住）
+ * 都写在 engine-locator.mjs 里。
  */
-function retryEngineDownload() {
-  if (!existsSync(NM_PNPM)) return;
-  for (const entry of readdirSync(NM_PNPM)) {
-    if (!entry.startsWith('@prisma+engines@')) continue;
-    const script = join(NM_PNPM, entry, 'node_modules', '@prisma', 'engines', 'scripts', 'postinstall.js');
-    if (!existsSync(script)) continue;
-    // 重试是必须的：引擎要从 binaries.prisma.sh 下载，CI 上偶发超时就会静默失败。
-    // 退避 3s → 8s → 15s，总共最多 3 次，避免在网络抖动时一次就放弃。
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      log(`未找到 schema engine，第 ${attempt}/3 次补跑 @prisma/engines 的 postinstall（下载失败默认是静默的）`);
-      try {
-        execFileSync(process.execPath, [script], {
-          cwd: dirname(script),
-          stdio: 'inherit',
-          env: { ...process.env, DEBUG: 'prisma:download' },
-        });
-      } catch (e) {
-        log(`postinstall 执行失败：${e instanceof Error ? e.message : String(e)}`);
-      }
-      if (findSchemaEngine()) return;
-      if (attempt < 3) {
-        const wait = [3000, 8000][attempt - 1];
-        log(`仍然找不到引擎，等待 ${wait / 1000}s 后再试`);
-        // 同步睡眠：Atomics.wait 是 Node 里唯一不靠子进程、不靠事件循环的等待方式
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
-      }
-    }
-  }
-}
-
-let engine = findSchemaEngine();
+let engine = findSchemaEngine(NM_PNPM);
 if (!engine) {
-  retryEngineDownload();
-  engine = findSchemaEngine();
+  const pkg = findEnginesPackageDir(NM_PNPM);
+  if (pkg) {
+    try {
+      const commit = await downloadEngine(pkg.dir);
+      log(`向官方源下载 schema engine（commit ${commit}）`);
+    } catch (e) {
+      log(`引擎下载失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  engine = findSchemaEngine(NM_PNPM);
 }
 if (!engine) {
   throw new Error(
-    `运行时里找不到 ${ENGINE_NAME}（@prisma/engines 目录异常）。`
+    `运行时里找不到本平台的 schema engine（@prisma/engines 目录异常）。`
     + `该引擎由 @prisma/engines 的 postinstall 从 binaries.prisma.sh 下载，`
-    + `下载失败默认是静默的 —— 请检查网络能否访问该域名，或手动执行一次 `
-    + `node node_modules/@prisma/engines/scripts/postinstall.js`,
+    + `而那次下载的失败默认是静默的 —— 上面那条「引擎下载失败」就是真实原因；`
+    + `若日志里没有这一条，说明 pnpm 压根没执行 postinstall，`
+    + `可手动执行一次 node node_modules/@prisma/engines/scripts/postinstall.js`,
   );
 }
 const schemaEngine = engine.path;

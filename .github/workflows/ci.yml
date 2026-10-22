@@ -91,6 +91,12 @@ jobs:
         # 公开仓库必须持续证明「没有别人的东西」，不能靠人记得检查
         run: pnpm check:brand
 
+      - name: 交付模版与 PPTX 自检
+        # 交付件的两处纯逻辑回归：
+        #   1. 点位清单不能被截断（少列一台设备等于那台装不装没定）
+        #   2. PPTX 阴影参数不能被 pptxgenjs 原地污染（污染后 PowerPoint 整块不显示）
+        run: pnpm check:templates && pnpm check:pptx
+
       - name: 构建
         run: pnpm --filter @app/api build && pnpm --filter @app/web build
 
@@ -122,8 +128,11 @@ jobs:
 
       - name: 脚本语法自检
         # 打包钩子（after-pack）只在 electron-builder 里才会被执行，
-        # CI 里没有真实打包机会，用 node --check 至少挡住语法错误
-        run: node --check apps/desktop/scripts/after-pack.mjs
+        # CI 里没有真实打包机会，用 node --check 至少挡住语法错误。
+        # 桌面端的 scripts/ 下每个 .mjs 都过一遍 —— 新加的引擎定位与探活脚本
+        # 只在 Windows job 里才会真正执行，Linux 这道闸门是它们的语法护栏。
+        run: |
+          for f in apps/desktop/scripts/*.mjs; do node --check "$f"; done
 
       - name: 编译桌面端主进程
         run: pnpm --filter @app/desktop build
@@ -162,6 +171,14 @@ jobs:
         # Prisma Client 与生产依赖一起裁进 runtime/，少装一个包都编不出能跑的安装包。
         # pnpm store 有缓存，第二次跑不会重复下载。
         run: pnpm install --frozen-lockfile
+
+      - name: 探活 Prisma 引擎源
+        # schema engine 要从 binaries.prisma.sh 下载。@prisma/engines 的 postinstall
+        # 在 Windows 上**没被执行**（安装日志里有 prisma preinstall，没有 engines postinstall），
+        # 而它自己的下载又是 failSilent 的 —— 失败一个字都看不到。
+        # 这一步把「源通不通」「postinstall 跑没跑」「引擎在不在」变成明面上的信号，
+        # 不用翻几千行安装日志去猜。prepare-runtime 自己也会兜底下载。
+        run: node apps/desktop/scripts/check-engine-source.mjs
 
       - name: 生成 Prisma Client
         # Prisma 7 起不再随安装自动 generate

@@ -15,6 +15,7 @@
     "dev:web": "pnpm --filter @app/web dev",
     "build": "pnpm -r build",
     "check:templates": "pnpm --filter @app/web check:templates",
+    "check:pptx": "pnpm --filter @app/web check:pptx",
     "check:docs": "node scripts/check-docs.mjs",
     "check:brand": "node scripts/check-brand.mjs",
     "typecheck": "pnpm -r typecheck",

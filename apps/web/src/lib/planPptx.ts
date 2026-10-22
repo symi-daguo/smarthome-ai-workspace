@@ -45,11 +45,8 @@ const FLOOR_BOX: [number, number] = [8.6, 6.15];
  * 那是页序的唯一来源，PPTX / 讲稿 / 分享页都从那里取，改一处即可三处同步。
  */
 import { FONT_PPTX } from '../theme/fonts';
+import { cardShadow, cardShadowSoft } from './planShadow';
 const FONT = FONT_PPTX;
-
-/** 卡片阴影（pptxgenjs shadow：blur/offset 单位 pt，opacity 0-1） */
-const SHADOW = { type: 'outer' as const, color: '1E160E', blur: 10, offset: 3, angle: 90, opacity: 0.16 };
-const SHADOW_SOFT = { type: 'outer' as const, color: '1E160E', blur: 6, offset: 2, angle: 90, opacity: 0.1 };
 
 /**
  * 取图片的 dataURL。
@@ -343,7 +340,7 @@ function claim(slide: PptxGenJS.Slide, p: PlanPage, t: Theme, x: number, y: numb
 }
 
 function pointCard(slide: PptxGenJS.Slide, b: string, n: number, x: number, y: number, w: number, h: number, t: Theme): void {
-  slide.addShape('roundRect', { x, y, w, h, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.07, shadow: SHADOW_SOFT });
+  slide.addShape('roundRect', { x, y, w, h, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.07, shadow: cardShadowSoft() });
   slide.addShape('ellipse', { x: x + 0.14, y: y + h / 2 - 0.13, w: 0.26, h: 0.26, fill: { color: hex(t.accent) }, shadow: { type: 'outer', color: hex(t.accent), blur: 4, offset: 1, angle: 90, opacity: 0.4 } });
   slide.addText(String(n).padStart(2, '0'), { x: x + 0.14, y: y + h / 2 - 0.13, w: 0.26, h: 0.26, fontSize: 8, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: 'Arial', margin: 0, wrap: false });
   const [head, ...rest] = b.split(/[：|｜]/);
@@ -355,7 +352,7 @@ function pointCard(slide: PptxGenJS.Slide, b: string, n: number, x: number, y: n
 
 function imagePanel(slide: PptxGenJS.Slide, data: string, x: number, y: number, w: number, h: number, t: Theme, label?: string): void {
   if (!data) return;
-  slide.addImage({ data, x, y, w, h, shadow: SHADOW });
+  slide.addImage({ data, x, y, w, h, shadow: cardShadow() });
   slide.addShape('rect', { x, y, w, h, fill: { type: 'none' }, line: { color: hex(t.accent), width: 0.75, transparency: 65 } });
   if (label) {
     slide.addShape('rect', { x, y: y + h - 0.42, w, h: 0.42, fill: { color: '0F0A05', transparency: 32 } });
@@ -370,7 +367,7 @@ function brighten(slide: PptxGenJS.Slide, x: number, y: number, w: number, h: nu
 
 function quoteBar(slide: PptxGenJS.Slide, p: PlanPage, t: Theme, x: number, y: number, w: number): void {
   if (!p.quote) return;
-  slide.addShape('roundRect', { x, y, w, h: 0.44, fill: { color: hex(t.surface) }, line: { type: 'none' }, rectRadius: 0.06, shadow: SHADOW_SOFT });
+  slide.addShape('roundRect', { x, y, w, h: 0.44, fill: { color: hex(t.surface) }, line: { type: 'none' }, rectRadius: 0.06, shadow: cardShadowSoft() });
   slide.addShape('rect', { x, y, w: 0.06, h: 0.44, fill: { color: hex(t.accent) } });
   slide.addText(`“${p.quote}”`, { x: x + 0.2, y, w: w - 0.3, h: 0.44, fontSize: 10.5, italic: true, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0, wrap: false });
 }
@@ -394,7 +391,7 @@ function coverSlide(slide: PptxGenJS.Slide, p: PlanPage, plan: PlanForExport, t:
   slide.addShape('rect', { x: 0, y: 0, w: W * 0.6, h: H, fill: { color: hex(t.bg) } });
   slide.addShape('rect', { x: W * 0.58, y: 0, w: 0.06, h: H, fill: { color: hex(t.accent) } });
   // 品牌行
-  slide.addShape('roundRect', { x: 0.7, y: 0.62, w: 0.4, h: 0.4, fill: { color: hex(t.accent) }, rectRadius: 0.08, shadow: SHADOW_SOFT });
+  slide.addShape('roundRect', { x: 0.7, y: 0.62, w: 0.4, h: 0.4, fill: { color: hex(t.accent) }, rectRadius: 0.08, shadow: cardShadowSoft() });
   slide.addText('智', { x: 0.7, y: 0.62, w: 0.4, h: 0.4, fontSize: 15, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: FONT, margin: 0 });
   slide.addText(plan.store || '全屋智能方案', { x: 1.22, y: 0.62, w: 5, h: 0.4, fontSize: 11, bold: true, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0, charSpacing: 2 });
   // 主张
@@ -407,7 +404,7 @@ function coverSlide(slide: PptxGenJS.Slide, p: PlanPage, plan: PlanForExport, t:
   // 价值卡（竖排玻璃条）
   p.bullets.slice(0, 3).forEach((b, ci) => {
     const y = 4.6 + ci * 0.72;
-    slide.addShape('roundRect', { x: 0.7, y, w: 6.3, h: 0.6, fill: { color: hex(t.surface), transparency: 8 }, line: { color: hex(t.accent), width: 0.5, transparency: 60 }, rectRadius: 0.08, shadow: SHADOW_SOFT });
+    slide.addShape('roundRect', { x: 0.7, y, w: 6.3, h: 0.6, fill: { color: hex(t.surface), transparency: 8 }, line: { color: hex(t.accent), width: 0.5, transparency: 60 }, rectRadius: 0.08, shadow: cardShadowSoft() });
     slide.addShape('ellipse', { x: 0.88, y: y + 0.26, w: 0.09, h: 0.09, fill: { color: hex(t.accent) } });
     const [head, ...rest] = b.split(/[：|｜]/);
     slide.addText(
@@ -430,7 +427,7 @@ function brandSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
   cards.forEach((b, ci) => {
     const x = MX + (ci % 2) * (cw + 0.24);
     const y = 3.55 + Math.floor(ci / 2) * 1.4;
-    slide.addShape('roundRect', { x, y, w: cw, h: 1.28, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.08, shadow: SHADOW });
+    slide.addShape('roundRect', { x, y, w: cw, h: 1.28, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.08, shadow: cardShadow() });
     const [head, ...rest] = b.split(/[：|｜]/);
     slide.addText(head, { x: x + 0.16, y: y + 0.12, w: cw - 0.32, h: 0.32, fontSize: 12, bold: true, color: hex(t.accent), fontFace: FONT, margin: 0, wrap: false });
     slide.addText(rest.join(' '), { x: x + 0.16, y: y + 0.48, w: cw - 0.32, h: 0.68, fontSize: 9, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.25, valign: 'top', margin: 0 });
@@ -446,7 +443,7 @@ function layoutSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanF
   const panelH = H - 1.0;
   if (floorplan) {
     // 户型点位图：白底竖框 + 按原比例 contain 居中放置（横图裁进竖框会丢信息）
-    slide.addShape('roundRect', { x: MX, y: panelY, w: imgW, h: panelH, fill: { color: 'FFFFFF' }, line: { color: lighten(t.accent, 0.7), width: 0.75 }, rectRadius: 0.12, shadow: SHADOW });
+    slide.addShape('roundRect', { x: MX, y: panelY, w: imgW, h: panelH, fill: { color: 'FFFFFF' }, line: { color: lighten(t.accent, 0.7), width: 0.75 }, rectRadius: 0.12, shadow: cardShadow() });
     let dw = imgW - 0.3;
     let dh = dw / floorplan.ratio;
     if (dh > panelH - 0.7) {
@@ -507,7 +504,7 @@ function ecosystemSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: Pl
   const cw = (colW - 0.2 * (cards.length - 1)) / Math.max(cards.length, 1);
   cards.forEach((b, ci) => {
     const x = MX + ci * (cw + 0.2);
-    slide.addShape('roundRect', { x, y: 3.85, w: cw, h: 1.85, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.08, shadow: SHADOW });
+    slide.addShape('roundRect', { x, y: 3.85, w: cw, h: 1.85, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.08, shadow: cardShadow() });
     slide.addShape('rect', { x, y: 3.85, w: cw, h: 0.07, fill: { color: hex(t.accent) } });
     const [head, ...rest] = b.split(/[：|｜]/);
     slide.addText(head, { x: x + 0.12, y: 4.02, w: cw - 0.24, h: 0.55, fontSize: 11, bold: true, color: hex(t.text), fontFace: FONT, valign: 'middle', margin: 0, lineSpacingMultiple: 1.1 });
@@ -523,7 +520,7 @@ function sceneSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
   if (img) brighten(slide, 0, 0, imgW, H, 62);
   slide.addShape('rect', { x: 0, y: 0, w: imgW, h: H, fill: { color: '0F0A05', transparency: 45 } });
   // 场景徽章 + 主张（图下区）
-  slide.addShape('roundRect', { x: 0.5, y: H - 2.6, w: 1.5, h: 0.34, fill: { color: hex(t.accent) }, rectRadius: 0.17, shadow: SHADOW_SOFT });
+  slide.addShape('roundRect', { x: 0.5, y: H - 2.6, w: 1.5, h: 0.34, fill: { color: hex(t.accent) }, rectRadius: 0.17, shadow: cardShadowSoft() });
   slide.addText(PAGE_TYPE_LABEL[p.type], { x: 0.5, y: H - 2.6, w: 1.5, h: 0.34, fontSize: 8.5, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: FONT, margin: 0, wrap: false });
   slide.addText(p.heading, { x: 0.5, y: H - 2.1, w: imgW - 0.8, h: 1.4, fontSize: 16, bold: true, color: 'FFFFFF', fontFace: FONT, valign: 'top', margin: 0, lineSpacingMultiple: 1.25 });
   const x = imgW + 0.45;
@@ -691,7 +688,7 @@ function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanF
   // 右：阴影面板 + 原生可编辑条形图
   const x = MX + leftW + 0.4;
   const w = W - MX - x;
-  slide.addShape('roundRect', { x, y: 0.5, w, h: 5.9, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: SHADOW });
+  slide.addShape('roundRect', { x, y: 0.5, w, h: 5.9, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: cardShadow() });
   slide.addText(
     [
       { text: '分项预算区间（元）', options: { fontSize: 12, bold: true, color: hex(t.text) } },
@@ -741,7 +738,7 @@ function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
   // 右上合计卡：整页的锚点数字
   const cardX = MX + 8.62;
   const cardW = fullW - 8.62;
-  slide.addShape('roundRect', { x: cardX, y: 0.95, w: cardW, h: 1.58, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: SHADOW });
+  slide.addShape('roundRect', { x: cardX, y: 0.95, w: cardW, h: 1.58, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: cardShadow() });
   slide.addText('整包合计（含安装调试）', { x: cardX + 0.22, y: 1.06, w: cardW - 0.44, h: 0.3, fontSize: 9.5, bold: true, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
   slide.addText(sum ? yuan(sum.grandTotal) : '—', { x: cardX + 0.22, y: 1.33, w: cardW - 0.44, h: 0.62, fontSize: 27, bold: true, color: hex(t.accent), fontFace: FONT, valign: 'middle', margin: 0 });
   // 拆项：设备价 + 安装调试费（费率来自租户设置，默认 20%）
@@ -866,7 +863,7 @@ function deliverySlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: Pla
     slide.addShape('line', { x: MX + cw / 2, y: y + 0.35, w: colW - cw, h: 0, line: { color: hex(t.accent), width: 1.2, transparency: 55 } });
     stages.forEach((s, si) => {
       const x = MX + si * (cw + gap);
-      slide.addShape('roundRect', { x, y, w: cw, h: ch, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.08, shadow: SHADOW });
+      slide.addShape('roundRect', { x, y, w: cw, h: ch, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.08, shadow: cardShadow() });
       slide.addShape('ellipse', { x: x + cw / 2 - 0.21, y: y + 0.14, w: 0.42, h: 0.42, fill: { color: hex(t.accent) }, line: { color: 'FFFFFF', width: 1.5 }, shadow: { type: 'outer', color: hex(t.accent), blur: 5, offset: 1, angle: 90, opacity: 0.45 } });
       slide.addText(String(si + 1).padStart(2, '0'), { x: x + cw / 2 - 0.21, y: y + 0.14, w: 0.42, h: 0.42, fontSize: 10, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', fontFace: 'Arial', margin: 0, wrap: false });
       slide.addText(s.name, { x: x + 0.08, y: y + 0.66, w: cw - 0.16, h: 0.34, fontSize: 11, bold: true, color: hex(t.text), align: 'center', fontFace: FONT, margin: 0, wrap: false });

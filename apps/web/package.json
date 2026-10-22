@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "check:templates": "node scripts/check-delivery-templates.mjs"
+    "check:templates": "node scripts/check-delivery-templates.mjs",
+    "check:pptx": "node scripts/check-pptx-shadow.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "6.3.4",
