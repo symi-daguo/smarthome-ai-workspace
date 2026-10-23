@@ -60,12 +60,27 @@ function pgEnv() {
   };
 }
 
+/**
+ * 所有外部命令的统一入口。
+ *
+ * 为什么必须有超时：子进程不退出，execFileSync 就一直等。
+ * Windows CI 上这一步能挂满 60 分钟整 —— job 超时被取消，
+ * 日志也没归档下来，等于白等一轮还拿不到任何线索。
+ * 有了超时，挂住会变成一条明确的失败，而不是沉默。
+ */
+const RUN_TIMEOUT_MS = 5 * 60 * 1000;
+
 function tryRun(cmd, args, opts = {}) {
+  // 打印正在跑哪条命令：卡住时，日志最后一行就是卡点。
+  const name = cmd.split(/[\\/]/).pop();
+  console.log(`  · 执行 ${name}`);
   try {
-    const out = execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+    const out = execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: RUN_TIMEOUT_MS, ...opts });
     return { ok: true, out };
   } catch (e) {
-    return { ok: false, out: `${e.stdout ?? ''}${e.stderr ?? ''}${e.message}` };
+    const timedOut = e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    const extra = timedOut ? `\n[超时] ${name} 超过 ${RUN_TIMEOUT_MS / 1000} 秒仍未退出` : '';
+    return { ok: false, out: `${e.stdout ?? ''}${e.stderr ?? ''}${e.message}${extra}` };
   }
 }
 
@@ -88,7 +103,18 @@ process.on('SIGINT', () => {
 });
 
 try {
-  // ---- 0. 运行时目录必须存在 ----
+  // ---- 0. 自检：超时机制本身有效 ----
+  // 这一步曾让 Windows CI 挂满 60 分钟整 —— 子进程不退出，execFileSync 就一直等。
+  // 超时要是形同虚设，后面每一步还是会无声地挂住，所以先花 2 秒验一次它。
+  console.log('· 自检：超时能终止不退出的子进程');
+  {
+    const t0 = Date.now();
+    const r = tryRun(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { timeout: 2000 });
+    const spent = Date.now() - t0;
+    check('超时机制有效（不退出的子进程会被终止）', !r.ok && spent < 30_000, `spent=${spent}ms ok=${r.ok}`);
+  }
+
+  // ---- 1. 运行时目录必须存在 ----
   if (!existsSync(join(API_DIR, 'dist/src/main.js'))) {
     throw new Error('runtime/api 缺少编译产物，请先执行 node scripts/prepare-runtime.mjs');
   }

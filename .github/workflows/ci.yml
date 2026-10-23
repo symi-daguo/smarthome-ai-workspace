@@ -199,9 +199,16 @@ jobs:
         run: pnpm --filter @app/desktop verify:runtime
 
       - name: 构建 Windows 安装包
+        # if: always() —— 运行时自证失败时也要把包装出来。
+        # 原因：自证失败本身要让 job 变红（门禁语义不变，不能被当成通过），
+        # 但产物仍要留着，好让人当场比对「装不上」到底卡在哪。
+        # 没产物就只剩一条红叉，连问题长什么样都看不见。
+        if: always()
         run: pnpm --filter @app/desktop exec electron-builder --win
 
       - name: 校准产物名
+        # 同上：自证失败时也要跑，否则连产物名对不对都无从查起。
+        if: always()
         # 产物名必须纯 ASCII：GitHub 会剥掉资产名里的中文，
         # 传上去再被改名就找不到对应文件了。
         shell: pwsh
@@ -214,6 +221,7 @@ jobs:
           }
 
       - name: 上传安装包
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: desktop-windows
