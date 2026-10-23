@@ -122,6 +122,50 @@ pnpm audit --registry=https://registry.npmjs.org
 
 必须检查许可证（MIT / Apache-2.0 / BSD 优先；GPL / AGPL 禁止）与已知漏洞。
 
+## 清理测试数据（smoke 跑完必做）
+
+`pnpm smoke` 每跑一次都会造一批多租户测试数据（租户、成员、产品、日志…）。
+**发版前必须清干净**，否则交付出去的库是脏的。
+
+**铁律：TRUNCATE 只能用于「纯日志 / 任务 / 凭据」表。**
+
+带租户业务数据的表（`Product` / `MediaAsset` / `CategoryDef` / `PlanProject`…）
+**必须**用带 `tenantId` 条件的 `DELETE`：
+
+```sql
+-- 对：只删非 platform 租户的行，platform 的正式数据留着
+DELETE FROM "MediaAsset"
+ WHERE "tenantId" IS NOT NULL
+   AND "tenantId" <> (SELECT id FROM "Tenant" WHERE slug='platform');
+
+-- 错：TRUNCATE 不看 tenantId，整表清空
+TRUNCATE "MediaAsset" ...;
+```
+
+**踩过的坑**：把 `MediaAsset` 误放进 TRUNCATE 列表 ——
+它里面有 platform 租户的**正式素材**（示例方案的底图与渲染图），
+一清空方案就残缺（`floorplanAssetId` 与 `renderAssetIds` 指向的素材全没了）。
+事后从 `pg_dump` 备份恢复：
+
+```bash
+docker exec -i aisaas-db-1 pg_restore -U smarthome -d smarthome \
+  --data-only --table=MediaAsset < /tmp/aisaas-backup-2.dump
+```
+
+**`--table` 的名字不要带引号**：写 `--table='"MediaAsset"'` 会**匹配不到、静默恢复 0 行、
+还不报错** —— 差点误判成「备份里没数据」。
+
+另外两个坑：
+
+- **删除顺序**：`Role` 被 `Membership` 外键引用、`User` 被 `Membership` 引用，
+  必须**先删 `Membership`** 再删别的
+- **条件别写反**：`"tenantId" IS DISTINCT FROM platform` 会把 `tenantId IS NULL` 的
+  **系统预置角色**（11 个）与公共产品一起误删，要写成
+  `"tenantId" IS NOT NULL AND "tenantId" <> platform`
+
+**清完必须核对计数**（对照干净基线）：租户 1 / 用户 1 / 成员关系 1 / 角色 11 /
+产品 139（其中导入产品 115）/ 素材 36 / 方案 1 / 审计 0 / 预置分类 39 / 权限 26。
+
 ## 结构
 
 - apps/api：NestJS 12，ESM，相对导入必须带 `.js` 后缀
