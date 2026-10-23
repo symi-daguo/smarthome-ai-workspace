@@ -8,13 +8,36 @@
  *
  * 顺序即侧栏里的显示顺序（按分组）。
  */
+/**
+ * 分组名 —— 侧栏渲染与设置页清单共用同一份。
+ *
+ * 为什么要抽成常量：分组名原来在 MainLayout.tsx（渲染侧栏）与本文件（设置页清单）
+ * 各写一份，改一处忘一处就漂移 —— 本轮就踩过：改了设置页那一侧，
+ * 侧栏还是老名字，两个界面显示不一致。
+ */
+export const SIDEBAR_GROUP_LABELS = {
+  ai: 'AI 超能力',
+  design: '设计交付',
+  toolbox: '工具与内容',
+  system: '系统管理',
+} as const;
+
+export type SidebarGroup = (typeof SIDEBAR_GROUP_LABELS)[keyof typeof SIDEBAR_GROUP_LABELS];
+
 export interface SidebarEntry {
   /** 稳定标识，与路由路径一致 */
   key: string;
   label: string;
   /** 一句话说明这个入口是干什么的，帮你决定要不要留 */
   desc: string;
-  group: 'AI 超能力' | '设计交付' | '智能百宝箱' | '系统管理';
+  /**
+   * 分组名。
+   *
+   * 分组名不能和组内任何一个入口同名 —— 侧栏会把分组标题渲染成一行灰色小字，
+   * 紧跟着又渲染同名的那一行，看起来就是「同一个入口出现了两次」。
+   * （分组标题是「智能百宝箱」、组内第一个入口也叫「智能百宝箱」时就是这样。）
+   */
+  group: SidebarGroup;
 }
 
 /**
@@ -34,15 +57,15 @@ export const SIDEBAR_ENTRIES: SidebarEntry[] = [
   { key: '/video', label: 'AI 生视频', desc: '演示短视频生成', group: 'AI 超能力' },
   { key: '/plan', label: '智能方案', desc: '方案文案、点位与 PPT 交付', group: 'AI 超能力' },
   { key: '/floorplan', label: '平面图与点位', desc: '户型图布点与点位反复修改', group: '设计交付' },
-  { key: '/treasure', label: '智能百宝箱', desc: '各类小工具集合', group: '智能百宝箱' },
-  { key: '/knowledge', label: '我的知识库', desc: '品牌与项目素材沉淀', group: '智能百宝箱' },
-  { key: '/works', label: '我的作品', desc: '生成过的图片与视频', group: '智能百宝箱' },
-  { key: '/benchmark', label: '对标情报', desc: '同行公开资料整理', group: '智能百宝箱' },
-  { key: '/content', label: '内容提取', desc: '从文档与链接提取要点', group: '智能百宝箱' },
+  { key: '/treasure', label: '智能百宝箱', desc: '各类小工具集合', group: '工具与内容' },
+  { key: '/knowledge', label: '我的知识库', desc: '品牌与项目素材沉淀', group: '工具与内容' },
+  { key: '/works', label: '我的作品', desc: '生成过的图片与视频', group: '工具与内容' },
+  { key: '/benchmark', label: '对标情报', desc: '同行公开资料整理', group: '工具与内容' },
+  { key: '/content', label: '内容提取', desc: '从文档与链接提取要点', group: '工具与内容' },
   { key: '/team', label: '团队与接入', desc: '成员、角色与 API 接入', group: '系统管理' },
   { key: '/tokens', label: '个人中心', desc: '资料、设置、备份与存储治理', group: '系统管理' },
   { key: '/model-config', label: '模型配置', desc: '接入自有模型服务（需管理权限）', group: '系统管理' },
 ];
 
 /** 分组的显示顺序 */
-export const SIDEBAR_GROUPS: SidebarEntry['group'][] = ['AI 超能力', '设计交付', '智能百宝箱', '系统管理'];
+export const SIDEBAR_GROUPS: SidebarGroup[] = Object.values(SIDEBAR_GROUP_LABELS);

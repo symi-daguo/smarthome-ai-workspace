@@ -58,6 +58,7 @@ import { useAuth } from '../store/AuthContext';
 import { useChatStore, type WorkbenchConversation } from '../store/ChatStore';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
 import { getHiddenSidebarKeys, subscribeSidebarVisibility } from '../lib/sidebarVisibility';
+import { SIDEBAR_GROUP_LABELS } from '../data/sidebarEntries';
 
 const { Text } = Typography;
 const { useToken } = theme;
@@ -258,7 +259,7 @@ export function MainLayout(): ReactNode {
     const creation: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-ai',
-      label: 'AI 超能力',
+      label: SIDEBAR_GROUP_LABELS.ai,
       children: [
         { key: '/', icon: <HomeOutlined />, label: '工作台' },
         { key: '/agents', icon: <RobotOutlined />, label: 'AI 智能体' },
@@ -277,7 +278,7 @@ export function MainLayout(): ReactNode {
     const design: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-design',
-      label: '设计交付',
+      label: SIDEBAR_GROUP_LABELS.design,
       children: [
         { key: '/floorplan', icon: <BorderOutlined />, label: '平面图与点位' },
       ].filter((i) => visible(i.key)),
@@ -285,7 +286,7 @@ export function MainLayout(): ReactNode {
     const toolbox: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-box',
-      label: '智能百宝箱',
+      label: SIDEBAR_GROUP_LABELS.toolbox,
       children: [
         { key: '/treasure', icon: <ToolOutlined />, label: '智能百宝箱' },
         { key: '/knowledge', icon: <BookOutlined />, label: '我的知识库' },
@@ -303,7 +304,7 @@ export function MainLayout(): ReactNode {
     const system: NonNullable<MenuProps['items']>[number] = {
       type: 'group',
       key: 'g-system',
-      label: '系统管理',
+      label: SIDEBAR_GROUP_LABELS.system,
       children: systemChildren,
     };
     // 分组内一个入口都不显示时，整个分组也不显示（否则会留一个空标题）
