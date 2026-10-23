@@ -16,7 +16,7 @@ import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { findFreePort, dataPaths, ensureDirs, loadConfig, saveConfig, type DesktopConfig } from './config';
 import { startPostgres, type PostgresHandle } from './pg';
-import { runMigrations, runSeed } from './migrate';
+import { adminExists, runMigrations, runSeed } from './migrate';
 import { startApi, type ApiHandle } from './api';
 import { startServer } from './server';
 
@@ -130,7 +130,20 @@ async function bootstrap(): Promise<void> {
     workDir: paths.root,
     log,
   });
-  if (!cfg.migrated) {
+  // 判据落在**数据**上：库里没有管理员才需要跑种子。
+  // 之前看的是配置里的 `migrated` 标记 —— 标记与库的实际状态可能对不上
+  // （pgdata 被重建、种子中途失败、异常退出），对不上时种子会被永远跳过，
+  // 用户装完打开应用，库里一个用户都没有，根本登不进去。
+  let hasAdmin = false;
+  try {
+    hasAdmin = await adminExists({ apiDir: rt.api, databaseUrl, phone: DEFAULT_ADMIN_PHONE });
+  } catch (e) {
+    // 查不到就按「没有」处理：宁可重跑一次幂等种子，也不能漏掉管理员。
+    log(`检查管理员失败（按不存在处理，将重跑种子）：${(e as Error).message}`);
+  }
+  if (hasAdmin) {
+    log('管理员已存在，跳过种子（幂等）');
+  } else {
     await runSeed({
       apiDir: rt.api,
       seedCli: rt.seedCli,
@@ -139,10 +152,8 @@ async function bootstrap(): Promise<void> {
       adminPassword: DEFAULT_ADMIN_PASSWORD,
       log,
     });
-    saveConfig({ ...loadConfig(), dbPort, apiPort, migrated: true });
-  } else {
-    log('种子已存在，跳过（幂等）');
   }
+  saveConfig({ ...loadConfig(), dbPort, apiPort, migrated: true });
 
   // 3) API
   api = await startApi({

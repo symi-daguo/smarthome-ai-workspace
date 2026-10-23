@@ -21,7 +21,6 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync 
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { loadPg } from './config';
-
 const execFileAsync = promisify(execFile);
 
 /**
@@ -150,6 +149,33 @@ export async function runMigrations(opts: MigrateOptions): Promise<void> {
     throw new Error(`数据库迁移失败：\n${second.output.slice(-2000)}`);
   }
   opts.log('数据库迁移完成');
+}
+
+/**
+ * 库里到底有没有管理员。
+ *
+ * 为什么不能只看配置里的 `migrated` 标记：
+ * **标记与数据库的实际状态可能对不上** —— pgdata 被重建、种子中途失败、
+ * 异常退出把库搞空，这几种情况下标记都还写着「已完成」。
+ * 一旦对不上，种子会被**永远跳过**：用户装完打开应用，库里一个用户都没有，
+ * 根本登不进去（实测踩到过：`migrated: true` 而 `"User"` 表为空）。
+ *
+ * 判据必须落在**数据**上，不能落在标记上。
+ */
+export async function adminExists(opts: {
+  apiDir: string;
+  databaseUrl: string;
+  phone: string;
+}): Promise<boolean> {
+  const pg = loadPg(opts.apiDir);
+  const client = new pg.Client({ connectionString: opts.databaseUrl });
+  await client.connect();
+  try {
+    const r = await client.query('SELECT 1 FROM "User" WHERE phone = $1 LIMIT 1', [opts.phone]);
+    return (r.rowCount ?? 0) > 0;
+  } finally {
+    await client.end();
+  }
 }
 
 /** 跑种子（编译产物 dist/src/seed/cli.js，与容器端同一份逻辑） */
