@@ -191,7 +191,7 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
 最容易出的错是「装的时候没事、真跑起来少个文件」。它只用自己的 runtime/，
 不借用工作区的任何东西。
 
-### 十四条实测踩过的坑
+### 二十二条实测踩过的坑
 
 1. **Electron 里 `process.execPath` 是 Electron 可执行文件，不是 node。**
    用它跑 Node 脚本必须带 `ELECTRON_RUN_AS_NODE=1`，否则 Electron 会把脚本当成应用去打开
@@ -358,6 +358,17 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     不会永久卡死；实测第二次启动就恢复到 1 秒。
     **遇到时的做法**：先重试一次（大概率秒过），别急着改代码；
     真要定位就把 `prisma()` 的 stdout/stderr 落盘，别只看 `execFileAsync` 的返回。
+22. **「已公证过」这类判据要落在内容上，不能只看「同名 + 记录存在」。**
+    公证脚本原先判断「同名的 dmg 有条 Accepted 记录 + 本地文件存在」→ 复用，不重打。
+    本轮踩中：09:34 那条 Accepted 的 dmg 是用**当时的 app** 打的；
+    后来 10:01 重打 mac 产物（`electron-builder dist:mac`）把那个 dmg **整个覆盖**了 ——
+    新 dmg 里的 app 还没装订。而三个条件全中，于是脚本把没票的 dmg 当成已公证的那一份。
+    后果很隐蔽：dmg 本身会被 staple 上票（验 dmg 过得去），
+    但**从 dmg 拖出来的 app 自己没有电子签章**，Gatekeeper 照样拦。
+    现在多加一条判据：本地 dmg 必须**已经带着电子签章**（`stapler validate` 通过）——
+    只有被 staple 过的那一份，才可能与 Apple 侧已公证的内容是同一份字节。
+    **同源教训**：见第 20 条 —— 判据要落在数据（字节、库里查得到的东西）上，
+    不能落在「名字对得上 + 文件在」这种间接证据上。
 
 ### CI（GitHub Actions）
 
