@@ -216,8 +216,22 @@ PostgreSQL，这步不过就不发跑不起来的包。Windows 产物名改 ASCI
   三端产出的合成图尺寸一致（静态检查覆盖 6 个调用点，不允许再写死数字）
 - 界面文案通读：角色卡片与侧栏逐项看过，Markdown 星号残留 0 处、
   侧栏分组标题与入口同名 0 处（17 个入口全在，四个分组标题正确）
+- **mac 安装包公证与验签**：app 与 dmg 均已提交 Apple 公证并 Accepted，
+  `stapler validate <dmg>` 通过、`spctl -a -t exec` 返回
+  `accepted / Notarized Developer ID`、`codesign --verify --deep --strict` 通过；
+  **dmg 里拖出来的 app 自带票**（`Notarization Ticket=stapled`），
+  分发 zip 里的 app 与装订后的 app 字节一致（CodeResources sha256 相同）
+- **Windows 安装包内容核对**（不只看文件名）：从产物里解出 `app.asar` 与前端产物，
+  确认含种子判据修复（查库无管理员才播种）、角色说明去星号、侧栏分组改名、
+  改手机号入口与图标 80% 占比 —— 旧包缺这些修复，本版已替换
 - 门禁：`typecheck` / `build` / `smoke`（**557/557**）/ `check:docs` /
   `check:brand` 全绿；`check:templates` 64/64、`check:pptx` 6/6
+
+### 已知限制
+
+- **mac 分发 zip 的中文名**：zip 里没有置 UTF-8 文件名标志，macOS 自带解压工具能正常还原，
+  但部分 Windows 解压工具（如 WinRAR）可能把应用目录名显示成乱码。
+  主分发物 dmg 不受影响（文件名全是 ASCII），Windows 用户用 exe 安装包
 
 详见 [迭代记录-1.0.4.md](./迭代记录-1.0.4.md)。
 
