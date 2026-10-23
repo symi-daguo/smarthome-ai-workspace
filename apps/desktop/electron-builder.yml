@@ -61,7 +61,7 @@ mac:
   category: public.app-category.productivity
   icon: build/icon.icns
   darkModeSupport: true
-  # 产物名用 ASCII：默认会拼中文 productName（智能家居AI工作台-1.0.4-arm64.dmg），
+  # 产物名用 ASCII：默认会拼中文 productName（智能家居AI工作台-1.0.5-arm64.dmg），
   # GitHub 上传资产时会剥掉非 ASCII 字符，下载到的文件名与实际文件对不上。
   #
   # artifactName 只能放在**平台根级**或 **target 专属段**（顶层 dmg / nsis）。
@@ -129,7 +129,7 @@ win:
   # 用 512×512 PNG：electron-builder 会自行转成多尺寸 .ico
   icon: build/icon.png
   # 产物名必须纯 ASCII：electron-builder 的 nsis 默认用 productName 拼出
-  # 「智能家居AI工作台 Setup 1.0.3.exe」—— GitHub 会剥掉资产名里的中文，
+  # 「智能家居AI工作台 Setup 1.0.5.exe」—— GitHub 会剥掉资产名里的中文，
   # CI 里再传一次还会被改名。这里显式给一份 ASCII 名。
   artifactName: smarthome-ai-workspace-${version}-${arch}.${ext}
   target:
