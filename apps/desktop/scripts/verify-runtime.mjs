@@ -18,7 +18,7 @@
  * 用法：node scripts/verify-runtime.mjs
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +39,28 @@ const work = mkdtempSync(join(tmpdir(), 'symi-verify-'));
 const pgdata = join(work, 'pgdata');
 const pgLog = join(work, 'postgres.log');
 const apiLog = join(work, 'api.log');
+
+/**
+ * pg_ctl 的输出**不能接管道**，必须写文件。
+ *
+ * Windows 上 postgres 会继承 pg_ctl 的 stdout 句柄（`-l` 在 Windows 上不生效，
+ * 日志不会落到文件），于是：pg_ctl 打印完 "waiting for server to start.... done"
+ * 自己退出了，管道却因为 postgres 还持着句柄而不 EOF ——
+ * spawnSync 一直等到超时（实测 300 秒，前几轮 CI 全挂在这一步，一挂就是 60 分钟）。
+ * 写文件就没有管道，spawnSync 只等 pg_ctl 本身退出。
+ *
+ * 文件放在临时目录**外面**：postgres 会一直持有它，放在 work 里会导致 work 删不掉。
+ */
+const pgCtlLog = join(tmpdir(), `symi-pgctl-${process.pid}.log`);
+const pgCtlFd = openSync(pgCtlLog, 'a');
+
+function pgCtlOutput() {
+  try {
+    return readFileSync(pgCtlLog, 'utf8');
+  } catch {
+    return '';
+  }
+}
 
 let failures = 0;
 function check(name, ok, detail = '') {
@@ -94,8 +116,17 @@ async function shutdown() {
       /* ignore */
     }
   }
-  tryRun(join(PG_DIR, 'bin/pg_ctl'), ['-D', pgdata, '-m', 'fast', '-w', 'stop'], { env: pgEnv() });
-  rmSync(work, { recursive: true, force: true });
+  tryRun(join(PG_DIR, 'bin/pg_ctl'), ['-D', pgdata, '-m', 'fast', '-w', 'stop'], {
+    env: pgEnv(),
+    stdio: ['ignore', pgCtlFd, pgCtlFd],
+  });
+  // 清理失败不该让验收失败：残留一个临时目录不影响结论，
+  // 但抛出去会把「验收通过」变成「验收中断」。
+  try {
+    rmSync(work, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+  } catch (e) {
+    console.log(`  · 临时目录清理失败（不影响验收结论）：${e.message}`);
+  }
 }
 
 process.on('SIGINT', () => {
@@ -128,9 +159,15 @@ try {
   if (!init.ok) throw new Error(`initdb 失败：${init.out}`);
   const start = tryRun(join(PG_DIR, 'bin/pg_ctl'), ['-D', pgdata, '-l', pgLog, '-o', `-p ${PG_PORT} -h 127.0.0.1`, '-w', 'start'], {
     env: pgEnv(),
+    // 输出写文件而不是管道 —— 原因见 pgCtlLog 上方的说明（Windows 上管道不 EOF）。
+    stdio: ['ignore', pgCtlFd, pgCtlFd],
   });
-  if (!start.ok) throw new Error(`pg_ctl start 失败：${start.out}`);
+  if (!start.ok) throw new Error(`pg_ctl start 失败：${start.out}\n${pgCtlOutput()}`);
   check('内嵌 PostgreSQL 启动成功', true);
+  // 输出必须落在文件里而不是管道：Windows 上 postgres 继承 pg_ctl 的 stdout 句柄，
+  // 管道不 EOF 会让 spawnSync 一直等到超时（实测 300 秒，一挂就是 60 分钟）。
+  // 这条断言盯住「输出确实进了文件」，谁把 stdio 改回 pipe，脚本立刻变红。
+  check('pg_ctl 输出写入文件（不占用管道）', pgCtlOutput().length > 0, pgCtlOutput().slice(-200));
 
   // 建库（用 runtime/api 自带的 pg 客户端，顺带验证 pg 包在裁剪后仍可用）
   const createdb = tryRun(

@@ -211,9 +211,15 @@ jobs:
         if: always()
         # 产物名必须纯 ASCII：GitHub 会剥掉资产名里的中文，
         # 传上去再被改名就找不到对应文件了。
+        #
+        # 只看 release **顶层**的文件，不要 -Recurse：
+        # 递归会把 win-unpacked\ 里的 app 主程序（智能家居AI工作台.exe）
+        # 和内嵌 PostgreSQL 的 initdb.exe / postgres.exe 一起扫进来，
+        # 那些是程序内部文件、名字带中文是正常的 —— 一扫就误判失败。
+        # 真正的安装包由 win.artifactName 命名，天然是 ASCII。
         shell: pwsh
         run: |
-          $files = Get-ChildItem apps/desktop/release -Recurse -Include *.exe, *.zip
+          $files = Get-ChildItem apps/desktop/release -File | Where-Object { $_.Extension -in '.exe', '.zip' }
           if (-not $files) { throw "没有产出 Windows 安装包" }
           foreach ($f in $files) {
             if ($f.Name -match '[^\x00-\x7F]') { throw "产物名含非 ASCII 字符：$($f.Name)" }
