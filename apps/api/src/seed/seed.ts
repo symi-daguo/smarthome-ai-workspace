@@ -81,7 +81,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     name: '财务',
     scope: 'TENANT',
     permissions: ['tenant:billing:view', 'quote:read', 'knowledge:read', 'cs:write'],
-    description: '看额度账本与报价金额、记录收款；**只能看不能改价**，不参与接待与出图',
+    description: '看额度账本与报价金额、记录收款；只能看不能改价，不参与接待与出图',
   },
   {
     key: 'purchase',
