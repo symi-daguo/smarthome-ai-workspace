@@ -235,23 +235,48 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     `code object is not signed at all`，因为签名在 dmg **里面的 app** 上；
     dmg 上挂的是公证票据，用 `xcrun stapler validate <dmg>` 验证。
     验 app 才用 `spctl -a -vvv -t exec <app>`（应看到 `accepted / Notarized Developer ID`）。
+18. **CI 里的命令必须自己带超时。** Windows job 的「运行时自证」曾连续三轮
+    挂满 60 分钟整被 job 超时取消，**且日志拿不到** —— job 被取消时 GitHub
+    不归档那一步的输出（`gh run view --log` 与 `/actions/jobs/<id>/logs` 都是 0 字节），
+    等于白等一轮且毫无线索。
+    根因是 `execFileSync` 不设 `timeout`：子进程不退出，父进程就一直等。
+    修法在**统一入口** `tryRun` 里一次解决（所有外部命令都走它）：
+    - 传 `timeout`（Node 原生支持，超时会杀掉子进程并抛错）
+    - 执行前打印是哪条命令 → 卡住时日志最后一行就是卡点
+    - 再加一条**自检**：故意跑一个 60 秒不退出的子进程，确认 2 秒内被终止。
+      超时要是形同虚设，后面每一步还是会无声地挂住，所以这个机制本身要能被验
+    **教训**：CI 上出问题时，「让脚本自己说话」比「猜」快得多 ——
+    一条时间戳/命令名的打印，往往比三轮盲猜省时间。
 
 ### CI（GitHub Actions）
 
-`.github/workflows/ci.yml`，两个 job：
+`.github/workflows/ci.yml`，三个 job：
 
 - **gate**：`pgvector/pgvector:pg18` 服务 → `prisma generate` → `migrate deploy` → 灌种子
   → typecheck → build → smoke
 - **desktop**：`ELECTRON_SKIP_BINARY_DOWNLOAD=1` → 只跑 tsc
+- **desktop-windows**：`windows-latest` → 装依赖 → 探活引擎源 → generate → 编译
+  → 裁运行时 → **运行时自证** → `electron-builder --win` → 产物名 ASCII 校验 → 上传
 
-两条要注意的：
+三条要注意的：
 
+- Windows job 的第 11–13 步（打包 / 校名 / 上传）都带 `if: always()`：
+  **运行时自证失败时也要把包装出来**。job 该红还是红（门禁语义不变），
+  但产物留着才能当场比对「装不上」到底卡在哪 —— 没产物就只剩一条红叉，
+  连问题长什么样都看不见。
 - 数据库服务**必须用 pgvector 镜像**：历史迁移里有 `CREATE EXTENSION vector`，
   普通 postgres 镜像会失败。
 - CI 环境变量用 `NODE_ENV=production`：用 development 跑等于把
   「生产环境拒绝弱默认密钥/密码」这道红线绕过去了，等于没测。
 
 本地验证 CI 时要用**完全相同的命令序列**实跑一遍，不要「照着配置想当然」。
+
+但**「完全相同的命令」不等于「完全相同的平台」** —— mac 上跑通的 `verify:runtime`
+不代表 Windows 上也跑得通（内嵌 PG 的启动方式、路径分隔符、Prisma CLI 的行为
+都随平台变）。跨平台的 CI 步骤只能在真平台上验，
+本地跑通只能证明「脚本逻辑没坏」，证不了「那个平台上不会挂」。
+所以这类脚本必须**自带超时与步骤日志**：让失败在几分钟内变成一句可读的话，
+而不是让整个 job 沉默地耗满预算、最后连日志都拿不到。
 
 ### 体积统计口径
 
