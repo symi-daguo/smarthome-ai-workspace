@@ -178,6 +178,21 @@ docker exec -i aisaas-db-1 pg_restore -U smarthome -d smarthome \
   **系统预置角色**（11 个）与公共产品一起误删，要写成
   `"tenantId" IS NOT NULL AND "tenantId" <> platform`
 
+**清空「日志/任务/凭据」类表时用 `DELETE` 不用 `TRUNCATE`**：
+`TRUNCATE` 的外键检查**不看行内容**，只要有表引用就整个拒绝
+（`cannot truncate a table referenced in a foreign key constraint`）。
+要过就得加 `CASCADE` —— 而 `CASCADE` 会连带清掉别的表，风险不可控。
+`DELETE` 没有这个限制，顺序也不敏感（先删引用方即可）。
+
+**有些表没有自己的 `tenantId`**（`OrderNote` / `ExtractedField` /
+`ExtractionDeficiency` / `ReviewConfirmation`），它们通过父表关联租户，
+要写成 `WHERE "父表外键" IN (SELECT id FROM "父表" WHERE "tenantId" <> platform)`。
+
+**在 platform 租户里做的验证数据，租户条件清不掉**：走查时用管理员账号
+（属于 platform 租户）造的产品/方案/布局/素材会留在库里，
+只能按 id 精确删。清完要**逐项核对计数**，
+光看总数会漏（「产品 142 vs 基线 139」就是平台租户里残留 3 条自建产品）。
+
 **清完必须核对计数**（对照干净基线）：租户 1 / 用户 1 / 成员关系 1 / 角色 11 /
 产品 139（其中导入产品 115）/ 素材 36 / 方案 1 / 审计 0 / 预置分类 39 / 权限 26。
 
