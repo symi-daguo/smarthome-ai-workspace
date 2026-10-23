@@ -205,6 +205,7 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'GET /api/feedback': ['cs:read'],
   'POST /api/feedback': ['cs:read'],
   'GET /api/feedback/{id}': ['cs:read'],
+  'GET /api/feedback/{id}/issue-link': ['cs:read'], // 生成「提交到作者仓库」的预填 issue 链接
   'PATCH /api/feedback/{id}': ['platform:billing:manage'], // 管理员回复，不是普通提反馈
   'DELETE /api/feedback/{id}': ['cs:read'],
 
@@ -545,6 +546,7 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'GET', p: '/api/feedback', d: '反馈列表', risk: R },
       { m: 'POST', p: '/api/feedback', d: '提交反馈', risk: W },
       { m: 'GET', p: '/api/feedback/{id}', d: '反馈详情', risk: R },
+      { m: 'GET', p: '/api/feedback/{id}/issue-link', d: '生成提交到作者仓库的 issue 链接', risk: R },
       { m: 'PATCH', p: '/api/feedback/{id}', d: '回复/改反馈', risk: W },
       { m: 'DELETE', p: '/api/feedback/{id}', d: '删反馈', risk: D },
     ],

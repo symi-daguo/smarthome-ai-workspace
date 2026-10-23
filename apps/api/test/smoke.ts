@@ -12,10 +12,11 @@ import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
-import { buildUserContent, extractJsonValue } from '../src/llm/llm.service.js';
+import { buildUserContent, extractJsonValue, classifyJsonFailure } from '../src/llm/llm.service.js';
 import { markCharged, isChargedError } from '../src/media/media.service.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
+import { buildSkeleton } from '../src/plans/plans.service.js';
 import { PERMISSIONS, WRITE_IMPLIES_READ } from '../src/rbac/permissions.js';
 import { rankLocalChunks } from '../src/knowledge/knowledge-doc.service.js';
 import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../src/common/upstream-timeout.js';
@@ -74,6 +75,41 @@ function extractGuards(root: string): Map<string, string[]> {
   return out;
 }
 const PERMISSION_SET = new Set<string>(PERMISSIONS);
+
+/**
+ * 从控制器源码静态抽取真实路由（格式 `METHOD /api/path`）。
+ *
+ * 不依赖运行时反射：Nest 不提供稳定的路由遍历接口，smoke 里也能跑。
+ * 抽成函数是为了让「技能包端点核对」与「清单漂移检查」共用同一份事实来源 ——
+ * 两处各写一套扫描逻辑，早晚会长歪。
+ */
+function extractRealRoutes(root: string): Set<string> {
+  const out = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!e.name.endsWith('.controller.ts')) continue;
+      const src = readFileSync(p, 'utf8');
+      const base = (src.match(/@Controller\(\s*'([^']*)'/)?.[1] ?? '').replace(/^\//, '').replace(/\/$/, '');
+      for (const mm of src.matchAll(/@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)'|\s*\))/g)) {
+        const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
+        out.add(`${mm[1].toUpperCase()} /api/${base}${sub ? `/${sub}` : ''}`.replace(/\/\/+/g, '/'));
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * 路由路径归一化：把三种参数写法统一成 `{id}`，才能拿文档里的路径去比对代码里的路由。
+ * Nest 路由写 `:id`、OpenAPI 惯例写 `{id}`、技能包示例里还见过 `<id>`。
+ */
+function normRoute(r: string): string {
+  return r.replace(/:([A-Za-z]+)/g, '{$1}').replace(/<([A-Za-z]+)>/g, '{$1}');
+}
+
 
 const checks: [string, boolean][] = [];
 
@@ -1187,6 +1223,48 @@ async function main(): Promise<void> {
       '技能包不含第三方 AI 工具品牌名',
       !/Claude|Trae|Cursor|Copilot|ChatGPT|豆包|WorkBuddy/.test(pack),
     );
+
+    // 技能包里写的每个端点都必须真实存在。
+    // 写错一个路径，客户的智能体就会照着错地址调 —— 报的是「接口不存在」，
+    // 客户根本看不出是技能包写错了，只能怀疑自己部署坏了。
+    // （实测踩过：技能包写 /api/knowledge/search，真实是 /api/knowledge/docs/search，
+    //   前者是外部引擎的路由，后者才是本地资料库的。）
+    // 真实路由是 `METHOD /api/path`，比对时只取路径部分；结尾斜杠不算差异。
+    const realPaths = new Set(
+      [...extractRealRoutes(join(process.cwd(), 'src'))].map((r) => normRoute(r.split(' ')[1])),
+    );
+    const packRoutes = [...new Set(
+      [...pack.matchAll(/\/api\/[A-Za-z0-9_\-/.{}<>]*/g)].map((m) => m[0].replace(/\/+$/, '')),
+    )];
+    const ghostRoutes = packRoutes.filter((r) => !realPaths.has(normRoute(r)));
+    check(
+      `技能包里的端点全部真实存在（写了 ${packRoutes.length} 个，对不上 ${ghostRoutes.length} 个）`,
+      ghostRoutes.length === 0,
+      ghostRoutes.join(','),
+    );
+
+    // 客户第一件事就是「模型密钥放哪」——两层都得写清楚：
+    // 管理员在线配置（前端页，存库即时生效）与部署写 .env（改完重启）。
+    check(
+      '技能包写清密钥两层配置（前端模型配置页 + .env 变量名）',
+      pack.includes('模型配置') && pack.includes('LLM_API_KEY') && pack.includes('MiniMax_API_KEY')
+        && pack.includes('IMAGE_API_KEY') && pack.includes('VIDEO_API_KEY'),
+    );
+    // 「客户的问题怎么让作者看到」也必须在技能包里 —— 反馈工单是租户内的，作者看不到
+    check(
+      '技能包写清问题提交到作者仓库的路径',
+      pack.includes('/api/feedback') && pack.includes('issue-link'),
+    );
+    // 接单解析只解析不建档：漏了「必须再调建档」这一句，客户的接单会凭空消失
+    check(
+      '技能包写清接单解析后必须再建档',
+      pack.includes('/api/orders/intake') && pack.includes('必须再') && pack.includes('/api/orders'),
+    );
+    // 页数与输出预算：15 页曾因输出被截断而失败，技能包要提前告知页数区间与超限错误码
+    check(
+      '技能包写清方案页数区间与输出截断错误码',
+      pack.includes('pageCount') && pack.includes('PLAN_OUTPUT_TRUNCATED'),
+    );
   }
 
   // ---------- JWT 刷新：旧 token 换新 token ----------
@@ -1499,6 +1577,45 @@ async function main(): Promise<void> {
     'JSON 被截断时返回 null（不硬解析出半截）',
     extractJsonValue('{"a":1') === null,
   );
+  // 截断与「压根没输出 JSON」必须分开报：前者要加输出预算，后者要改提示词。
+  // 分不开的话，运维只能靠猜「是模型格式差还是长度不够」——
+  // 实测 15 页方案失败就是这个原因（思考 token 也占 max_tokens 预算）。
+  check(
+    '取不到 JSON 时能区分「输出被截断」与「压根没输出 JSON」',
+    classifyJsonFailure('{"a":1') === 'LLM_JSON_TRUNCATED'
+      && classifyJsonFailure('[{"a":1') === 'LLM_JSON_TRUNCATED'
+      && classifyJsonFailure('以上是分析结果') === 'LLM_JSON_PARSE_FAILED'
+      && classifyJsonFailure('') === 'LLM_JSON_PARSE_FAILED',
+  );
+
+  // 纯函数：方案页序骨架。
+  // 页序错了客户拿到手的交付物里就是乱的，接口返回里完全看不出来。
+  // 实测踩过：补充场景页固定插在同一个位置，导致 15 页方案的场景编号是倒序的
+  // （「补充场景 6、5、4、3、2、1」）。
+  {
+    const s9 = buildSkeleton(9);
+    const s15 = buildSkeleton(15);
+    const s16 = buildSkeleton(16);
+    check('9 页骨架就是标准 9 页', s9.length === 9);
+    check('页数按目标页数扩到 15 / 16', s15.length === 15 && s16.length === 16);
+    // 补充场景页的编号必须与页序一致（升序）
+    const extras = s15.map((s) => s.name).filter((n) => n.includes('补充场景'));
+    const nums = extras.map((n) => Number(/补充场景 (\d+)/.exec(n)?.[1] ?? 0));
+    check(
+      '补充场景页的编号与页序一致（不倒序）',
+      nums.length === 6 && nums.every((n, i) => n === i + 1),
+      `实际编号：${nums.join(',')}`,
+    );
+    // 补充场景页必须在预算页与交付页之前
+    const idxBudget = s15.findIndex((s) => s.type === 'budget');
+    const idxDelivery = s15.findIndex((s) => s.type === 'delivery');
+    const idxScenes = s15.map((s, i) => (s.type === 'scene' ? i : -1)).filter((i) => i >= 0);
+    check(
+      '场景页都排在预算页与交付页之前',
+      idxScenes.length === 8 && Math.max(...idxScenes) < idxBudget && idxBudget < idxDelivery,
+      `场景页 ${idxScenes.join(',')} 预算 ${idxBudget} 交付 ${idxDelivery}`,
+    );
+  }
 
   // 纯函数：热度分口径与分析结果收敛（这两段决定了榜单顺序与数据是否会被模型污染）
   check(
@@ -2083,6 +2200,38 @@ async function main(): Promise<void> {
 
   const fbDetail = await request<{ id: string; reply: string }>(base, `/api/feedback/${fbId}`, authA);
   check('反馈详情可查（未回复时 reply 为空串）', fbDetail.status === 200 && fbDetail.body.id === fbId && fbDetail.body.reply === '');
+
+  // 「提交到作者仓库」：反馈工单是**租户内**的，作者看不到 —— 这一步把它变成作者仓库里的 issue。
+  // 断言要点：链接指向正确仓库、标题与正文已预填、详情被截断（issue 在公开仓库，不能把客户地址预算全带出去）。
+  const fbIssue = await request<{ url: string; repo: string; title: string; body: string }>(
+    base, `/api/feedback/${fbId}/issue-link`, authA,
+  );
+  check(
+    '反馈可生成作者仓库的预填 issue 链接（标题与摘要已填好）',
+    fbIssue.status === 200 && fbIssue.body.url.startsWith(`https://github.com/${fbIssue.body.repo}/issues/new`)
+      && fbIssue.body.title.includes('导出按钮点不动') && fbIssue.body.body.includes('Chrome 上点击无反应'),
+  );
+  check(
+    '预填链接带上了 title 与 body 参数（打开即可编辑提交）',
+    fbIssue.body.url.includes('title=') && fbIssue.body.url.includes('body='),
+  );
+  // 权限与同类读端点一致（cs:read）：内置角色人人有 cs:write，写蕴含读，
+  // 所以同租户成员都该能取 —— 这里断言「能取」而不是「被拒」。
+  const fbIssueDesigner = await request<{ url: string }>(base, `/api/feedback/${fbId}/issue-link`, authDesigner);
+  check('同租户成员可取 issue 链接（cs:read，与反馈列表同级）', fbIssueDesigner.status === 200);
+  // 越权路径在跨租户：别家租户拿不到这条工单，也拿不到它的 issue 链接。
+  //
+  // 必须**显式带 X-Tenant-Id 指向 B 自己的租户**：
+  // B 此时已被拉进 A 租户（membershipB），而 memberships 没有 orderBy，
+  // 「缺省取首个成员关系」拿到哪个租户由数据库返回顺序决定 —— 不确定。
+  // 显式指定才是可判定的跨租户场景。
+  const tenantB = (await request<{ memberships: { tenantId: string }[] }>(base, '/api/auth/me', authB))
+    .body.memberships.find((m) => m.tenantId !== tenantA)?.tenantId;
+  const fbIssueOtherTenant = await request(base, `/api/feedback/${fbId}/issue-link`, {
+    ...authB,
+    headers: { ...authB.headers, 'X-Tenant-Id': tenantB as string },
+  });
+  check('跨租户取 issue 链接被拒（拿不到别家工单）', fbIssueOtherTenant.status === 404 || fbIssueOtherTenant.status === 403);
 
   const fb404 = await request(base, '/api/feedback/00000000-0000-0000-0000-000000000000', authA);
   check('反馈工单不存在返回 404', fb404.status === 404);
@@ -3646,22 +3795,7 @@ async function main(): Promise<void> {
     // 从源码反推真实路由（不依赖运行时反射，smoke 里也能跑）
     const srcRoot = join(process.cwd(), 'src');
     const real = new Set<string>();
-    const walk = (dir: string): void => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, e.name);
-        if (e.isDirectory()) walk(p);
-        else if (e.name.endsWith('.controller.ts')) {
-          const src = readFileSync(p, 'utf8');
-          const cm = src.match(/@Controller\(\s*'([^']*)'/);
-          const base = (cm?.[1] ?? '').replace(/^\//, '').replace(/\/$/, '');
-          for (const mm of src.matchAll(/@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)'|\s*\))/g)) {
-            const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
-            real.add(`${mm[1].toUpperCase()} /api/${base}${sub ? `/${sub}` : ''}`.replace(/\/\/+/g, '/'));
-          }
-        }
-      }
-    };
-    walk(srcRoot);
+    for (const r of extractRealRoutes(srcRoot)) real.add(r);
     // Nest 路由写 :id，清单面向 Agent 写 {id}（OpenAPI 惯例），比对前统一
     const norm = (r: string): string => r.replace(/:([A-Za-z]+)/g, '{$1}');
     const declared = new Set([...manifestRouteKeys()].map(norm));

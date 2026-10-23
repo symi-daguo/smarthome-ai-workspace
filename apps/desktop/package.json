@@ -15,6 +15,7 @@
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
     "verify:runtime": "node scripts/verify-runtime.mjs",
     "verify:signature": "node scripts/verify-signature.mjs",
+    "verify:zip": "node scripts/verify-zip-utf8.mjs",
     "dist": "pnpm build && pnpm prepare:runtime && electron-builder",
     "dist:mac": "pnpm build && pnpm prepare:runtime && electron-builder --mac",
     "notarize": "node scripts/notarize.mjs"

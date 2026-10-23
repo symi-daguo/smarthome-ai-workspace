@@ -138,6 +138,27 @@ function assertRenderAssetsReady(
 const FLOORPLAN_MAX_FILES = 3;
 /** 单文件与总体积上限：户型图不压缩，超限直接拒而不是偷偷降质 */
 const FLOORPLAN_FILE_MAX = 20 * 1024 * 1024;
+/**
+ * 按目标页数拼出页序骨架。
+ *
+ * 抽成纯函数是为了能被直接断言：页序错了（场景页编号倒序），
+ * 客户拿到手的交付物里就是乱的，而这种缺陷在接口返回里完全看不出来。
+ */
+export function buildSkeleton(pageCount: number): { type: PlanPage['type']; name: string }[] {
+  const skeleton = [...BASE_SKELETON];
+  const extra = Math.max(0, pageCount - BASE_SKELETON.length);
+  for (let i = 0; i < extra; i += 1) {
+    // 插入位置随 i 递增（7、8、9…），不能固定在 7。
+    //
+    // 固定位置的后果：每次都插到同一处，后一次把前一次挤到后面 ——
+    // 15 页方案的场景页就变成「补充场景 6、5、4、3、2、1」倒序，
+    // 客户拿到手的交付物里场景编号是反的。
+    // 递增插入才能保证编号与页序一致。
+    skeleton.splice(7 + i, 0, { type: 'scene', name: `核心场景拆解｜补充场景 ${i + 1}` });
+  }
+  return skeleton;
+}
+
 const FLOORPLAN_TOTAL_MAX = 35 * 1024 * 1024;
 
 /** 体积校验：返回可读报错，通过则返回 null */
@@ -540,11 +561,7 @@ export class PlansService {
 
   private async generatePages(input: PlanInput, styleName: string): Promise<PlanPage[]> {
     // 9 页骨架 + 超出部分追加 scene 页（按重点空间拆分）
-    const skeleton = [...BASE_SKELETON];
-    const extra = Math.max(0, input.pageCount - BASE_SKELETON.length);
-    for (let i = 0; i < extra; i += 1) {
-      skeleton.splice(7, 0, { type: 'scene', name: `核心场景拆解｜补充场景 ${i + 1}` });
-    }
+    const skeleton = buildSkeleton(input.pageCount);
 
     const outline = skeleton.map((s, i) => `${i + 1}. ${s.name}（type=${s.type}）`).join('\n');
     const prompt = [
@@ -589,7 +606,16 @@ export class PlansService {
         const raw = await this.llm.chatJson<unknown>({
           systemPrompt: '你是资深全屋智能方案设计师，为智能家居服务商撰写交付客户的方案文案。',
           prompt,
-          maxTokens: 12000,
+          // 输出预算按页数给，不能写死。
+          //
+          // 写死 12000 时 15 页会失败：实测 M3.1-Flash 的**思考 token 也占 max_tokens 预算**
+          // （思考占 55%），而 15 页正文+讲稿本身就要约 9000 token ——
+          // 两者相加撞上限 → JSON 说到一半被截 → 括号不配平 → 解析失败。
+          // 9 页刚好够（实测通过），15 页必败，客户看到的却是「模型返回格式异常」。
+          //
+          // 每页给 1800 token 是按「正文 60-140 字 + 讲稿 80-150 字 + 要点 + JSON 结构开销」
+          // 估的，思考再占一半也有余量。下限保持 12000 —— 9 页以下用不着更少。
+          maxTokens: Math.max(12000, skeleton.length * 1800),
           rag: { tenantId: input.tenantId, userId: input.userId, scene: 'plan', query: `${input.title} ${input.customer} ${input.needs} ${input.keySpaces}` },
         });
         pages = this.sanitizePages(raw, skeleton);
@@ -616,6 +642,14 @@ export class PlansService {
         | undefined;
       if (resp?.code) {
         throw new ServiceUnavailableException({ code: resp.code, message: resp.message ?? '方案生成失败，请重试' });
+      }
+      // 输出被截断：不是「描述写得不好」，而是**输出预算不够**。
+      // 客户该做的是减少页数或换一个输出上限更高的模型 —— 说「调整描述」等于把人引向死路。
+      if ((lastError as Error | null)?.message?.includes('LLM_JSON_TRUNCATED')) {
+        throw new ServiceUnavailableException({
+          code: 'PLAN_OUTPUT_TRUNCATED',
+          message: `方案共 ${skeleton.length} 页，模型输出被长度限制截断了。请减少页数，或在「系统管理 → 模型配置」里换一个输出上限更高的对话模型。`,
+        });
       }
       throw new ServiceUnavailableException({
         code: 'PLAN_GEN_FAILED',

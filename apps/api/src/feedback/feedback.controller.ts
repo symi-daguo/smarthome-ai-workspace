@@ -47,6 +47,18 @@ export class FeedbackController {
     return this.feedback.detail(user.activeTenantId as string, id);
   }
 
+  /**
+   * 「提交到作者仓库」的 issue 预填链接。
+   *
+   * 单独一个端点而不是在详情里多带一个字段：链接是**一次性拼装**的
+   * （含时间戳与截断后的摘要），放详情里会每次都白算一遍。
+   */
+  @RequirePermissions('cs:read')
+  @Get(':id/issue-link')
+  issueLink(@CurrentUser() user: AuthProfile & { activeTenantId?: string }, @Param('id') id: string) {
+    return this.feedback.issueLink(user.activeTenantId as string, id);
+  }
+
   @RequirePermissions('cs:read')
   @Delete(':id')
   remove(

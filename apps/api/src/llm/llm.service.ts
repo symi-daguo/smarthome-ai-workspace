@@ -127,6 +127,23 @@ export function extractJsonValue(text: string): string | null {
   return null;
 }
 
+/**
+ * 判断「取不到 JSON」属于哪一种失败 —— 两者的处置完全不同：
+ *  - `LLM_JSON_TRUNCATED`：模型**说到一半被截断**（输出撞 max_tokens 上限）。
+ *    处置是加输出预算或减少内容，不是改提示词。
+ *  - `LLM_JSON_PARSE_FAILED`：模型压根没按要求输出 JSON（连 '{' / '[' 都没有）。
+ *    处置是改提示词或换模型。
+ *
+ * 判据：`extractJsonValue` 返回 null 有两种成因 —— 括号没配平（截断），
+ * 或连开始符都没找到（没输出 JSON）。这里用「有没有开始符」把两者分开。
+ *
+ * 抽成纯函数是为了能直接断言：以前两种失败都报同一个码，
+ * 运维只能靠猜「是模型格式差还是长度不够」。
+ */
+export function classifyJsonFailure(stripped: string): 'LLM_JSON_TRUNCATED' | 'LLM_JSON_PARSE_FAILED' {
+  return /[{[]/.test(stripped) ? 'LLM_JSON_TRUNCATED' : 'LLM_JSON_PARSE_FAILED';
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -181,7 +198,15 @@ export class LlmService {
     rag?: RagContext;
     /** 附件 dataURL；图片走多模态、文本类内联、二进制明确告知未附带 */
     attachments?: { name: string; dataUrl: string }[];
-  }): Promise<{ reply: string; model: string; latencyMs: number }> {
+  }): Promise<{
+    reply: string;
+    model: string;
+    latencyMs: number;
+    /** 上游结束原因：stop / length（被 max_tokens 截断）/ content_filter 等 */
+    finishReason: string;
+    /** token 用量：reasoningTokens 是思考占掉的额度，也算 max_tokens 预算 */
+    usage: { completionTokens: number; reasoningTokens: number };
+  }> {
     const cfg = await this.modelConfig.chatConfig();
     const key = cfg.apiKey;
     if (!key) {
@@ -230,12 +255,21 @@ export class LlmService {
     }
 
     const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
       model?: string;
+      usage?: { completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
     };
     // 推理模型（MiniMax-M3.1-Flash、DeepSeek-R1 等）可能把思考过程包在  内一并返回，剥离后再交付
     const reply = (data.choices?.[0]?.message?.content ?? '').replace(/[\s\S]*?<\/think>\s*/g, '').trim();
-    return { reply, model: data.model ?? model, latencyMs };
+    // finish_reason 与 token 用量要带出来：**思考 token 也占 max_tokens 预算**
+    // （M3.1-Flash 实测思考占 55%），输出被截断时只有这两个数能说明真相，
+    // 否则排查只能靠猜「是模型格式差还是长度不够」。
+    const finishReason = data.choices?.[0]?.finish_reason ?? 'unknown';
+    const usage = {
+      completionTokens: data.usage?.completion_tokens ?? 0,
+      reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+    };
+    return { reply, model: data.model ?? model, latencyMs, finishReason, usage };
   }
 
   /** 是否可用（用于调用方在 key 缺失时降级到规则通道） */
@@ -266,13 +300,18 @@ export class LlmService {
       prompt: input.prompt,
     });
 
-    const jsonText = extractJsonValue(
-      reply
-        .trim()
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, ''),
-    );
-    if (!jsonText) throw new Error('LLM_JSON_PARSE_FAILED');
+    const stripped = reply
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '');
+    const jsonText = extractJsonValue(stripped);
+    if (!jsonText) {
+      // 两种「取不到 JSON」要分开报，否则运维与客户都只能看到一句「格式异常」：
+      //  - 有 '{' 或 '[' 却配不平 → **输出被 max_tokens 截断**（模型说到一半没了）
+      //  - 连开始符都没有 → 模型压根没按要求输出 JSON
+      // 前者要调「输出预算或页数」，后者要调「提示词或模型」，动作完全不同。
+      throw new Error(classifyJsonFailure(stripped));
+    }
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
     const result = {} as T;
     for (const [key, value] of Object.entries(parsed)) {
@@ -304,7 +343,7 @@ export class LlmService {
      */
     attachments?: { name: string; dataUrl: string }[];
   }): Promise<T> {
-    const { reply } = await this.chat({
+    const { reply, finishReason, usage } = await this.chat({
       model: input.model ?? DEFAULT_CHAT_MODEL,
       maxTokens: input.maxTokens ?? 8192,
       timeoutMs: input.timeoutMs,
@@ -313,13 +352,23 @@ export class LlmService {
       systemPrompt: `${input.systemPrompt}\n只返回一个 JSON 值（对象或数组），不要输出 markdown 代码块、解释或多余文字。`,
       prompt: input.prompt,
     });
-    const jsonText = extractJsonValue(
-      reply
-        .trim()
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, ''),
-    );
-    if (!jsonText) throw new Error('LLM_JSON_PARSE_FAILED');
+    const stripped = reply
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '');
+    const jsonText = extractJsonValue(stripped);
+    if (!jsonText) {
+      // 同 chatObject：截断与「压根没输出 JSON」分开报，两者要采取的动作不同。
+      const truncated = classifyJsonFailure(stripped) === 'LLM_JSON_TRUNCATED';
+      // 让脚本自己说话：finish_reason=length 或 content 长度接近预算，就是被截断了。
+      // 没有这几个数，排查只能靠猜「是模型格式差还是长度不够」。
+      this.logger.warn(
+        `LLM JSON 取不到（${truncated ? '截断' : '格式不符'}）`
+        + ` finish_reason=${finishReason} 输出=${usage.completionTokens}tok`
+        + `（其中思考 ${usage.reasoningTokens}tok）回复长度=${stripped.length}字`,
+      );
+      throw new Error(truncated ? 'LLM_JSON_TRUNCATED' : 'LLM_JSON_PARSE_FAILED');
+    }
     return JSON.parse(jsonText) as T;
   }
 }

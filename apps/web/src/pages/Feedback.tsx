@@ -82,6 +82,31 @@ export function Feedback(): ReactNode {
     }
   }, [message]);
 
+  /**
+   * 「提交到作者仓库」。
+   *
+   * 工单是**租户内**的：本租户管理员看得到，但作者看不到（每个部署是独立租户，
+   * 作者手里没有跨租户工单视图）。这一步把同一条内容预填成作者仓库里的 issue，
+   * 作者才能在仓库 Issues 里集中处理所有部署提上来的问题。
+   *
+   * 先同步开窗再取链接：await 之后再 window.open 会被浏览器的弹窗拦截器挡掉。
+   */
+  const openIssue = async (id: string): Promise<void> => {
+    const w = window.open('', '_blank');
+    try {
+      const r = await api<{ url: string; repo: string }>(`/api/feedback/${id}/issue-link`);
+      if (w) {
+        w.location.href = r.url;
+      } else {
+        window.open(r.url, '_blank', 'noopener');
+      }
+      message.info('已打开作者仓库的新建 issue 页面：标题与摘要已预填，提交前请删掉地址、预算等敏感信息（issue 在公开仓库里）');
+    } catch (e) {
+      w?.close();
+      message.error(e instanceof Error ? e.message : '生成提交链接失败');
+    }
+  };
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -137,7 +162,7 @@ export function Feedback(): ReactNode {
     <div style={pageContainerStyle}>
       <PageHeader
         title="问题反馈"
-        description="生成失败、卡住、不会用，或任何使用建议，都可以提交在这里，处理进度会同步更新"
+        description="生成失败、卡住、不会用，或任何使用建议，都可以提交在这里，处理进度会同步更新。这里是租户内的工单；要让作者本人看到并集中处理，点记录右侧的「提交到作者仓库」，会带着标题与摘要打开作者仓库的新建 issue 页面（issue 在公开仓库，提交前请删掉地址、预算等敏感信息）。"
         extra={<Button onClick={() => void load()} loading={loading}>刷新</Button>}
       />
 
@@ -248,6 +273,9 @@ export function Feedback(): ReactNode {
                         <Popconfirm title="删除这条反馈？" onConfirm={() => void remove(t.id)}>
                           <Button size="small" danger>删除</Button>
                         </Popconfirm>
+                        <Button size="small" onClick={() => void openIssue(t.id)}>
+                          提交到作者仓库
+                        </Button>
                       </Space>
                     </Space>
                   </Card>

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { AuthProfile } from '../auth/auth.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
@@ -172,16 +172,43 @@ export class ModelConfigController {
    */
   @RequirePermissions('platform:billing:manage')
   @Get('agent-skillpack')
-  async agentSkillPack(@CurrentUser() user: AuthProfile & { activeTenantId?: string }): Promise<{ text: string }> {
+  async agentSkillPack(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Headers('host') host?: string,
+    @Headers('x-forwarded-proto') forwardedProto?: string,
+  ): Promise<{ text: string }> {
     const [chat, image, video] = await Promise.all([
       this.modelConfig.chatConfig(),
       this.modelConfig.imageConfig(),
       this.modelConfig.videoConfig(),
     ]);
-    const origin = this.configOrigin();
+    const origin = this.configOrigin(host, forwardedProto);
     const text = `# 智能家居 AI 工作台 · Agent 接入技能包（Skill Pack）
 
 你可以通过 HTTP API 驱动本工作台的全部 AI 能力。以下协议对任意智能体（桌面助手、命令行工具、云端大模型平台、自建 Agent）通用。
+
+## 0. 动手前先确认三件事（不做这三条，后面全白跑）
+
+**① 地址**：下面所有示例里的 ${origin} 就是本工作台的当前地址，**照抄即可**。
+它是按「你这次访问用的地址」算出来的；客户换域名或端口后，重新取一次技能包即可。
+
+**② 模型密钥**：所有 AI 端点都要模型服务，没配密钥一律返回 503（LLM_KEY_MISSING）。
+密钥放哪里有两条路，二选一：
+
+- **管理员在线配置（推荐，客户自己就能做）**：打开工作台「系统管理 → 模型配置」页，
+  填 Base URL 与 API Key → 点「保存配置」。存进数据库，**保存即生效，不用重启**，
+  优先级高于 .env；页面上还有「测对话 / 测生图 / 测生视频」按钮可确认连通。
+- **部署时写 .env（改完要重启容器）**：部署目录下的 .env 里
+  \`LLM_BASE_URL\` / \`LLM_API_KEY\` / \`LLM_MODEL\`（对话，任意 OpenAI 兼容端点；
+  不填则回退 \`MiniMax_BASE_URL\` / \`MiniMax_API_KEY\`）、
+  \`IMAGE_PROVIDER\` / \`IMAGE_BASE_URL\` / \`IMAGE_API_KEY\` / \`IMAGE_MODEL\`（生图）、
+  \`VIDEO_BASE_URL\` / \`VIDEO_API_KEY\` / \`VIDEO_MODEL\`（生视频）。
+  仓库里的 .env.example 列了全部变量，也写了本地大模型（Ollama / LM Studio / vLLM）的填法。
+
+配完用 GET /api/admin/model-config 查状态：\`keyConfigured=true\` 才算配好。
+
+**③ 额度**：GET /api/tenants/current/tokens 查余额；AI 端点返回 402 就是额度不够。
+本项目免费开源，额度由部署者按自己的模型成本设置，不涉及充值。
 
 ## 1. 认证
 所有请求携带 JWT Bearer Token（在工作台「个人中心」登录后获取，或调用登录接口）：
@@ -203,8 +230,8 @@ Agent 读它就知道自己能做什么、哪些操作会删数据，不必硬�
 \`\`\`bash
 # 索引模式：体积极小（几百 token），列出分组与操作摘要
 curl -s "${origin}/api/agent/manifest?index=1" -H "Authorization: Bearer $TOKEN"
-# 单组详情：按需拉某一组的完整操作说明
-curl -s "${origin}/api/agent/manifest?group=products" -H "Authorization: Bearer $TOKEN"
+# 单组详情：按需拉某一组的完整操作说明（分组 id 见索引返回的 available 列表）
+curl -s "${origin}/api/agent/manifest?group=quote" -H "Authorization: Bearer $TOKEN"
 # 权限感知：只返回这把 Key 真的调得动的操作（换只读 Key 结果会明显变少）
 curl -s "${origin}/api/agent/manifest?effective=1" -H "Authorization: Bearer $TOKEN"
 \`\`\`
@@ -217,9 +244,10 @@ curl -s "${origin}/api/agent/manifest?effective=1" -H "Authorization: Bearer $TO
 | AI 生图 | POST /api/media/images | {prompt, size?} | size=1024x1024/1536x1024/1024x1536（生图：${image.provider}） |
 | 参考图反推提示词 | POST /api/media/images/reverse-prompt | {assetId} | 需多模态对话模型；读出参考图风格/色调/构图，输出可直接生图的中文描述，保证同风格出图 |
 | AI 生视频 | POST /api/media/videos | {prompt, duration?, resolution?, ratio?, firstFrameAssetId?} | 生视频：${video.provider}；先用反推/生图拿首帧再传 firstFrameAssetId 即图生视频 |
-| 智能方案 | POST /api/plans | {title, customer, ...资料字段} | 产出 9 页可编辑 PPT 方案 |
+| 智能方案 | POST /api/plans | {title, customer, ...资料字段, pageCount?} | 产出可编辑 PPT 方案。页数由 pageCount 定（9-16，默认 9）；**页数越多越吃模型输出预算**，超出模型上限会返回 PLAN_OUTPUT_TRUNCATED |
 | 方案列表 | GET /api/plans | - | 历史方案（侧栏「历史对话」同款数据源） |
-| 接单解析 | POST /api/orders/intake | {rawInput} | 客户原话→结构化建档+产品推荐 |
+| 接单解析 | POST /api/orders/intake | {rawInput} | 客户原话→结构化需求（**只解析，不建档**）。返回字段与建档请求体一一对应 |
+| 接单建档 | POST /api/orders | 上一步的返回值直接当请求体 | 解析完**必须再调这一步**，接单才会出现在「开始接单」列表里 |
 | 接单列表 | GET /api/orders | - | 接待线索与状态（了解客户→需求确认→方案匹配→报价→成单） |
 | 产品库 | GET /api/products | - | 公共库+我的库合并（含分类/品牌/产品图） |
 | 品类字典 | GET /api/categories | - | 39 个预置品类+租户自定义分类 |
@@ -252,9 +280,10 @@ curl ${origin}/api/admin/model-config/profiles -H "Authorization: Bearer $TOKEN"
 curl -X POST ${origin}/api/admin/model-config/profiles/<id>/activate -H "Authorization: Bearer $TOKEN"
 \`\`\`
 
-### 4.1 智能体自动布点（把产品放到户型平面图需要的位置）
+## 5. 智能体自动布点（把产品放到户型平面图需要的位置）
 
 坐标为相对户型图的归一化比例（左上角 0,0，右下角 1,1），跨分辨率稳定；productId 必须来自 GET /api/products。
+**mediaAssetId 必填**（先上传户型底图拿 id），漏了会返回 400 VALIDATION_FAILED。
 
 \`\`\`bash
 # 1) 先上传户型底图，拿 mediaAssetId
@@ -277,14 +306,14 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
   }'
 \`\`\`
 
-## 5. 规则与边界
+## 6. 规则与边界
 - 计费：所有 AI 端点按额度扣费（响应 402 = 额度不足）；校验失败不扣费
 - 权限：需 content:generate（生成类）/ knowledge:manage（知识库）等平台权限；越权返回 403
 - 数据隔离：所有读写自动限定在当前租户；公共库产品只读（可复制到我的库）
 - 审计：agent 触发的检索/批量处理均写入操作留痕（AuditLog）
 - 限流：全局 ${process.env.RATE_LIMIT_GLOBAL ?? 300} 次/分钟/IP，认证接口 ${process.env.RATE_LIMIT_AUTH ?? 10} 次/分钟
 
-## 6. 典型工作流（复制给智能体作为 system prompt 片段）
+## 7. 典型工作流（复制给智能体作为 system prompt 片段）
 「你是智能家居门店运营助手。用上面的 API 完成：1) 把客户资料 POST /api/orders/intake 建档；
 2) 用 GET /api/products 选品；3) 需要图时用 POST /api/media/images 生成；
 4) 做平面图设计时，先 POST /api/media/uploads 上传户型图，再 POST /api/layouts 把选好的
@@ -296,13 +325,46 @@ curl -X POST ${origin}/api/layouts -H "Authorization: Bearer $TOKEN" \\
 3) POST /api/benchmark/contents 提交（带 accountId 与 sourceUrl，同一链接重复提交只更新不重复入库）；
 4) GET /api/benchmark/contents?sort=hotScore 取当前最热的一批；
 5) POST /api/benchmark/analyze 让系统把内容映射到门店自家业务，产出风格画像、场景卖点与差距清单；
-6) 结论已自动进知识库，后续可用 POST /api/knowledge/search 检索。」`;
+6) 结论已自动进知识库，后续可用 POST /api/knowledge/docs/search 检索本地资料。
+
+## 8. 遇到问题怎么办（提交给作者仓库）
+
+**第一步：在本系统里留一条** —— 租户内的工单，本租户管理员能跟踪状态与回复：
+POST /api/feedback { "category": "bug|feature|other", "title": "一句话描述", "detail": "详细情况（可选，≤2000字）" }
+
+**第二步：提交到作者仓库** —— 作者在这里集中处理所有部署提上来的问题：
+GET /api/feedback/{id}/issue-link → { "url": "...", "repo": "...", "title": "...", "body": "..." }
+\`url\` 是 GitHub「新建 issue」的预填链接：标题与详情已经填好、仓库地址已经带上。
+把它交给客户点开提交，或你有浏览器能力就自己打开提交。
+
+**两步都要做**：第一步让本租户的管理员知道，第二步让作者知道。
+只做第一步的话，作者在仓库里看不到这个问题。`;
     return { text };
   }
 
-  /** 请求来源（compose 部署即 web 容器同源地址） */
-  private configOrigin(): string {
-    return process.env.PUBLIC_ORIGIN ?? 'http://localhost:5173';
+  /**
+   * 技能包里的示例地址（origin）。
+   *
+   * 优先级：显式配置 > **从当前请求推导** > 开发缺省值。
+   *
+   * 为什么必须能从请求推导：
+   *  - 客户从 `https://work.example.com` 访问，光靠 `PUBLIC_ORIGIN` 一旦没配，
+   *    技能包里的示例就是 `http://localhost:5173` —— 客户拿自己的智能体去调，
+   *    调的是**他自己机器上的 5173 端口**，必然连不上；
+   *  - 桌面端的 API 端口是**每次启动随机**的（60988/60989…），
+   *    `PUBLIC_ORIGIN` 根本填不出来，只能靠「这次请求打到了哪个 host」反推。
+   *
+   * 所以：**客户从哪个地址访问，智能体拿到的就是哪个地址**。
+   */
+  private configOrigin(host?: string, forwardedProto?: string): string {
+    const configured = process.env.PUBLIC_ORIGIN?.trim();
+    if (configured) return configured.replace(/\/+$/, '');
+    if (host) {
+      // 反向代理/ CDN 会把原始协议放在 x-forwarded-proto，可能是 "https,http" 这样的链，取第一个
+      const proto = (forwardedProto ?? '').split(',')[0].trim() || 'http';
+      return `${proto}://${host}`;
+    }
+    return 'http://localhost:5173';
   }
 
   /** 对话连通性测试：一条极短请求验证 Base URL 与 Key */

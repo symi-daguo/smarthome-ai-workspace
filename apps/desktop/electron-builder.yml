@@ -50,6 +50,13 @@ compression: normal
 # 必须在签名前跑：裁掉的文件本来就不需要签名，裁完再签，封印与内容才对得上。
 afterPack: scripts/after-pack.mjs
 
+# zip 产物生成后补 UTF-8 标志位。
+# app bundle 目录名是中文「智能家居AI工作台.app」，electron-builder 打 zip 时
+# 没在文件名含非 ASCII 时置 0x800 标志 → Windows 资源管理器按 CP437 解读 → 解压出乱码目录。
+# 改的是**头部标志位**，数据区一个字节不动（已公证 app 的票据按字节算，动数据就可能要重新公证）。
+# 用 artifactBuildCompleted 而不是 afterPack：afterPack 时 zip 还没生成。
+artifactBuildCompleted: scripts/fix-zip-utf8.mjs
+
 mac:
   category: public.app-category.productivity
   icon: build/icon.icns

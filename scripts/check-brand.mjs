@@ -48,7 +48,9 @@ const ALLOWED_DOMAINS = new Set([
   'github.com', 'www.w3.org', 'json.schemastore.org', 'www.prisma.io', 'itunes.apple.com',
   // 本机开发与示例
   'host.docker.internal', 'localhost',
-  'example.com', 'evil.example', 'ollama.com', 'xxx.runpod.ws',
+  // example.com 是 RFC 2606 保留的示例域名（连同其子域），
+  // 专门留给文档与示例用，不是真实商业平台 —— 可以进白名单。
+  'example.com', 'work.example.com', 'evil.example', 'ollama.com', 'xxx.runpod.ws',
   // 本地模型服务与官方文档
   'lmstudio.ai', 'docs.vllm.ai', 'www.apple.com',
 ]);
