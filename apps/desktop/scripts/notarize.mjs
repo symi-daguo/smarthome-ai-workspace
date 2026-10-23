@@ -353,14 +353,26 @@ async function submitAndWait(file, label) {
     log(`  ${fileName} 的历史记录（${already.id}）是上传中断留下的死记录 —— 重新上传`);
   }
 
-  // 第 1 次用**常规**端点，之后才退回加速端点。
-  // 依据（2026-10-22 发 1.0.3 时实测）：`--s3-acceleration` 连传两次都在 25 分钟后被判死
-  // （abortedUpload，Apple 侧探不到该记录），换 `--no-s3-acceleration` 一次过。
-  // 跨境链路不稳时加速端点反而更慢，所以把常规端点排在前面。
-  const variants = ['--no-s3-acceleration', '--s3-acceleration'];
+  // 端点顺序：**先加速端点、后常规端点**。
+  //
+  // 依据（2026-10-23 发 1.0.4 时实测，同一台机器、同一条代理链路）：
+  //   加速端点 + 代理：20MB / 3s   （≈6.6MB/s）
+  //   常规端点 + 代理：20MB / 100s 仍未传完（≈200KB/s，且会断流）
+  //   常规端点 + 直连：20MB / 7s   （≈2.8MB/s）
+  // 「常规端点 + 代理」这条组合会把 245MB 的上传拖成 30 分钟然后 abortedUpload 断流 ——
+  // 本轮第 1 次提交实测：传满 30 分钟（1839 秒）被判死。
+  // 换加速端点后同一份文件几秒就在 Apple 侧可见。
+  //
+  // 注意：2026-10-22 发 1.0.3 时结论是**相反**的（加速端点连传两次判死、常规端点一次过）。
+  // 跨境链路会变，所以每次都要**实测**再定顺序，不能照抄上一轮的结论 ——
+  // 照抄的代价是 30 分钟上传白费。
+  const variants = ['--s3-acceleration', '--no-s3-acceleration'];
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const flag = variants[attempt - 1];
+    // 取模而不是下标：第 3 次回到第 1 个 flag。
+    // 原来写 `variants[attempt - 1]` 时第 3 次拿到 undefined，
+    // undefined 进了 spawnSync 的参数数组会直接抛 TypeError —— 第 3 次尝试必崩。
+    const flag = variants[(attempt - 1) % variants.length];
     log(`提交 ${label} 公证：${fileName}（${flag}，第 ${attempt}/3 次）`);
     try {
       run('xcrun', notaryArgs([

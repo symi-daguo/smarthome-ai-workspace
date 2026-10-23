@@ -265,16 +265,32 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     本机 node_modules 早就装好、日常又只跑 `pnpm build`（不做 install 校验），
     不一致能藏很久 —— **只有 CI 或干净克隆才会暴露**。
     改完依赖记得跑一次 `pnpm install` 并复测 `--frozen-lockfile`（全量与 filter 两种）。
-15. **公证上传会断流，两个 S3 端点表现不一样。** 2026-10-22 发 1.0.3 时实测：
-    `--s3-acceleration` 连传两次都在 25 分钟后被判死（`abortedUpload`，
-    Apple 侧探不到该记录），换 `--no-s3-acceleration` 一次过。
-    脚本自带「死记录重传」容错，但**第一次就失败会白白多花 25 分钟**——
-    跨境链路不稳时优先手工用 `--no-s3-acceleration` 提交。
+15. **公证上传会断流，两个 S3 端点表现不一样 —— 而且顺序会随链路变化。**
+    2026-10-22 发 1.0.3 时实测：`--s3-acceleration` 连传两次都在 25 分钟后被判死
+    （`abortedUpload`，Apple 侧探不到该记录），换 `--no-s3-acceleration` 一次过。
+    **但 2026-10-23 发 1.0.4 时结论反过来了** —— 同一台机器、同一代理链路上实测：
+
+    | 组合 | 20MB 实测 |
+    |---|---|
+    | 加速端点 + 代理 | 3s（≈6.6MB/s） |
+    | 常规端点 + 直连 | 7s（≈2.8MB/s） |
+    | 常规端点 + 代理 | 100s 仍未传完（≈200KB/s，且断流） |
+
+    本轮第 1 次提交用的正是「常规端点 + 代理」，**传满 30 分钟（1839 秒）后被判死**；
+    第 2 次换加速端点，同一份文件几秒就在 Apple 侧可见。
+    所以脚本的端点顺序已改成**先加速、后常规**（`notarize.mjs` 的 `variants`）。
+    **教训：跨境链路会变，每次都要实测再定顺序，不能照抄上一轮的结论** ——
+    照抄的代价是 30 分钟上传白费。
+    测速方法：`curl -T 20MB -H "Expect:" <bucket>/probe.bin` ——
+    **必须去掉 `Expect:`**，否则 S3 在校验签名的瞬间就返回错误、body 根本没传，
+    测出来是「1 秒传完 20MB」的假数据。
 16. **公证脚本可幂等续跑，中断后重跑即可。** 它会跳过「app 已有 Accepted 提交
     且当前 app 已带有效签章」与「dmg 已有 Accepted 提交」的部分，只补做没做完的步骤
     （装订 dmg、生成分发用 zip）。所以**跑挂了直接重跑，不要从头再来**。
     但注意 `notarytool submit --wait` 超过 30 分钟会被外层超时砍掉，
     这时 dmg 可能已提交但没等结果 —— 查 `notarytool history` 确认状态再决定是否重跑。
+    读 history 的 JSON 时结构是 `{"history": [...], "message": ...}`，
+    **不是顶层数组** —— 当数组遍历会拿到空结果，白以为「没有提交记录」。
 17. **dmg 本身没有代码签名，这是正常的。** `codesign -dv <dmg>` 会报
     `code object is not signed at all`，因为签名在 dmg **里面的 app** 上；
     dmg 上挂的是公证票据，用 `xcrun stapler validate <dmg>` 验证。
