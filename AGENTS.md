@@ -36,6 +36,21 @@ pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs && pnpm check:bran
 白名单只放公开服务（模型厂商 API / 包镜像 / 官方文档），第三方商业平台域名一律不进。
 背景与完整证据见 [COMPLIANCE.md](./COMPLIANCE.md)。
 
+**前端另外两条**（改 PPTX 相关代码时必跑）：
+
+```bash
+pnpm check:templates        # 交付模板纯逻辑回归（零新增依赖，Node 24 原生类型剥离）
+pnpm check:pptx            # 阴影参数的 XML 层检查
+pnpm --filter @app/web check:pptx-render   # 前两页的**本机真实渲染**自证
+```
+
+`check:pptx-render` 用**生产代码**（`exportPlanPptx`）生成前两页，
+再用本机真实渲染器（LibreOffice → PDF → PNG）出图，
+检查渲染结果**不是空白页**（数与背景色不同的像素占比）。
+只查 XML 参数是不够的 —— **参数合法 ≠ PowerPoint / WPS 能正常打开并显示**：
+「形状整块不显示」的缺陷，XML 层面完全查不出来，渲染出来才看得见。
+渲染器缺失时脚本**明确跳过并返回非零退出码**，不假装通过。
+
 ## 改公开文档后的自查（四步，缺一不可）
 
 两道机器闸门只能挡住**格式与关键词**，挡不住下面这四类 —— 2026-10 的公开前审查
@@ -183,6 +198,7 @@ pnpm --filter @app/desktop build            # tsc -> dist/
 pnpm --filter @app/desktop prepare:runtime   # 产出 runtime/（部署 + 裁剪，约 2 分钟）
 pnpm --filter @app/desktop verify:runtime    # 运行时自证：起库→迁移→种子→登录
 pnpm --filter @app/desktop verify:signature  # 签名闸门：每个 Mach-O 的签名 + bundle 封印
+pnpm --filter @app/desktop verify:zip        # zip 闸门：非 ASCII 文件名的 UTF-8 标志
 pnpm --filter @app/desktop dist:mac          # 出 .app / .dmg / .zip（已签名）
 source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
 ```
@@ -191,7 +207,7 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
 最容易出的错是「装的时候没事、真跑起来少个文件」。它只用自己的 runtime/，
 不借用工作区的任何东西。
 
-### 二十二条实测踩过的坑
+### 二十四条实测踩过的坑
 
 1. **Electron 里 `process.execPath` 是 Electron 可执行文件，不是 node。**
    用它跑 Node 脚本必须带 `ELECTRON_RUN_AS_NODE=1`，否则 Electron 会把脚本当成应用去打开
@@ -369,6 +385,45 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     只有被 staple 过的那一份，才可能与 Apple 侧已公证的内容是同一份字节。
     **同源教训**：见第 20 条 —— 判据要落在数据（字节、库里查得到的东西）上，
     不能落在「名字对得上 + 文件在」这种间接证据上。
+23. **zip 的中文名要改「标志位」，不要重压。**
+    app bundle 目录名是中文（`智能家居AI工作台.app`），electron-builder 打 zip 时
+    **没在文件名含非 ASCII 时置 0x800 标志**（general purpose bit flag），
+    Windows 资源管理器按 CP437 解读 → 解压出乱码目录。
+    - 字节**本来就是标准 UTF-8**，缺的只是一个标志位 → 不用重压、不用改目录名
+    - 改目录名会让访达里显示英文名，是产品体验倒退，**不要改**
+    - 重压 603MB 会改掉产物**全部字节** → 已公证 app 的票据按字节算，
+      改了就可能要重新公证，代价与收益不成比例
+    - **只改 header 里的标志位，数据区一个字节不动** → 票据继续有效
+    - 落地：`scripts/fix-zip-utf8.mjs` 走 central directory
+      （那里记着每个条目的 local header 偏移），**local header 与 central 两处都改**
+      （读工具优先看 central，但有的解压器只读 local）
+    - **踩过的坑**：不能顺序扫 local header —— 42658 个条目里 36002 个置了 bit 3
+      （数据描述符），描述符长度在 zip64 下还会变，手工跳偏移必然错位
+      （报「local header 签名不对」）。走 central directory 的偏移记录才稳。
+    - 挂在 electron-builder 的 **`artifactBuildCompleted`** 钩子
+      （`afterPack` 时 zip 还没生成，只有产物生成后才有 zip）→ 下次打包自动带上
+    - 配套 `scripts/verify-zip-utf8.mjs`：判据落在**内容**上
+      （真读一遍 zip 数缺标志的条目数），不落在「配置写了没有」上
+    **验证过的结果**：42657 个非 ASCII 条目缺标志从 42657 降到 0；
+    37063 个文件逐条比对内容差异 **0 个**；`unzip -t` 无错；
+    解压出目录名是 `智能家居AI工作台.app`；`codesign` / `spctl` / `stapler` 全部依然通过。
+24. **模型的「思考 token」也占 `max_tokens` 预算。**
+    写死 `maxTokens: 12000` 时 15 页方案**稳定失败**（JSON 说到一半被截 → 括号不配平
+    → 报「模型返回格式异常」），而 9 页刚好够 —— 看起来像「页数太多不支持」，
+    实际是**输出预算不够**。
+    - 实测取证：在容器内直连上游看 `usage`，
+      一次输出 7976 token 里有 **4415 是思考**（占 55%），正文只用了 7580 字符
+    - 15 页正文 + 讲稿本身就要约 9000 token，叠加思考撞上限 → 截断
+    - 模型上限够用（M3.1 Flash 最大输出 524,288 token），
+      `max_tokens=32000` 同样能跑完 → **不是模型限制，是我们给少了**
+    - 修法：按内容规模给预算，**不改提示词**（提示词没问题）
+    - **两种失败必须分开报**：`LLM_JSON_TRUNCATED`（有 `{`/`[` 但配不平 = 被截断，
+      要加预算或减页数）与 `LLM_JSON_PARSE_FAILED`（连开始符都没有 = 没输出 JSON，
+      要改提示词或换模型）。以前都报「格式异常」，运维只能靠猜
+    - 判据抽成纯函数 `classifyJsonFailure()`，两处调用点（`chatObject` / `chatJson`）
+      共用同一份 —— 两处各写一遍正则，早晚会长歪
+    **同源教训**：见第 20、22 条 —— 报错信息要能直接指向动作，
+    「格式异常」这种话等于让人猜。
 
 ### CI（GitHub Actions）
 
