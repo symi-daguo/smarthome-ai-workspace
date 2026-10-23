@@ -247,6 +247,25 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
       超时要是形同虚设，后面每一步还是会无声地挂住，所以这个机制本身要能被验
     **教训**：CI 上出问题时，「让脚本自己说话」比「猜」快得多 ——
     一条时间戳/命令名的打印，往往比三轮盲猜省时间。
+19. **Windows 上 `pg_ctl` 的输出不能接管道，必须写文件。**
+    这是 Windows CI 挂满 60 分钟的**真正根因**（连挂三轮才定位到）：
+    `pg_ctl start -w` 在 Windows 上会启动 postgres 并继承 pg_ctl 的 stdout 句柄
+    （`-l` 参数在 Windows 上不生效，日志不会落到文件），
+    于是 pg_ctl 打印完 `waiting for server to start.... done` **自己退出了**，
+    管道却因为 postgres 还持着句柄而不 EOF ——
+    `spawnSync` 一直等到超时（实测 300 秒），job 被取消时日志还没归档，线索全丢。
+    **表现极具误导性**：PG 其实已经起来了，卡的是「等进程输出结束」这一步。
+    修法：pg_ctl 的 `stdio` 用文件 fd（`['ignore', fd, fd]`）而不是 `'pipe'`。
+    写文件就没有管道，`spawnSync` 只等 pg_ctl 本身退出。
+    - 文件要放在临时目录**外面**：postgres 会一直持有它，放在 work 里会导致 work 删不掉
+    - 加一条自检盯住「输出确实进了文件」，谁把 `stdio` 改回 pipe，脚本立刻变红
+    - 清理失败（`rmSync` 撞上被占用的文件）**不能**让验收失败 ——
+      残留一个临时目录不影响结论，抛出去反而把「验收通过」变成「验收中断」
+    **同源教训**：`Get-ChildItem -Recurse` 扫 `release/` 会把 `win-unpacked\` 里的
+    app 主程序（`智能家居AI工作台.exe`）和内嵌 PostgreSQL 的 `initdb.exe` 一起扫进来，
+    那些是**程序内部文件、名字带中文是正常的** —— 一扫就误判「产物名含非 ASCII」。
+    校验产物名只看 `release/` **顶层**（`-File` 不带 `-Recurse`），
+    真正的安装包由 `win.artifactName` 命名，天然是 ASCII。
 
 ### CI（GitHub Actions）
 
