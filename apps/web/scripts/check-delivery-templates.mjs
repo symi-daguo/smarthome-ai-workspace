@@ -36,11 +36,12 @@ const {
   POINT_ROWS_PER_PAGE,
   pointListPageCount,
   withPointListPages,
+  withFloorplanPage,
   floorplanListPageNo,
   deliverPages,
   deliverPointCount,
 } = await import('../src/lib/planPages.ts');
-const { FLOORPLAN_TEMPLATES, MARKER_TEMPLATES, floorplanTemplate, markerTemplate } =
+const { FLOORPLAN_TEMPLATES, MARKER_TEMPLATES, floorplanTemplate, markerTemplate, floorplanImages, floorplanPageCopy, COMPARE_LEFT_LABEL } =
   await import('../src/data/planTemplates.ts');
 
 let pass = 0;
@@ -126,7 +127,11 @@ check('deliverPages 幂等（不会重复插页）', deliverPages({ pages: dFp, 
 check('deliverPointCount：numbered 按台数算', deliverPointCount({ pages: pages4, layoutPoints: pts12 }) === 12);
 check('deliverPointCount：icon 模版不算编号清单', deliverPointCount({ pages: pages4, layoutPoints: pts12, markerTemplate: 'icon' }) === 0);
 check('deliverPointCount：render 模版不算编号清单', deliverPointCount({ pages: pages4, layoutPoints: pts12, floorplanTemplate: 'render' }) === 0);
+check('deliverPointCount：compare 模版不算编号清单（图上没有徽章）', deliverPointCount({ layoutPoints: pts12, floorplanTemplate: 'compare' }) === 0);
 check('deliverPointCount：无点位为 0', deliverPointCount({ pages: pages4, layoutPoints: null }) === 0);
+
+const dCompare = deliverPages({ pages: pages4, floorplanUrl: '/fp.png', layoutPoints: pts12, floorplanTemplate: 'compare' }).pages;
+check('compare 户型模版 → 不插编号清单续页', dCompare.length === 4);
 
 // —— 7. 虚拟页映射：编辑时要把视图下标还原成真实页下标 ——
 // 虚拟页（户型页 + 清单续页）没有文案，保存时绝不能当成真实页写进去。
@@ -191,6 +196,80 @@ for (const rel of ['lib/planPptx.ts', 'components/PlanSlide.tsx', 'pages/DeviceL
   const src = readFileSync(join(WEB_SRC, rel), 'utf8');
   const literal = src.match(/composite(?:Points|Heatmap|LightPlan)\([^)]*?,\s*(\d{3,5})\s*,/);
   check(`${rel} 调用合成时不传字面量宽度`, !literal, literal?.[1] ?? '');
+}
+
+// —— 9. 户型图口径唯一来源：floorplanImages（PPTX 与预览共用同一份）——
+// 背景：compare 模版此前在 PPTX 与前端各写一遍内联口径，两边跑偏 ——
+// 实测导出的 PPT 右栏画的是客户原图（不是 AI 精装修效果图），
+// 标签却写着「AI 精装修效果 · 点位同步」，两处都在撒谎：
+// 客户拿到的是「原图 vs 原图+点位」，模版承诺的改造前后对照根本没兑现。
+const ORIG = '/fp.png';
+const REND = '/render.png';
+const pts3 = [{ name: '客厅灯', category: 'light', x: 0.2, y: 0.3 }];
+
+const imAnn = floorplanImages({ floorplanUrl: ORIG, renderedFloorplanUrl: REND, floorplanTemplate: 'annotated', layoutPoints: pts3 });
+check('annotated：主图是客户原图', imAnn.main === ORIG, String(imAnn.main));
+check('annotated：叠点位', imAnn.overlayPoints === true);
+check('annotated：标签写明是设备点位图', imAnn.mainLabel.includes('设备点位'), imAnn.mainLabel);
+
+const imCmp = floorplanImages({ floorplanUrl: ORIG, renderedFloorplanUrl: REND, floorplanTemplate: 'compare', layoutPoints: pts3 });
+check('compare：左栏是客户原图', imCmp.compareLeft === ORIG, String(imCmp.compareLeft));
+check('compare：右栏是 AI 精装修效果图', imCmp.compareRight === REND, String(imCmp.compareRight));
+check('compare：主图仍是客户原图', imCmp.main === ORIG, String(imCmp.main));
+check('compare：两张都不叠点位', imCmp.overlayPoints === false);
+check('compare：右栏标签如实', imCmp.compareRightLabel === 'AI 精装修效果图', imCmp.compareRightLabel);
+
+const imCmpNoRender = floorplanImages({ floorplanUrl: ORIG, floorplanTemplate: 'compare', layoutPoints: pts3 });
+check('compare：没有效果图时右栏回落原图', imCmpNoRender.compareRight === ORIG);
+check('compare：没有效果图时标签说实话', imCmpNoRender.compareRightLabel.includes('暂无'), imCmpNoRender.compareRightLabel);
+
+const imRen = floorplanImages({ floorplanUrl: ORIG, renderedFloorplanUrl: REND, floorplanTemplate: 'render', layoutPoints: pts3 });
+check('render：主图是 AI 效果图', imRen.main === REND, String(imRen.main));
+check('render：不叠点位', imRen.overlayPoints === false);
+check('render：标签写明不含设备点位', imRen.mainLabel.includes('不含设备点位'), imRen.mainLabel);
+
+check('没有户型图时主图为空', floorplanImages({ layoutPoints: pts3 }).main === null);
+
+// 防跑偏闸门：两个渲染入口都必须走这份纯函数。
+// 内联写法「原图 ?? 效果图」一旦重新出现，就说明有人绕过纯函数自己算图 ——
+// 那正是本轮实测到的那类跑偏（两端口径不一致，且错的那份还在骗客户）。
+const pptxSrc = readFileSync(join(WEB_SRC, 'lib/planPptx.ts'), 'utf8');
+const slideSrc = readFileSync(join(WEB_SRC, 'components/PlanSlide.tsx'), 'utf8');
+for (const [rel, src] of [['lib/planPptx.ts', pptxSrc], ['components/PlanSlide.tsx', slideSrc]]) {
+  check(`${rel} 调用 floorplanImages（与另一端共用同一份口径）`, src.includes('floorplanImages('));
+  check(`${rel} 不再内联「原图 ?? 效果图」口径`, !/floorplanUrl\s*\?\?\s*(?:plan\.)?renderedFloorplanUrl/.test(src));
+  check(`${rel} 编号清单判定走 deliverPointCount`, src.includes('deliverPointCount('));
+  check(`${rel} compare 左栏标签用同一份常量`, src.includes('COMPARE_LEFT_LABEL'));
+}
+check('COMPARE_LEFT_LABEL 文案已定稿', COMPARE_LEFT_LABEL === '原始户型（客户户型图）', COMPARE_LEFT_LABEL);
+
+// —— 10. 户型页文案随模版变：图上没点位，文案就不许说点位 ——
+// compare / render 的画面上没有编号徽章，沿用「把中控、面板…的落位逐一点出」
+// 就是当着客户的面说图上有、图上却没有 —— 文案在撒谎。
+const copyAnn = floorplanPageCopy('annotated');
+const copyCmp = floorplanPageCopy('compare');
+const copyRen = floorplanPageCopy('render');
+check('annotated 页型标签是「户型与设备点位」', copyAnn.typeLabel === '户型与设备点位', copyAnn.typeLabel);
+check('annotated 正文讲落位', copyAnn.body.includes('落位'));
+check('compare 页型标签是「户型改造前后对照」', copyCmp.typeLabel === '户型改造前后对照', copyCmp.typeLabel);
+check('compare 正文不讲「逐一点出落位」', !copyCmp.body.includes('逐一点出'), copyCmp.body);
+check('compare 讲稿不讲「每个图标对应一台设备」', !copyCmp.narration.includes('每个图标'), copyCmp.narration);
+check('render 页型标签是「智能精装效果示意」', copyRen.typeLabel === '智能精装效果示意', copyRen.typeLabel);
+check('render 正文不讲落位', !copyRen.body.includes('落位'), copyRen.body);
+check('三套文案互不相同', new Set([copyAnn.heading, copyCmp.heading, copyRen.heading]).size === 3);
+
+// 插页时必须用对应模版的文案（户型页插在 layout 页之后）
+const layoutPage = { type: 'layout', heading: '空间动线', subtitle: '', body: '', bullets: [], narration: '' };
+const fpPagesCmp = withFloorplanPage([cover, layoutPage], true, 'compare').pages;
+check('compare 插页用对照版文案', fpPagesCmp[2]?.heading === '户型改造前后对照', String(fpPagesCmp[2]?.heading));
+const fpPagesAnn = withFloorplanPage([cover, layoutPage], true, 'annotated').pages;
+check('annotated 插页用点位版文案', fpPagesAnn[2]?.heading === '户型与设备点位', String(fpPagesAnn[2]?.heading));
+check('插页默认仍是点位版（老调用方不受影响）', withFloorplanPage([cover, layoutPage], true).pages[2]?.heading === '户型与设备点位');
+check('compare 插页正文也不讲落位', !String(fpPagesCmp[2]?.body ?? '').includes('逐一点出'));
+
+// 页型标签也要跟着变（PPTX 的 folio 与前端 Folio 共用这份）
+for (const [rel, src] of [['lib/planPptx.ts', pptxSrc], ['components/PlanSlide.tsx', slideSrc]]) {
+  check(`${rel} 页型标签走 floorplanPageCopy`, src.includes('floorplanPageCopy('));
 }
 
 console.log(`\n小计: ${pass} PASS / ${fail} FAIL`);

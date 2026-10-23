@@ -3,7 +3,7 @@ import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } fro
 import { catMeta, compositePoints, COMPOSITE_WIDTH } from './pointOverlay';
 import { customerText } from './planSanitize';
 import { floorplanListPageNo, quoteListPageNo, POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPages, deliverPointCount, type QuoteSummary } from './planPages';
-import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
+import { floorplanTemplate, markerTemplate, floorplanImages, floorplanPageCopy, COMPARE_LEFT_LABEL } from '../data/planTemplates';
 
 /**
  * 方案 PPT 生成器（16:9 原生可编辑幻灯片）。
@@ -213,66 +213,99 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
   console.info('[pptx] 裁剪完成');
   const img = (page: PlanPage): string => cropMap.get(`${pageImageType(page)}|${page.type}`) ?? '';
 
-  // 空间动线页：优先用精装修效果图 > 户型+点位合成图 > 场景实景图
+  /**
+   * 主图（空间动线页 + 户型页整页）与 compare 的左右两图。
+   *
+   * 口径全部来自 `floorplanImages`（data/planTemplates.ts）——
+   * PPTX / 分享页 / 预览共用同一份，模版三选一不再各写一遍。
+   */
+  const images = floorplanImages(plan);
+  const fpTpl = floorplanTemplate(plan.floorplanTemplate);
+  const mkTpl = markerTemplate(plan.markerTemplate);
+
   let floorplan: { data: string; ratio: number } | null = null;
-  // 「原图对照」模版的左栏：未叠加点位的原始户型
+  /** compare 左栏：未叠加点位的客户原图 */
   let leftImage: { data: string; ratio: number } | null = null;
-  if (plan.renderedFloorplanUrl) {
+  /** compare 右栏：AI 精装修效果图 */
+  let rightImage: { data: string; ratio: number } | null = null;
+
+  if (fpTpl === 'compare') {
+    /**
+     * 对照页的两张图**按各自原比例摆放**，不预裁成统一比例。
+     *
+     * 为什么不能像别的模版那样预裁成 FLOOR_BOX：
+     * FLOOR_BOX 是横向的（8.6×6.15），而对照页的左右两栏是竖向的
+     * （各占图区一半宽度、占满图区高度，比例约 0.61）。
+     * 把一张横向的图裁成 0.61 会**切掉两侧的墙体** —— 而那正是
+     * 「这是您家户型」的关键信息；不切而拉伸，户型图变形更难看。
+     * 所以这里只取原图与它的比例，摆放时按 contain 算尺寸。
+     */
+    if (images.compareLeft) {
+      try {
+        const data = await imgData(images.compareLeft);
+        leftImage = { data, ratio: await imageRatio(data) };
+      } catch {
+        /* 原图取不到就退回单图 */
+      }
+    }
+    if (images.compareRight && images.compareRight !== images.compareLeft) {
+      try {
+        const data = await imgData(images.compareRight);
+        rightImage = { data, ratio: await imageRatio(data) };
+      } catch {
+        /* 效果图取不到就退回单图 */
+      }
+    }
+    // 动线页用的主图：同一张客户原图，但按图框比例预裁 ——
+    // 动线页是配图（只占三成宽），切掉一点两侧没关系；对照页才是重点，那边不切。
+    if (leftImage) {
+      try {
+        const [bw, bh] = FLOOR_BOX;
+        floorplan = { data: await coverCrop(leftImage.data, bw, bh, 'center'), ratio: bw / bh };
+      } catch {
+        floorplan = leftImage;
+      }
+    } else {
+      floorplan = rightImage;
+    }
+  } else if (images.main) {
     try {
-      const data = await imgData(plan.renderedFloorplanUrl);
+      const data = await imgData(images.main);
       floorplan = { data, ratio: await imageRatio(data) };
     } catch {
       floorplan = null;
     }
-  }
-  if (floorplan) {
-    // 预裁成左栏框的比例：PPTX 的 addImage 只会按给定 w/h 缩放，
-    // 不预裁就得靠 contain 留白，或者拉伸变形。户型图变形最难看。
-    const [bw, bh] = FLOOR_BOX;
-    try {
-      floorplan.data = await coverCrop(floorplan.data, bw, bh, 'center');
-      floorplan.ratio = bw / bh;
-    } catch {
-      /* 裁剪失败保留原图，宁可留白也不变形 */
-    }
-  }
-  /**
-   * 点位叠加：底图用「精装修效果图优先」，与 PlanSlide 的 useFloorplanVisual 同规则。
-   * 此前条件是 `!floorplan && plan.floorplanUrl`，于是生成了精装修图之后
-   * 点位合成被整段跳过 —— 页面上写着「户型与设备点位」，却一个点位都没有。
-   *
-   * 模版联动两处：
-   *   - `render` 模版刻意不叠加点位（它就是「只放效果图」的展示型模版）
-   *   - 标记样式由 markerTemplate 决定（编号 / 产品图 / 色点，见 data/planTemplates.ts）
-   */
-  const fpTpl = floorplanTemplate(plan.floorplanTemplate);
-  const mkTpl = markerTemplate(plan.markerTemplate);
-  if (plan.layoutPoints?.length && fpTpl !== 'render') {
-    const base = (plan.floorplanUrl ?? plan.renderedFloorplanUrl) as string | null | undefined;
-    if (base) {
+    if (floorplan) {
+      // 预裁成图框的比例：PPTX 的 addImage 只会按给定 w/h 缩放，
+      // 不预裁就得靠 contain 留白，或者拉伸变形。户型图变形最难看。
+      const [bw, bh] = FLOOR_BOX;
       try {
-        const composed = await compositePoints(base, plan.layoutPoints, COMPOSITE_WIDTH, mkTpl);
+        floorplan.data = await coverCrop(floorplan.data, bw, bh, 'center');
+        floorplan.ratio = bw / bh;
+      } catch {
+        /* 裁剪失败保留原图，宁可留白也不变形 */
+      }
+    }
+    /**
+     * 点位叠加：只在 `images.overlayPoints` 为真时才叠。
+     *
+     * 底图是**客户原图**（`images.main`）：点位坐标是门店在客户上传的那张图上标的，
+     * 换成 AI 渲染图当底图，两张图的构图只要有出入（模型改了布局、加了边距、
+     * 改了开口位置），点位就与实际位置对不上 —— 而点位图是施工交底的依据，
+     * 位置错了比没有图更糟。
+     *
+     * render / compare 模版刻意不叠点位（对照表见 floorplanImages），
+     * 标记样式由 markerTemplate 决定（编号 / 产品图 / 色点）。
+     */
+    if (plan.layoutPoints?.length && images.overlayPoints && images.main) {
+      try {
+        const composed = await compositePoints(images.main, plan.layoutPoints, COMPOSITE_WIDTH, mkTpl);
         // 先合成点位再裁剪：点位图标已经画在图上，跟着一起裁，不会与点位错位
-        if (fpTpl === 'compare') {
-          // 原图对照模版左栏要放**未叠加点位**的原始户型，对照才有意义
-          const orig = await imgData(plan.floorplanUrl as string);
-          const [bw, bh] = FLOOR_BOX;
-          leftImage = { data: await coverCrop(orig, bw, bh, 'center'), ratio: bw / bh };
-        }
         const [bw, bh] = FLOOR_BOX;
         floorplan = { data: await coverCrop(composed, bw, bh, 'center'), ratio: bw / bh };
       } catch {
         // 合成失败就沿用前面的底图，宁可没点位也不要整页丢图
       }
-    }
-  }
-  if (fpTpl === 'compare' && !leftImage && plan.floorplanUrl) {
-    try {
-      const orig = await imgData(plan.floorplanUrl);
-      const [bw, bh] = FLOOR_BOX;
-      leftImage = { data: await coverCrop(orig, bw, bh, 'center'), ratio: bw / bh };
-    } catch {
-      /* 原图取不到就退回 annotated */
     }
   }
 
@@ -294,7 +327,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
       case 'scene': sceneSlide(slide, p, i, plan, t, img(p)); break;
       case 'budget': budgetSlide(slide, p, i, plan, t, pptx); break;
       case 'delivery': deliverySlide(slide, p, i, plan, t, img(p), pptx); break;
-      case 'floorplan': floorplanSlide(slide, p, i, plan, t, img(p), floorplan, leftImage, listNo); break;
+      case 'floorplan': floorplanSlide(slide, p, i, plan, t, img(p), floorplan, leftImage, rightImage, listNo); break;
       case 'quote': quoteSlide(slide, p, i, plan, t, quoteNo); break;
     }
     if (p.narration) slide.addNotes(p.narration);
@@ -317,11 +350,18 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
 
 /* ---------- primitives ---------- */
 
-function folio(slide: PptxGenJS.Slide, p: PlanPage, i: number, t: Theme, x: number, y: number, w: number, dark = false): void {
+/**
+ * 页眉：页码 + 页型标签 + 副标题。
+ *
+ * `label` 用于覆盖页型标签：户型页的页型标签随模版变
+ * （compare 是「户型改造前后对照」，不是「户型与设备点位」），
+ * 与前端 Folio 组件同一口径。
+ */
+function folio(slide: PptxGenJS.Slide, p: PlanPage, i: number, t: Theme, x: number, y: number, w: number, dark = false, label?: string): void {
   slide.addText(
     [
       { text: String(i + 1).padStart(2, '0'), options: { fontSize: 11, bold: true, color: dark ? 'FFFFFF' : hex(t.accent) } },
-      { text: `   ${PAGE_TYPE_LABEL[p.type]}`, options: { fontSize: 11, bold: true, color: dark ? 'FFFFFFCC' : hex(t.text) } },
+      { text: `   ${label ?? PAGE_TYPE_LABEL[p.type]}`, options: { fontSize: 11, bold: true, color: dark ? 'FFFFFFCC' : hex(t.text) } },
       ...(p.subtitle ? [{ text: `      ${p.subtitle}`, options: { fontSize: 9.5, color: dark ? 'FFFFFFAA' : hex(t.sub) } }] : []),
     ],
     { x, y, w, h: 0.32, fontFace: FONT, valign: 'middle', margin: 0, wrap: false },
@@ -452,7 +492,8 @@ function layoutSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanF
     }
     slide.addImage({ data: floorplan.data, x: MX + (imgW - dw) / 2, y: panelY + (panelH - 0.42 - dh) / 2, w: dw, h: dh });
     slide.addShape('rect', { x: MX, y: panelY + panelH - 0.42, w: imgW, h: 0.42, fill: { color: '0F0A05', transparency: 32 } });
-    slide.addText('客户户型 · 设备点位图', { x: MX + 0.14, y: panelY + panelH - 0.42, w: imgW - 0.28, h: 0.42, fontSize: 9, bold: true, color: 'FFFFFF', fontFace: FONT, valign: 'middle', margin: 0 });
+    // 标签与图上实际内容一致（口径来自 floorplanImages，PPT 与预览同一份）
+    slide.addText(floorplanImages(plan).mainLabel, { x: MX + 0.14, y: panelY + panelH - 0.42, w: imgW - 0.28, h: 0.42, fontSize: 9, bold: true, color: 'FFFFFF', fontFace: FONT, valign: 'middle', margin: 0 });
   } else {
     imagePanel(slide, img, MX, panelY, imgW, panelH, t, '空间动线实景');
   }
@@ -552,20 +593,25 @@ function floorplanSlide(
   slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme,
   img: string, floorplan: { data: string; ratio: number } | null,
   leftImage: { data: string; ratio: number } | null = null,
+  rightImage: { data: string; ratio: number } | null = null,
   listNo = 0,
 ): void {
   const tpl = floorplanTemplate(plan.floorplanTemplate);
   const points = plan.layoutPoints ?? [];
+  const images = floorplanImages(plan);
+  const copy = floorplanPageCopy(tpl);
   /**
-   * 编号清单的判定必须与 `deliverPointCount` **完全一致**，否则两处会打架：
-   * deliverPointCount 决定「插几张清单页」，这里决定「画不画编号清单」。
-   * 口径不一致时（此前 render 模版两处不同）会出现「页上写『续下页 · 还有 3 台』，
-   * 但根本没有下一页」—— 客户永远拿不到那 3 台设备的编号。
+   * 编号清单的判定直接用 `deliverPointCount` —— 那是页序与清单的**唯一来源**。
    *
-   * render 模版不叠加点位 → 图上没有徽章 → 不出编号清单（退回品类汇总）；
-   * icon 模版标记上是产品图，编号无意义 → 同样退回品类汇总。
+   * 口径不一致时会出现两种事故：
+   * - deliverPointCount 插了清单页，这里却不画 → 页上写着「续下页 · 还有 3 台」，
+   *   但根本没有下一页，客户永远拿不到那 3 台设备的编号；
+   * - 这里画了编号清单，图上却没有徽章 → 客户按编号回图里找，必然找不到。
+   *
+   * render / compare 模版图上都没有徽章（见 floorplanImages 的对照表），
+   * 所以都不出编号清单，退回品类汇总。
    */
-  const numbered = tpl !== 'render' && markerTemplate(plan.markerTemplate) !== 'icon' && points.length > 0;
+  const numbered = deliverPointCount(plan) > 0;
 
   const rightW = 4.1;
   const x = W - rightW - MX;
@@ -573,7 +619,7 @@ function floorplanSlide(
   const listTop = 3.28;
   const listMaxBottom = 5.58;
   const rowGap = 0.05;
-  folio(slide, p, i, t, x, 0.5, rightW);
+  folio(slide, p, i, t, x, 0.5, rightW, false, copy.typeLabel);
   claim(slide, p, t, x, 1.05, rightW, 0.9, 19);
   slide.addText(p.body, { x, y: 2.05, w: rightW, h: 1.05, fontSize: 10.5, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.55, valign: 'top', margin: 0 });
 
@@ -653,13 +699,27 @@ function floorplanSlide(
   // 左侧图区
   const boxW = x - 0.4;
   const boxH = H - 0.9;
-  if (tpl === 'compare' && leftImage && floorplan) {
-    // 原图对照：左右各占一半，中间留缝
+  if (tpl === 'compare' && leftImage && rightImage) {
+    /**
+     * 原图对照：左客户原图、右 AI 精装修效果图，中间留缝。
+     * 两张都**不叠点位**（AI 图是模型重画的，叠上去必然错位），
+     * 所以右侧不列编号清单，只列品类汇总（编号口径见 deliverPointCount）。
+     *
+     * 每张图按**自己的原比例 contain** 摆放：不拉伸变形，也不裁掉
+     * 客户户型图两侧的墙体 —— 那正是「这是您家户型」的关键信息。
+     */
     const halfW = (boxW - 0.12) / 2;
-    slide.addImage({ data: leftImage.data, x: 0, y: 0.45, w: halfW, h: boxH });
-    slide.addImage({ data: floorplan.data, x: halfW + 0.12, y: 0.45, w: halfW, h: boxH });
-    slide.addText('原始户型（客户户型图）', { x: 0.1, y: H - 0.75, w: halfW - 0.2, h: 0.32, fontSize: 9, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 40 }, fontFace: FONT, valign: 'middle', margin: 0 });
-    slide.addText('AI 精装修效果 · 点位同步', { x: halfW + 0.22, y: H - 0.75, w: halfW - 0.2, h: 0.32, fontSize: 9, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 40 }, fontFace: FONT, valign: 'middle', margin: 0 });
+    const place = (pic: { data: string; ratio: number }, x0: number): void => {
+      const r = pic.ratio || 1;
+      let dw = halfW;
+      let dh = dw / r;
+      if (dh > boxH) { dh = boxH; dw = dh * r; }
+      slide.addImage({ data: pic.data, x: x0 + (halfW - dw) / 2, y: 0.45 + (boxH - dh) / 2, w: dw, h: dh });
+    };
+    place(leftImage, 0);
+    place(rightImage, halfW + 0.12);
+    slide.addText(COMPARE_LEFT_LABEL, { x: 0.1, y: H - 0.75, w: halfW - 0.2, h: 0.32, fontSize: 9, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 40 }, fontFace: FONT, valign: 'middle', margin: 0 });
+    slide.addText(images.compareRightLabel, { x: halfW + 0.22, y: H - 0.75, w: halfW - 0.2, h: 0.32, fontSize: 9, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 40 }, fontFace: FONT, valign: 'middle', margin: 0 });
     return;
   }
   if (floorplan?.data) {
@@ -669,11 +729,8 @@ function floorplanSlide(
     // 没有上传户型图时用实景兜底，但要在图上说明，别让客户以为是自家户型
     slide.addImage({ data: img, x: 0, y: 0.45, w: boxW, h: boxH });
   }
-  const caption = !floorplan?.data
-    ? '空间实景示意（非客户户型）'
-    : tpl === 'render'
-      ? 'AI 精装修效果示意（不含设备点位）'
-      : '客户户型 · 设备点位图';
+  // 图注必须与图上实际内容一致：口径来自 floorplanImages，PPT 与预览同一份
+  const caption = !floorplan?.data ? '空间实景示意（非客户户型）' : images.mainLabel;
   slide.addText(caption, { x: 0.22, y: H - 0.75, w: boxW - 0.44, h: 0.32, fontSize: 9.5, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 35 }, fontFace: FONT, valign: 'middle', margin: 0 });
 }
 

@@ -4,8 +4,8 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { compositePoints, COMPOSITE_WIDTH, type PointLike } from '../lib/pointOverlay';
 import { customerText } from '../lib/planSanitize';
-import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
-import { POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, type QuoteSummary } from '../lib/planPages';
+import { floorplanTemplate, markerTemplate, floorplanImages, floorplanPageCopy, COMPARE_LEFT_LABEL } from '../data/planTemplates';
+import { POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPointCount, type QuoteSummary } from '../lib/planPages';
 
 interface SlidePlan {
   store: string;
@@ -93,50 +93,53 @@ function pageImage(page: PlanPage): string {
 }
 
 /**
- * 方案户型图的最终画面：AI 精装修渲染图 > 户型+点位合成图 > 无。
+ * 方案户型图的最终画面（主图）。
  *
  * 抽出来是因为空间动线页与户型点位页都要这张图，两处各写一遍合成逻辑
  * 迟早只改一处，客户看到的两个页面就对不上。
+ *
+ * 口径全部来自 `floorplanImages`（data/planTemplates.ts）——
+ * 与 PPTX 导出共用同一份，模版三选一不再各写一遍。
  */
 function useFloorplanVisual(plan: SlidePlan): { src: string; label: string; fit: 'cover' | 'contain' } {
-  const useRendered = Boolean(plan.renderedFloorplanUrl);
   /**
-   * 底图优先级：**原始户型图** > 精装修效果图。
+   * 底图是**客户原图**。
    *
    * 为什么点位要叠在原始户型图上：点位坐标是门店在**客户上传的那张户型图**上标的，
    * 换成 AI 渲染图当底图，两张图的构图只要有出入（模型改了布局、加了边距、
    * 改了开口位置），点位就与实际位置对不上 —— 而点位图是施工交底的依据，
-   * 位置错了比没有图更糟。AI 精装修效果图仍然出现在空间动线页（看效果用）。
+   * 位置错了比没有图更糟。AI 精装修效果图只出现在「该出现的地方」
+   * （compare 的右栏、render 模版），绝不拿去当叠点位的底图。
    */
-  const base = (plan.floorplanUrl ?? plan.renderedFloorplanUrl) as string | null | undefined;
-  // render 模版刻意不叠加点位（它就是「只放效果图」的展示型模版），与 PPTX 同规则
-  const fpTpl = floorplanTemplate(plan.floorplanTemplate);
+  const images = floorplanImages(plan);
   const mkTpl = markerTemplate(plan.markerTemplate);
-  const hasPoints = Boolean(plan.layoutPoints?.length) && fpTpl !== 'render';
-  const needCompose = Boolean(base && hasPoints);
+  // render / compare 模版图上没有徽章，不叠点位（见 floorplanImages 的对照表）
+  const needCompose = Boolean(images.main && images.overlayPoints && plan.layoutPoints?.length);
   const [composite, setComposite] = useState<string | null>(null);
   useEffect(() => {
-    if (!needCompose || !base) {
+    if (!needCompose || !images.main) {
       setComposite(null);
       return;
     }
     let alive = true;
-    void compositePoints(base, plan.layoutPoints ?? [], COMPOSITE_WIDTH, mkTpl)
+    void compositePoints(images.main, plan.layoutPoints ?? [], COMPOSITE_WIDTH, mkTpl)
       .then((url) => { if (alive) setComposite(url); })
       .catch(() => { if (alive) setComposite(null); });
     return () => { alive = false; };
-  }, [needCompose, base, plan.layoutPoints, mkTpl]);
+  }, [needCompose, images.main, plan.layoutPoints, mkTpl]);
 
-  // 户型图也用 cover 铺满：contain 会在卡片内留出上下白边，PPT 里非常难看。
+  // 户型图用 cover 铺满：contain 会在卡片内留出上下白边，PPT 里非常难看。
   // 点位图标是合成进图里的，裁剪时会跟着一起裁，不会与点位错位。
-  if (needCompose && base) {
+  //
+  // compare 模版的**对照页**另说：那张页的两张图要完整看到，
+  // 那边用 contain（见 FloorplanSlide），与 PPTX 的对照页同一口径。
+  if (images.main) {
     return {
-      src: composite ?? base,
-      label: '客户户型 · 设备点位图',
+      src: needCompose ? (composite ?? images.main) : images.main,
+      label: images.mainLabel,
       fit: 'cover',
     };
   }
-  if (useRendered) return { src: plan.renderedFloorplanUrl as string, label: 'AI 精装修效果图', fit: 'cover' };
   return { src: '', label: '空间动线实景', fit: 'cover' };
 }
 
@@ -182,14 +185,21 @@ function Frame({ t, children, style }: { t: PlanTheme; children: ReactNode; styl
   );
 }
 
-function Folio({ page, index, t }: { page: PlanPage; index: number; t: PlanTheme }): ReactNode {
+/**
+ * 页眉：页码 + 页型标签 + 副标题。
+ *
+ * `label` 用于覆盖页型标签：户型页的页型标签随模版变
+ * （compare 是「户型改造前后对照」，不是「户型与设备点位」），
+ * 与 PPTX 的 folio 同一口径。
+ */
+function Folio({ page, index, t, label }: { page: PlanPage; index: number; t: PlanTheme; label?: string }): ReactNode {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.6cqw' }}>
       <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 800, color: t.accent, letterSpacing: '0.1em', whiteSpace: 'nowrap', flex: 'none' }}>
         {String(index + 1).padStart(2, '0')}
       </span>
       <span style={{ width: 2, height: '1.6cqw', minHeight: 8, background: t.accent, alignSelf: 'center', flex: 'none' }} />
-      <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 700, color: t.text, whiteSpace: 'nowrap', flex: 'none' }}>{PAGE_TYPE_LABEL[page.type]}</span>
+      <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 700, color: t.text, whiteSpace: 'nowrap', flex: 'none' }}>{label ?? PAGE_TYPE_LABEL[page.type]}</span>
       {page.subtitle ? <span style={{ fontSize: 'clamp(5px,1.15cqw,10px)', color: t.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{page.subtitle}</span> : null}
     </div>
   );
@@ -634,20 +644,29 @@ function DeliverySlide({ page, index, plan, t }: { page: PlanPage; index: number
  * 图用 contain 而不是 cover：户型图被裁掉一半比看不清楚更严重。
  */
 function FloorplanSlide({ page, index, plan, t, listNo = 0 }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme; listNo?: number }): ReactNode {
+  const images = floorplanImages(plan);
   const { src: visual, label, fit } = useFloorplanVisual(plan);
   const src = visual || plan.floorplanUrl || pageImage(page);
   const points = plan.layoutPoints ?? [];
   const fpTpl = floorplanTemplate(plan.floorplanTemplate);
-  const mkTpl = markerTemplate(plan.markerTemplate);
   /**
    * 与 PPTX **同口径**（planPptx.floorplanSlide）：
-   * - render 模版不叠加点位，也不列编号清单（否则图上没有徽章，清单编号对不上）
+   * 编号清单的判定直接用 `deliverPointCount` —— 页序与画不画清单是同一份口径。
+   * - render / compare 模版图上没有徽章，不列编号清单（否则客户按编号回图里找，找不到）
    * - icon 模版标记上是产品图，编号无意义，只列品类汇总
    *
    * 之前这里只做品类汇总，编号清单与图例都只在 PPTX 里 —— 门店在页面上看到的
    * 和客户收到的 PPT 不是同一份东西。
    */
-  const numbered = fpTpl !== 'render' && mkTpl !== 'icon' && points.length > 0;
+  const numbered = deliverPointCount(plan) > 0;
+  /**
+   * compare（原图对照）模版：左客户原图、右 AI 精装修效果图，并排对照。
+   *
+   * 以前前端**完全没有**这个分支 —— 门店在页面上预览看到的是单图，
+   * 客户在 PPT 里收到的是左右对照，两边对不上。
+   * 两张都不叠点位（AI 图是模型重画的，叠上去必然错位），编号清单因此也不出。
+   */
+  const isCompare = fpTpl === 'compare' && Boolean(images.compareLeft && images.compareRight);
   const start = listNo * POINT_ROWS_PER_PAGE;
   const rows = numbered ? points.slice(start, start + POINT_ROWS_PER_PAGE) : [];
   const remaining = numbered ? Math.max(0, points.length - start - rows.length) : 0;
@@ -665,15 +684,34 @@ function FloorplanSlide({ page, index, plan, t, listNo = 0 }: { page: PlanPage; 
     <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <div style={{ display: 'flex', gap: '4%', flex: 1, minHeight: 0 }}>
-          <ImagePanel
-            src={src}
-            t={t}
-            label={label}
-            fit={fit}
-            style={{ flex: 1, minWidth: 0 }}
-          />
+          {isCompare ? (
+            <>
+              <ImagePanel
+                src={images.compareLeft as string}
+                t={t}
+                label={COMPARE_LEFT_LABEL}
+                fit="contain"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <ImagePanel
+                src={images.compareRight as string}
+                t={t}
+                label={images.compareRightLabel}
+                fit="contain"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            </>
+          ) : (
+            <ImagePanel
+              src={src}
+              t={t}
+              label={label}
+              fit={fit}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+          )}
           <div style={{ width: '30%', flex: 'none', display: 'flex', flexDirection: 'column' }}>
-            <Folio page={page} index={index} t={t} />
+            <Folio page={page} index={index} t={t} label={floorplanPageCopy(fpTpl).typeLabel} />
             <Claim page={page} t={t} size="clamp(8px,2.2cqw,17px)" />
             <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw' }}>{page.body}</div>
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.8cqw', marginTop: '1.8cqw' }}>

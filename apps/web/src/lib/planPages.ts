@@ -12,21 +12,13 @@
  * 插在 `layout` 页之后：先看动线规划，再看整张户型和每个点位落位。
  */
 import type { PlanPage } from '../data/planThemes';
-import { floorplanTemplate, markerTemplate } from '../data/planTemplates';
-
-/** 插入的户型页文案固定：它是图示页，不是文案页，门店不需要逐页改写 */
-const FLOORPLAN_PAGE: PlanPage = {
-  type: 'floorplan',
-  heading: '户型与设备点位',
-  subtitle: '每一台设备装在哪，一张图说清',
-  body: '以您家的实际户型为底图，把中控、面板、传感与窗帘电机的落位逐一点出。施工前会与您和装修方再核对一次水电预留位置。',
-  quote: '点位落定，水电一次做对',
-  bullets: [],
-  narration: '这张图是按您家户型做的点位图。每个图标对应一台设备，我们会按施工顺序进场。点位如果有调整，随时在图上标出来就行。',
-};
+import { floorplanTemplate, markerTemplate, floorplanPageCopy, type FloorplanTemplate } from '../data/planTemplates';
 
 /**
  * 有户型图才插页：没上传素材却多一页空白，客户只会当成没做完。
+ *
+ * 插入的文案随模版变（`floorplanPageCopy`）：compare / render 的画面上
+ * 没有编号徽章，用「逐一点出落位」那段文案就是在骗客户。
  *
  * 返回插入位置 `syntheticAt`（没插时为 -1），调用方保存编辑前用它把索引
  * 映射回真实页：编辑、扣费、版本号全都按 `plan.pages` 走，虚拟页不参与。
@@ -34,13 +26,14 @@ const FLOORPLAN_PAGE: PlanPage = {
 export function withFloorplanPage(
   pages: PlanPage[],
   hasFloorplan: boolean,
+  tpl: FloorplanTemplate = 'annotated',
 ): { pages: PlanPage[]; syntheticAt: number; virtualAt: number[] } {
   const ok = hasFloorplan && !pages.some((p) => p.type === 'floorplan');
   if (!ok) return { pages, syntheticAt: -1, virtualAt: [] };
   const at = pages.findIndex((p) => p.type === 'layout');
   const idx = at < 0 ? 3 : at + 1;
   const next = [...pages];
-  next.splice(idx, 0, { ...FLOORPLAN_PAGE });
+  next.splice(idx, 0, { type: 'floorplan', ...floorplanPageCopy(tpl), bullets: [] });
   return { pages: next, syntheticAt: idx, virtualAt: [idx] };
 }
 
@@ -219,24 +212,40 @@ export function withQuotePages(
  * 交付页序列的输入：只要「有没有户型图」「有多少点位」「用哪套模版」三件事。
  * PPTX、讲稿、分享页都从这里取页序。
  */
-export interface DeliveryPlanLike {
+export interface DeliveryPlanLike extends PointCountLike {
   pages: PlanPage[];
   floorplanUrl?: string | null;
   renderedFloorplanUrl?: string | null;
+  quoteSummary?: QuoteSummary | null;
+}
+
+/**
+ * 点位清单条数的判据只需要「有多少点位」「用哪套模版」——
+ * 单独拆出来是因为渲染侧（PlanSlide）拿不到 pages，
+ * 硬塞一个 pages 进去只会逼调用方造假数据。
+ */
+export interface PointCountLike {
   layoutPoints?: unknown[] | null;
   floorplanTemplate?: string | null;
   markerTemplate?: string | null;
-  /** 设备清单与报价（按点位聚合，页序据此插页） */
-  quoteSummary?: QuoteSummary | null;
 }
 
 /**
  * 点位清单是否走「编号列表」版式。
  *
- * render 模版不叠加点位、icon 模版的标记是产品图（编号无意义），这两种都退回品类汇总。
+ * 判据只有一条：**图上有没有编号徽章**。
+ * 徽章没有还列编号，客户按编号回图里找必然找不到 —— 那是交付事故。
+ *
+ * - render 模版只放效果图，不叠点位 → 没有徽章
+ * - compare 模版左右对照，两张都不叠点位 → 也没有徽章
+ *   （AI 效果图是模型重画的，点位坐标按客户原图标，叠上去必然错位，
+ *    而点位图是施工交底的依据，位置错了比没有图更糟）
+ *   这两种模版的点位信息靠右栏的品类汇总与「设备清单与报价」页给。
+ * - icon 模版的标记上是产品图，编号无意义
  */
-export function deliverPointCount(plan: DeliveryPlanLike): number {
-  if (floorplanTemplate(plan.floorplanTemplate) === 'render') return 0;
+export function deliverPointCount(plan: PointCountLike): number {
+  const tpl = floorplanTemplate(plan.floorplanTemplate);
+  if (tpl === 'render' || tpl === 'compare') return 0;
   if (markerTemplate(plan.markerTemplate) === 'icon') return 0;
   return plan.layoutPoints?.length ?? 0;
 }
@@ -254,7 +263,11 @@ export function deliverPointCount(plan: DeliveryPlanLike): number {
  * 前端编辑时要用它把视图下标映射回真实页下标。
  */
 export function deliverPages(plan: DeliveryPlanLike): { pages: PlanPage[]; virtualAt: number[] } {
-  const fp = withFloorplanPage(plan.pages, Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl));
+  const fp = withFloorplanPage(
+    plan.pages,
+    Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl),
+    floorplanTemplate(plan.floorplanTemplate),
+  );
   const fpIndex = fp.pages.findIndex((p) => p.type === 'floorplan');
   if (fpIndex < 0) return { pages: fp.pages, virtualAt: [] };
   const list = withPointListPages(fp.pages, fpIndex, deliverPointCount(plan));
