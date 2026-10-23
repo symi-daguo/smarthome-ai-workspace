@@ -323,6 +323,21 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     **教训**：状态标记只在「写入与读取在同一事务域」时才可靠。
     跨进程、跨崩溃点（配置写文件 vs 数据库提交）就不成立了 ——
     这类判据要么改查数据，要么让写入与判据同源。
+21. **桌面端首次启动的迁移偶尔会慢到几分钟（原因未定位）。**
+    实测：桌面端由 app 自己拉起 PostgreSQL 后紧接着跑 `prisma migrate deploy`，
+    正常 1 秒，**偶发一次 2 分 56 秒**（同一份代码、同一份运行时）。
+    排查过并**排除**的：
+    - Prisma CLI 的更新检查 —— 把 `HTTPS_PROXY` 指向不可达地址也不慢，
+      且带不带 `CHECKPOINT_DISABLE=1` 都一样快（`PRISMA_HIDE_UPDATE_MESSAGE`
+      只管「不显示提示」，请求照发）
+    - schema engine 副本 —— 单独执行 `--version` 毫秒级返回
+    - 管道 / stdio —— 用宿主 node 完整复现主进程的 spawn 方式，1 秒完成
+    - 数据库锁 —— `pg_stat_activity` 里连 Prisma 的连接都没有，它卡在连库之前
+    抓到的现场栈停在 `node::fs::FileHandle::CloseReq::Resolve()`（关文件句柄）。
+    **现状**：`prisma()` 已有 `timeout: 300_000`，最坏 5 分钟后报错退出，
+    不会永久卡死；实测第二次启动就恢复到 1 秒。
+    **遇到时的做法**：先重试一次（大概率秒过），别急着改代码；
+    真要定位就把 `prisma()` 的 stdout/stderr 落盘，别只看 `execFileAsync` 的返回。
 
 ### CI（GitHub Actions）
 
