@@ -417,6 +417,14 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
       （报「local header 签名不对」）。走 central directory 的偏移记录才稳。
     - 挂在 electron-builder 的 **`artifactBuildCompleted`** 钩子
       （`afterPack` 时 zip 还没生成，只有产物生成后才有 zip）→ 下次打包自动带上
+    - **但公证流程会把它覆盖掉（2026-10-23 发 1.0.5 实测）**：
+      公证脚本为了让 zip 装的是**已装订的 app**，会用 `ditto` **重新生成**一份分发 zip，
+      覆盖掉打包时修好的那份 —— `ditto` 与 electron-builder 一样不置 0x800 标志。
+      实测最终发出去的 zip 里 42652 个非 ASCII 条目**全部**缺标志（Windows 上必然解出乱码目录）。
+      **修法**：`notarize.mjs` 在 `ditto` 之后调用 `fixZipUtf8Flags` 并回读自检，
+      缺标志就 `fail`（不装订的 zip 不该发出去）。
+      **教训**：钩子只覆盖「生成它的那一步」，**后续步骤覆盖产物时必须重跑修复** ——
+      判据是「最终产物」而不是「某一步的产物」。
     - 配套 `scripts/verify-zip-utf8.mjs`：判据落在**内容**上
       （真读一遍 zip 数缺标志的条目数），不落在「配置写了没有」上
     **验证过的结果**：42657 个非 ASCII 条目缺标志从 42657 降到 0；

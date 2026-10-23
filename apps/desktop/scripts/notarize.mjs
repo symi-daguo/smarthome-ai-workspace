@@ -748,6 +748,36 @@ run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP, ZIP_OUT]);
 // 真正分发给用户的安装包是 dmg，它既被公证也被装订。
 log('分发 zip 不单独提交公证（stapler 不支持 zip，app 的 ticket 随包走）');
 
+// ---------------------------------------------------------------- 6.1 补 UTF-8 标志位
+/**
+ * 分发 zip 由 ditto 生成，而 ditto 与 electron-builder 一样，
+ **不会**在文件名含非 ASCII 时置 general purpose bit flag 的 0x800。
+ *
+ * 后果：Windows 资源管理器按 CP437 解读这些字节 → 解压出来是乱码目录名
+ * （app bundle 目录名是中文「智能家居AI工作台.app」）。
+ *
+ * 为什么必须在这一步补：`fix-zip-utf8` 原本挂在 electron-builder 的
+ * `artifactBuildCompleted` 钩子上，但那个钩子只对**打包时**生成的 zip 生效。
+ * 公证流程后面用 ditto **重新生成了**一份分发 zip 覆盖了它 ——
+ * 于是修好的那份被覆盖，最终发出去的是缺标志位的那份
+ * （实测 42652 个非 ASCII 条目全部缺标志，Windows 上必然解出乱码目录）。
+ *
+ * 修法只改头部标志位，**数据区一个字节不动** ——
+ * app 的公证票据是按字节算的，改了字节就可能要重新公证。
+ */
+{
+  const { fixZipUtf8Flags, verifyZipUtf8Flags } = await import('./fix-zip-utf8.mjs');
+  const before = verifyZipUtf8Flags(ZIP_OUT);
+  const r = fixZipUtf8Flags(ZIP_OUT);
+  const v = verifyZipUtf8Flags(ZIP_OUT);
+  if (v.bad > 0 || v.badLocal > 0) {
+    fail(`分发 zip 补 UTF-8 标志位后自检仍失败（central 缺 ${v.bad} 个 / local 缺 ${v.badLocal} 个）：${ZIP_OUT}`);
+  }
+  log(`分发 zip 补 UTF-8 标志位：非 ASCII 条目 ${v.nonAscii} 个，修复 ${r.fixed} 个，`
+    + `自检 central 缺标志 ${v.bad} 个 / local 缺标志 ${v.badLocal} 个`);
+  if (before.nonAscii > 0) log(`  样例：${v.samples.join(' | ')}`);
+}
+
 // electron-builder 留下的 blockmap 描述的是**重打之前**那个 dmg/zip 的哈希，
 // 现在文件已被替换，blockmap 就是错的。本项目没接自动更新，留着只会误导人。
 for (const name of readdirSync(OUT_DIR)) {
