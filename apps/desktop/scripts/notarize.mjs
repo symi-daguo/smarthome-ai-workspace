@@ -667,8 +667,30 @@ mkdirSync(STAGE, { recursive: true });
 // 最新那条常常是「上传中断留下的死记录」（In Progress），
 // 真正公证成功的那条排在它下面 —— 只看最新会白白丢掉一次 226MB 上传。
 const priorSubmission = latestAccepted(basename(DMG));
+
+// 判据必须落在**内容**上，不能只看「同名 + 文件存在」。
+//
+// 踩过的坑（2026-10-23 发 1.0.4）：09:34 那条 Accepted 的 dmg 是用**当时的 app** 打的；
+// 后来 10:01 重打 mac 产物（electron-builder dist:mac）把那个 dmg 整个覆盖了 ——
+// 新 dmg 里的 app 还没装订。而「同名 + 有 Accepted 记录 + 文件存在」三个条件全中，
+// 于是脚本「复用」了它，把没票的 dmg 当成已公证的那一份。
+// 后果：dmg 拖出来的 app 自己没有电子签章，Gatekeeper 会拦 ——
+// 而 dmg 本身带票，spctl 验 dmg 却是过的，看不出来。
+//
+// 正确判据：本地这个 dmg **必须已经带着电子签章**（stapler validate 通过）。
+// 只有被 staple 过的那一份，才可能与 Apple 侧已公证的内容是同一份字节。
+const dmgHasTicket = (() => {
+  if (!existsSync(DMG)) return false;
+  try {
+    run('xcrun', ['stapler', 'validate', DMG]);
+    return true;
+  } catch {
+    log('本地 dmg 没有电子签章（与已公证的那一份不是同一份字节）');
+    return false;
+  }
+})();
 // 只有「已 Accepted」才能复用：In Progress 时 ticket 还没下来，复用会导致装订失败
-const reuseDmg = priorSubmission?.status === 'Accepted' && existsSync(DMG);
+const reuseDmg = priorSubmission?.status === 'Accepted' && dmgHasTicket;
 if (reuseDmg) {
   log(`复用已提交的 dmg（${basename(DMG)}，提交号 ${priorSubmission.id} / ${priorSubmission.status}），不重打`);
 } else {
