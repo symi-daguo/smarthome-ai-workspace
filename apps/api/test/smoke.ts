@@ -4563,7 +4563,10 @@ async function main(): Promise<void> {
     const vc = readFileSync(join(process.cwd(), '../web/src/lib/errorContext.ts'), 'utf8');
     check(
       'errorContext 版本号取自注入变量而非手写常量',
-      /import\.meta\.env\.VITE_APP_VERSION/.test(vc) && !/APP_VERSION\s*=\s*'0\.\d/.test(vc),
+      // 允许可选链（import.meta.env?.VITE_APP_VERSION）：Node 里没有 import.meta.env，
+      // 而 check:pptx-render.mjs 会直接 import 本模块，加载阶段就会崩。
+      // 判据的意图是「不是手写常量」，可选链不改变这一点。
+      /import\.meta\.env(\?)?\.VITE_APP_VERSION/.test(vc) && !/APP_VERSION\s*=\s*'0\.\d/.test(vc),
     );
     const viteCfg = readFileSync(join(process.cwd(), '../web/vite.config.ts'), 'utf8');
     check(

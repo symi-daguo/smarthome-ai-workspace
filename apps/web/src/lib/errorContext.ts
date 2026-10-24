@@ -9,7 +9,10 @@
  * 只在内存中，不落盘、不上报；仅当用户主动提交反馈时随表单附带。
  */
 
-import { api, tokenStore } from './api';
+/**
+ * 记录失败请求由 lib/api.ts 在请求出错时直接调用（那边是所有请求的唯一出口）。
+ * 这里不 import api —— 否则 api.ts ↔ errorContext.ts 会成循环依赖。
+ */
 
 export interface ErrorContext {
   /** 失败请求摘要（最近 5 条） */
@@ -26,7 +29,8 @@ const MAX_REQ = 5;
 const MAX_ACT = 8;
 // 版本号由 vite.config.ts 从仓库根 package.json 注入（单一事实源），不在这里手写——
 // 手写会与 CHANGELOG/根版本各自漂移，报错上下文里的版本号就失去定位价值。
-const APP_VERSION: string = import.meta.env.VITE_APP_VERSION ?? '0.0.0';
+// 用可选链：check:pptx-render.mjs 会用 Node 直接 import 本模块，而 Node 里没有 import.meta.env。
+const APP_VERSION: string = import.meta.env?.VITE_APP_VERSION ?? '0.0.0';
 
 const failedRequests: ErrorContext['failedRequests'] = [];
 const actions: ErrorContext['actions'] = [];
@@ -95,21 +99,6 @@ export function formatContext(ctx: ErrorContext = snapshot()): string {
     lines.push(`失败请求：${ctx.failedRequests.map((r) => `${r.at} ${r.path} → ${r.message}`).join(' | ')}`);
   }
   return lines.join('\n');
-}
-
-/**
- * 包装 api：失败时自动记录上下文，再把错误原样抛出。
- * 不改变任何成功路径行为，也不吞异常。
- */
-export async function apiTracked<T>(path: string, init?: RequestInit): Promise<T> {
-  try {
-    return await api<T>(path, init);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    recordFailedRequest(path, msg);
-    if (!tokenStore.get()) clearContext(); // 未登录时的失败与业务无关，别污染上下文
-    throw e;
-  }
 }
 
 // 全局兜底：未捕获异常也记下来，用户下次反馈时能带上

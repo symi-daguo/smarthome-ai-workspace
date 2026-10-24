@@ -227,9 +227,3 @@ export function floorplanImages(
   };
 }
 
-/** 交付文件名里的版式后缀（edition 命名） */
-export const EDITION_LABEL: Record<string, string> = {
-  standard: '标准完整方案',
-  presale: '售前定制提案',
-  private: '私宅设计提案',
-};

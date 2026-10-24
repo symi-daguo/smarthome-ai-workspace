@@ -441,7 +441,7 @@ const [editing, setEditing] = useState<{
     }
   };
 
-  /** 选装修效果图：>8MB 或最长边>2048 才压缩（压缩逻辑复用 lib/compress） */
+  /** 选装修效果图：上传前统一压缩（压缩逻辑与口径复用 lib/compress） */
   const pickRenderAssets = async (files: FileList | null): Promise<void> => {
     if (!files || !files.length) return;
     const err = checkRenderUpload(raList.length + files.length);

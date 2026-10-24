@@ -12,7 +12,7 @@
  *（且不配任何真实模型 Key —— 这正是桌面端首启后的真实状态）。
  */
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { loadPg } from './config';
@@ -138,13 +138,4 @@ export async function startPostgres(opts: PostgresOptions): Promise<PostgresHand
       }
     },
   };
-}
-
-/** 列出 migrations 目录里的迁移名（按目录名排序 = 按时间顺序） */
-export function listMigrations(migrationsDir: string): string[] {
-  if (!existsSync(migrationsDir)) return [];
-  return readdirSync(migrationsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && /^\d{8,}/.test(e.name))
-    .map((e) => e.name)
-    .sort();
 }

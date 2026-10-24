@@ -1,3 +1,5 @@
+import { recordFailedRequest } from './errorContext';
+
 const TOKEN_KEY = 'sas_token';
 
 export const tokenStore = {
@@ -46,6 +48,13 @@ export async function api<T>(path: string, init?: ApiInit): Promise<T> {
   if (!isForm) headers['Content-Type'] = 'application/json';
   const token = tokenStore.get();
   if (token) headers.Authorization = `Bearer ${token}`;
+  /**
+   * 失败记一笔：用户报错时反馈页要能带上「最近哪个请求失败」。
+   * 只在已登录时记 —— 未登录的失败与业务无关（反馈页本身也要登录才能用）。
+   */
+  const noteFailure = (msg: string): void => {
+    if (token) recordFailedRequest(path, msg);
+  };
 
   const base = import.meta.env.VITE_API_BASE_URL ?? '';
   // 自己管超时：浏览器 fetch 默认无限等，接口卡住时界面只会一直转圈，
@@ -57,8 +66,11 @@ export async function api<T>(path: string, init?: ApiInit): Promise<T> {
     response = await fetch(`${base}${path}`, { ...rest, headers, signal: controller.signal });
   } catch (e) {
     if ((e as { name?: string })?.name === 'AbortError') {
-      throw new Error(`请求超时（超过 ${Math.round(timeoutMs / 1000)} 秒未返回），请稍后重试`);
+      const msg = `请求超时（超过 ${Math.round(timeoutMs / 1000)} 秒未返回），请稍后重试`;
+      noteFailure(msg);
+      throw new Error(msg);
     }
+    noteFailure(e instanceof Error ? e.message : String(e));
     throw e;
   } finally {
     clearTimeout(timer);
@@ -79,6 +91,7 @@ export async function api<T>(path: string, init?: ApiInit): Promise<T> {
     // 用户不知道到底哪几行有问题。
     if (Array.isArray(body?.details)) err.details = body.details;
     err.status = response.status;
+    noteFailure(err.message);
     throw err;
   }
   // DELETE/204 等空响应体：response.json() 会抛 SyntaxError，先取 text 再解析

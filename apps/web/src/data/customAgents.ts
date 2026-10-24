@@ -24,10 +24,6 @@ export async function createCustomAgent(input: { name: string; description?: str
   return api<CustomAgent>('/api/agents', { method: 'POST', body: JSON.stringify(input) });
 }
 
-export async function updateCustomAgent(id: string, patch: Partial<Pick<CustomAgent, 'name' | 'description' | 'systemPrompt' | 'avatarColor' | 'enabled'>>): Promise<CustomAgent> {
-  return api<CustomAgent>(`/api/agents/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
-}
-
 export async function deleteCustomAgent(id: string): Promise<void> {
   await api(`/api/agents/${id}`, { method: 'DELETE' });
 }

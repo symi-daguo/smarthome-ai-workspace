@@ -250,6 +250,12 @@ export class PlansService {
     }
     // 效果图校验放在**调 LLM 之前**：分组没填就重跑一次生成，代价是白扣一次额度。
     assertRenderAssetsReady(input.renderAssetIds, input.renderAssetMeta);
+    // 户型图同样要在调 LLM 之前校（归属 + 体积）：过了这关才值得花额度生成
+    await this.assertFloorplanAssets(
+      input.tenantId,
+      input.floorplanAssetId,
+      dedupeFloorplanExtras(input.floorplanAssetId, input.extraFloorplanAssetIds),
+    );
     const styleName = STYLE_NAMES[input.style] ?? input.style;
     const pages = await this.generatePages(input, styleName);
     const cost = pages.length * (TOKENS_PER_PAGE[input.edition] ?? 100);
@@ -395,6 +401,30 @@ export class PlansService {
     return { slot: dto.slot, assetId: dto.assetId };
   }
 
+  /**
+   * 户型图的归属与体积校验（建方案与挂接户型图共用一条路径）。
+   *
+   * 体积上限**必须由后端守**：前端的 20MB/35MB 只是体验层，
+   * 绕过界面直接打接口就能塞超大文件进来。
+   */
+  private async assertFloorplanAssets(
+    tenantId: string,
+    mainId: string | null | undefined,
+    extraIds: string[],
+  ): Promise<void> {
+    const all = [mainId, ...extraIds].filter((x): x is string => !!x);
+    const assets = await this.prisma.mediaAsset.findMany({
+      where: { id: { in: all }, tenantId },
+      select: { id: true, sizeBytes: true },
+    });
+    const byId = new Map(assets.map((a) => [a.id, a.sizeBytes]));
+    // 混入他人租户或已删的资源要挡住，不能只看主图
+    if (all.some((id) => !byId.has(id))) throw new NotFoundException('ASSET_NOT_FOUND');
+    // 报错按用户看到的顺序报「第 N 张」，所以要按 all 的顺序取大小
+    const tooBig = checkFloorplanSizes(all.map((id) => byId.get(id) as number));
+    if (tooBig) throw new BadRequestException(tooBig);
+  }
+
   /** 挂接户型图与设备点位（点位编辑器产物 → 空间动线页配图） */
   async attachFloorplan(
     tenantId: string,
@@ -402,14 +432,9 @@ export class PlansService {
     dto: { floorplanAssetId: string; extraFloorplanAssetIds?: string[] | null; floorplanFloors?: string[] | null; layoutPoints?: unknown[] | null },
   ) {
     await this.detail(tenantId, id);
-    const asset = await this.prisma.mediaAsset.findFirst({ where: { id: dto.floorplanAssetId, tenantId } });
-    if (!asset) throw new NotFoundException('ASSET_NOT_FOUND');
     // 额外户型图逐个校验归属；混入他人租户的资源要在这里挡住，不能只看主图
     const extraIds = [...new Set(dto.extraFloorplanAssetIds ?? [])].filter((x) => x && x !== dto.floorplanAssetId);
-    if (extraIds.length) {
-      const owned = await this.prisma.mediaAsset.count({ where: { id: { in: extraIds }, tenantId } });
-      if (owned !== extraIds.length) throw new NotFoundException('ASSET_NOT_FOUND');
-    }
+    await this.assertFloorplanAssets(tenantId, dto.floorplanAssetId, extraIds);
     // 楼层名与图片一一对应；缺失补空串，避免数组错位导致「二层」贴到「一层」的图上
     const total = 1 + extraIds.length;
     if (total > FLOORPLAN_MAX_FILES) {

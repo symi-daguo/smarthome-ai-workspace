@@ -293,13 +293,6 @@ export function dilateMask(mask: Uint8Array, width: number, height: number, radi
   return out;
 }
 
-/** 掩码前景像素数 */
-export function maskPixelCount(mask: Uint8Array): number {
-  let n = 0;
-  for (let i = 0; i < mask.length; i += 1) if (mask[i]) n += 1;
-  return n;
-}
-
 /** 墙体识别参数（默认值针对 1000px 宽的分析图做过标定） */
 export interface WallDetectOpts {
   /** 断线桥接膨胀半径（像素） */
@@ -935,18 +928,6 @@ export function heatColor(t: number): [number, number, number] {
 }
 
 /* ============================ 七、物理单位 ============================ */
-
-/** 图纸实际宽度（米）：优先用户输入，否则按 10m 兜底估算 */
-export function widthMeters(pixelWidth: number, inputM?: number, fallbackM = 10): number {
-  if (inputM !== undefined && Number.isFinite(inputM) && inputM > 0) return inputM;
-  return Math.max(0.1, (pixelWidth / 1000) * fallbackM);
-}
-
-/** 图纸实际高度（米）：优先用户输入，否则按宽度与像素比例换算 */
-export function heightMeters(pixelWidth: number, pixelHeight: number, inputM?: number, fallbackM = 10): number {
-  if (inputM !== undefined && Number.isFinite(inputM) && inputM > 0) return inputM;
-  return Math.max(0.1, (pixelHeight / Math.max(1, pixelWidth)) * fallbackM);
-}
 
 /** xPixelsPerMeter：像素每米（比例尺） */
 export function pixelsPerMeter(pixelWidth: number, widthM: number): number {

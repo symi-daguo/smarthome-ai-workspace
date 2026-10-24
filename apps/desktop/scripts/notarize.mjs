@@ -138,7 +138,6 @@ function ensureKeychain() {
   run('security', ['unlock-keychain', '-p', APPLE_PASSWORD, KEYCHAIN_PATH]);
 }
 
-/** 所有 notarytool 调用统一带上专用钥匙串 */
 /**
  * 所有 notarytool 调用统一带上专用钥匙串。
  *
@@ -301,7 +300,7 @@ function lastMeaningfulLine(msg) {
  *
  * 返回 true = 确认是死记录，可以重传。
  */
-async function isDeadSubmission(hit, fileName, label) {
+async function isDeadSubmission(hit, fileName) {
   const created = Date.parse(hit.createdDate ?? '');
   const born = Number.isFinite(created) ? created : Date.now();
   // 宽限期从「这条记录建起来」算起，不是从现在开始 ——
@@ -345,7 +344,7 @@ async function submitAndWait(file, label) {
   if (already && already.status === 'In Progress') {
     // 只有确认这条记录是「上传中断留下的死记录」，才允许重传；
     // 否则一律「只等不传」（宁可等，也不白传 245MB）。
-    if (!(await isDeadSubmission(already, fileName, label))) {
+    if (!(await isDeadSubmission(already, fileName))) {
       log(`  ${fileName} 已有在处理中的提交（${already.id}），直接等结果，不重复上传`);
       await pollUntilFinal(fileName, label);
       return;
@@ -400,7 +399,7 @@ async function submitAndWait(file, label) {
         // 要用同一套判死逻辑（连续探测 + 宽限期）确认，不能单次探不到就重传。
         const pending = latestSubmission(fileName);
         if (pending && pending.status === 'In Progress') {
-          if (!(await isDeadSubmission(pending, fileName, label))) {
+          if (!(await isDeadSubmission(pending, fileName))) {
             log(`  已有在处理中的提交（${pending.id}），不重复上传，改为轮询`);
             await pollUntilFinal(fileName, label);
             return;

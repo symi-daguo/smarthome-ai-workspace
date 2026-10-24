@@ -4,9 +4,13 @@
  * 为什么要有它：Agent 要摸清「这个系统能干什么」，最省钱的办法不是读源码（几十万 token），
  * 而是先读一份结构化的清单。设计目标是**按需取**：
  *   GET /api/agent/manifest            → 索引（分组 + 危险操作清单），实测约 2.8 KB
- *   GET /api/agent/manifest?group=quote → 只取报价这一组的详细操作，实测约 2.8 KB
- *   GET /api/agent/manifest?effective=1 → 按调用者权限过滤，实测约 21 KB
- * 全量取（?full=1，实测约 25 KB，164 条操作）只在需要通盘了解时用。
+ *   GET /api/agent/manifest?group=quote → 只取报价这一组的详细操作，实测约 3.8 KB
+ *   GET /api/agent/manifest?effective=1 → 按调用者权限过滤，实测约 24 KB
+ * 全量取（?full=1，实测约 28 KB）只在需要通盘了解时用。
+ *
+ * 操作条数与分组数不写在这里 —— 那是会漂的重复数字。
+ * 唯一来源是 README 与《Agent接入指南》，由 apps/api/test/smoke.ts 的
+ * 「README 数字与实现对账」断言逐个校验，漂了门禁会 FAIL。
  *
  * 漂移防护：apps/api/test/smoke.ts 会用真实路由表逐条比对，
  * 新增接口忘了写进清单 → 门禁 FAIL。清单漏项不会被静默放过。

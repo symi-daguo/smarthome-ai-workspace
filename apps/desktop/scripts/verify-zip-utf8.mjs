@@ -20,7 +20,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyZipUtf8Flags } from './fix-zip-utf8.mjs';
+import { verifyZipDataIntegrity, verifyZipUtf8Flags } from './fix-zip-utf8.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RELEASE = join(resolve(HERE, '..'), 'release');
@@ -61,6 +61,13 @@ for (const z of targets) {
   if (v.samples.length) {
     console.log(`  样例文件名：${v.samples.join(' | ')}`);
   }
+  // 数据区抽查：证明「只改标志位」没有连带破坏内容（头改错位置会在这里露出来）
+  const d = verifyZipDataIntegrity(z);
+  check(
+    `${z.split('/').pop()} 的数据区完好（抽查 ${d.sampled} 个条目，对不上 ${d.mismatched} 个）`,
+    d.mismatched === 0,
+    d.mismatched > 0 ? `对不上的条目：${d.samples.slice(0, 3).join('；')}` : '',
+  );
 }
 
 if (failures > 0) {

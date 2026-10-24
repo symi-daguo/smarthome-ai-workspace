@@ -29,9 +29,3 @@ export const updateRoleSchema = z.object({
 
 export type CreateRoleDto = z.infer<typeof createRoleSchema>;
 export type UpdateRoleDto = z.infer<typeof updateRoleSchema>;
-
-/** 成员创建/改角色时用：系统模板 key 或自定义角色 id 都接受 */
-export const assignRoleSchema = z.object({
-  /** 传 key（如 tenant_admin）或自定义角色 id */
-  role: z.string().trim().min(1).max(64),
-});

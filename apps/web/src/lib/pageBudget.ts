@@ -11,8 +11,6 @@
  *    否则客户拿到 11 页而门店只付了 9 页。
  */
 
-import type { PlanPage } from '../data/planThemes';
-
 /** 沟通模块基数：与后端 BASE_SKELETON 保持一致，改一处要同时改后端 */
 export const CORE_MODULES = 9;
 
@@ -23,13 +21,6 @@ export interface MaterialCounts {
   floorplanCount: number;
   /** 素材展示页数（按空间分组折算，不是图片张数） */
   renderCount: number;
-}
-
-export interface PageCostInput extends MaterialCounts {
-  /** 用户在页面上选的页数 */
-  selected: number;
-  /** 版式 */
-  edition: Edition;
 }
 
 /** 单页出图成本（元），由部署者按画质调整 */
@@ -81,25 +72,4 @@ export function pageCountHint(
       : `当前文案 ${pages} 页，落库时按实际写出的文案页数对齐`;
 
   return { formula, expansion, cost: `初版出图约 ¥${estimateCost(pages, quality)}` };
-}
-
-/**
- * 页序列：把沟通模块页与素材页拼成最终页序列。
- * 目前只有户型图素材（`renderedFloorplan` / `floorplan`），效果图尚未接入（批次 3），
- * 所以素材页只贡献额外户型图页；接通效果图后在这里追加即可，不用改调用方。
- */
-export function buildPageSequence(
-  basePages: PlanPage[],
-  m: MaterialCounts,
-  floorplanPage: PlanPage | null,
-  edition: Edition,
-): PlanPage[] {
-  const extra = Math.max(0, m.floorplanCount - 1);
-  if (!floorplanPage || extra <= 0) return basePages;
-  // 额外户型图先插在动线页之后：先看动线规划，再看整张户型与点位落位
-  const at = basePages.findIndex((p) => p.type === 'layout');
-  const idx = at < 0 ? CORE_MODULES : at + 1;
-  const out = [...basePages];
-  for (let i = 0; i < extra; i++) out.splice(idx, 0, { ...floorplanPage, heading: floorplanPage.heading });
-  return out;
 }

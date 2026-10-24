@@ -272,5 +272,28 @@ for (const [rel, src] of [['lib/planPptx.ts', pptxSrc], ['components/PlanSlide.t
   check(`${rel} 页型标签走 floorplanPageCopy`, src.includes('floorplanPageCopy('));
 }
 
+// —— 11. 失败请求要真的被记下来 ——
+// 反馈页有一处「N 个失败请求」的展示，但记录动作一度没有任何调用方，
+// 于是那块 UI 永远是空的、上下文里承诺的「最近哪个请求失败」从来没兑现过。
+// 现在记录挂在 lib/api.ts 的请求出口上（那是所有请求唯一的出口）。
+// 判据落在源码上：api.ts 在 Node 里跑不起来（import.meta.env / localStorage），
+// 行为级测试需要另起一套 shim，不值当。
+const apiSrc = readFileSync(join(WEB_SRC, 'lib/api.ts'), 'utf8');
+const errCtxSrc = readFileSync(join(WEB_SRC, 'lib/errorContext.ts'), 'utf8');
+check('lib/api.ts 在请求失败时记一笔（网络错误与 HTTP 错误两条路径）',
+  (apiSrc.match(/noteFailure\(/g) ?? []).length >= 3, // 1 处定义 + 2 处调用
+);
+check('失败请求只在已登录时记（未登录的失败与业务无关）',
+  /const noteFailure = \(msg: string\): void => \{\s*if \(token\) recordFailedRequest\(path, msg\);/.test(apiSrc),
+);
+check('lib/errorContext.ts 仍导出 recordFailedRequest',
+  /export function recordFailedRequest\(/.test(errCtxSrc),
+);
+// api.ts 现在 import errorContext.ts；errorContext.ts 若再 import api.ts 就是循环依赖，
+// 运行期会拿到未初始化的模块引用，报错还很难定位。
+check('lib/errorContext.ts 不再 import lib/api.ts（防循环依赖）',
+  !/from '\.\/api'/.test(errCtxSrc),
+);
+
 console.log(`\n小计: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

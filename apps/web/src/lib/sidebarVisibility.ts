@@ -17,26 +17,6 @@
  * - 改配置后广播事件，侧栏即时重渲染（同一个标签页不触发 storage 事件）。
  */
 
-/** 侧栏入口的稳定标识：路由去掉查询串后的路径 */
-export type SidebarKey =
-  | '/'
-  | '/agents'
-  | '/canvas'
-  | '/products'
-  | '/order'
-  | '/image'
-  | '/video'
-  | '/plan'
-  | '/floorplan'
-  | '/treasure'
-  | '/knowledge'
-  | '/works'
-  | '/benchmark'
-  | '/content'
-  | '/team'
-  | '/tokens'
-  | '/model-config';
-
 const HIDDEN_KEY = 'sidebar_hidden';
 
 /** 同一标签页内的变更广播（storage 事件不跨标签页） */
@@ -65,11 +45,6 @@ export function getHiddenSidebarKeys(): Set<string> {
   return readHidden();
 }
 
-/** 某个入口是否可见（默认可见） */
-export function isSidebarVisible(key: string): boolean {
-  return !readHidden().has(key);
-}
-
 /**
  * 设置某个入口的可见性。
  * @param key 入口标识
@@ -85,15 +60,6 @@ export function setSidebarVisible(key: string, visible: boolean): void {
 /** 恢复默认：全部显示 */
 export function resetSidebarVisibility(): void {
   writeHidden(new Set());
-}
-
-/**
- * 隐藏入口后，当前所在页面可能已经不是任何可见入口了。
- * 返回「需要跳转到的路径」：无可见入口时回工作台。
- */
-export function resolveFallbackPath(visible: (key: string) => boolean, current: string): string {
-  if (visible(current)) return current;
-  return '/';
 }
 
 /** 订阅可见性变化（跨标签页 + 同标签页自定义事件） */

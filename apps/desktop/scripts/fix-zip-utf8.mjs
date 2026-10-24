@@ -24,6 +24,7 @@
  * 每个非 ASCII 条目的标志位必须带 0x800，且按 UTF-8 解出来的名字与原始一致。
  */
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { inflateRawSync } from 'node:zlib';
 
 const LOCAL_SIG = 0x04034b50;
 const CENTRAL_SIG = 0x02014b50;
@@ -153,6 +154,101 @@ export function verifyZipUtf8Flags(filePath) {
     cp += 46 + nlen + elen + clen;
   }
   return { total, nonAscii, bad, badLocal, samples };
+}
+
+/**
+ * 数据区完整性抽查：抽若干条目，解压后比 central directory 里记的 CRC32。
+ *
+ * 为什么需要这一层：标志位修复改的是**条目头**，而 zip 里最容易被改坏的就是头 ——
+ * 历史上就踩过「按 local header 顺序跳偏移会错位」这个坑（数据描述符 + zip64）。
+ * 只查标志位能证明「名字对得上」，但证明不了「内容还读得出来」。
+ *
+ * 用 Node 内置 zlib 解 raw deflate，不引新依赖；stored（method 0）直接取字节。
+ * 压不了的条目（method 12/14/93…）跳过，只在抽样里出现就跳过，不算失败。
+ */
+const CRC_TABLE = (() => {
+  const t = new Int32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c;
+  }
+  return t;
+})();
+
+function crc32(buf) {
+  let c = -1;
+  for (let i = 0; i < buf.length; i += 1) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+}
+
+export function verifyZipDataIntegrity(filePath, sampleSize = 8) {
+  const buf = readFileSync(filePath);
+  const eocd = findEocd(buf);
+  if (eocd < 0) throw new Error('不是有效的 zip');
+  const total = buf.readUInt16LE(eocd + 10);
+  let cdOffset = buf.readUInt32LE(eocd + 16);
+  if (total === 0xffff || cdOffset === 0xffffffff) {
+    const loc = findZip64Locator(buf, eocd);
+    if (loc >= 0) {
+      const z64 = Number(buf.readBigUInt64LE(loc + 8));
+      total = Number(buf.readBigUInt64LE(z64 + 32));
+      cdOffset = Number(buf.readBigUInt64LE(z64 + 48));
+    }
+  }
+
+  // 先把可抽样的条目挑出来（按数据大小均匀取样，避免只抽到空目录）
+  const candidates = [];
+  let cp = cdOffset;
+  for (let i = 0; i < total; i += 1) {
+    if (buf.readUInt32LE(cp) !== CENTRAL_SIG) throw new Error(`central header 签名不对（条目 ${i}）`);
+    const method = buf.readUInt16LE(cp + 10);
+    const crc = buf.readUInt32LE(cp + 16);
+    const csize = buf.readUInt32LE(cp + 20);
+    const usize = buf.readUInt32LE(cp + 24);
+    const nlen = buf.readUInt16LE(cp + 28);
+    const elen = buf.readUInt16LE(cp + 30);
+    const clen = buf.readUInt16LE(cp + 32);
+    const localOffset = buf.readUInt32LE(cp + 42);
+    const name = buf.subarray(cp + 46, cp + 46 + nlen).toString('utf8');
+    if ((method === 0 || method === 8) && usize > 0) {
+      candidates.push({ method, crc, csize, usize, localOffset, name });
+    }
+    cp += 46 + nlen + elen + clen;
+  }
+  if (candidates.length === 0) return { sampled: 0, mismatched: 0, samples: [] };
+
+  const step = Math.max(1, Math.floor(candidates.length / sampleSize));
+  const picked = [];
+  for (let i = 0; i < candidates.length && picked.length < sampleSize; i += step) picked.push(candidates[i]);
+
+  let mismatched = 0;
+  const samples = [];
+  for (const e of picked) {
+    // 数据区起点：local header 之后（local header 里的文件名/extra 长度可能与 central 不同）
+    if (buf.readUInt32LE(e.localOffset) !== LOCAL_SIG) {
+      mismatched += 1;
+      samples.push(`${e.name}（local header 签名不对）`);
+      continue;
+    }
+    const lnlen = buf.readUInt16LE(e.localOffset + 26);
+    const lelen = buf.readUInt16LE(e.localOffset + 28);
+    const start = e.localOffset + 30 + lnlen + lelen;
+    const raw = buf.subarray(start, start + e.csize);
+    let out;
+    try {
+      out = e.method === 0 ? raw : inflateRawSync(raw);
+    } catch {
+      mismatched += 1;
+      samples.push(`${e.name}（解压失败）`);
+      continue;
+    }
+    if (out.length !== e.usize || crc32(out) !== e.crc) {
+      mismatched += 1;
+      samples.push(`${e.name}（CRC 或长度对不上）`);
+    }
+  }
+  return { sampled: picked.length, mismatched, samples };
 }
 
 /** electron-builder 的 artifactBuildCompleted 钩子入口 */
