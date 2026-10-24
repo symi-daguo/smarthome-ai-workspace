@@ -512,15 +512,10 @@ export function ProductCenter(): ReactNode {
             <Button type="primary" icon={<PlusOutlined />} style={{ background: BRAND_GRADIENT, border: 'none' }} onClick={() => openEdit()}>
               新增我的产品
             </Button>
-            {/*
             <Button icon={<RobotOutlined />} loading={aiBusy} disabled={!selectedIds.length} onClick={aiProcess}>
               AI 批量处理{selectedIds.length ? `（${selectedIds.length}）` : ''}
             </Button>
-            {/*
-            <Button icon={<RobotOutlined />} loading={aiBusy} disabled={!selectedIds.length} onClick={aiProcess}>
-              AI 批量处理{selectedIds.length ? `（${selectedIds.length}）` : ''}
-            </Button>
-            */}
+
           </Space>
         }
       />

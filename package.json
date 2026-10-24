@@ -1,6 +1,6 @@
 {
   "name": "smarthome-ai-workspace",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "license": "MIT",
   "private": true,
   "description": "智能家居 AI 工作台：多租户、RBAC、agent 工具调用、内容提取与知识库（开源自部署，模型自选）",
@@ -24,6 +24,8 @@
     "db:seed": "pnpm --filter @app/api prisma:seed",
     "docker:prune": "docker image prune -f && docker builder prune -af --filter \"until=24h\"",
     "ops:check": "bash scripts/ops-check.sh",
+    "ops:backup": "bash scripts/backup-full.sh",
+    "ops:restore": "bash scripts/restore-full.sh",
     "notarize": "pnpm --filter @app/desktop notarize",
     "desktop:runtime": "pnpm --filter @app/desktop prepare:runtime",
     "desktop:verify": "pnpm --filter @app/desktop verify:runtime",

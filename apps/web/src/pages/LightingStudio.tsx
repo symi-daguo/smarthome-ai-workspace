@@ -994,15 +994,10 @@ export function LightingStudio(): ReactNode {
                 </Card>
                 <Space>
                   <Button onClick={() => setStep(2)}>返回时间轴</Button>
-                  {/*
                   <Button type="primary" icon={<ThunderboltOutlined />} loading={rendering} onClick={() => void generate()}>
                     生成灯光场景视频
                   </Button>
-                  {/*
-                  <Button type="primary" icon={<ThunderboltOutlined />} loading={rendering} onClick={() => void generate()}>
-                    生成灯光场景视频
-                  </Button>
-                  */}
+
                 </Space>
                 {videoUrl && (
                   <video src={videoUrl} controls style={{ width: '100%', borderRadius: 12, background: '#000' }} />

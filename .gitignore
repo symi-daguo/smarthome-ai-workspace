@@ -5,6 +5,8 @@ dist/
 .env.local
 coverage/
 uploads/
+# 全量可恢复备份（数据库 + 产物卷）：体积大且含本机数据，不入库
+backups/
 .DS_Store
 # 桌面端打包产物：
 # - runtime/  prepare-runtime 产出的运行时资源（PG 二进制 + 生产依赖，几百 MB，脚本可重建）

@@ -603,11 +603,8 @@ export function OrderStudio(): ReactNode {
                 title={<Space><HistoryOutlined />跟进记录</Space>}
                 extra={(
                   <>
-                    {/*
                     <Button icon={<RobotOutlined />} loading={adviceLoading} onClick={() => void askAdvice()}>AI 跟进建议</Button>
-                    {/*
-                    <Button icon={<RobotOutlined />} loading={adviceLoading} onClick={() => void askAdvice()}>AI 跟进建议</Button>
-                    */}
+
                   </>
                 )}
                 styles={{ body: { padding: 18 } }}
@@ -650,11 +647,8 @@ export function OrderStudio(): ReactNode {
         <Alert type="info" showIcon style={{ marginBottom: 12 }} message="把客户微信原话、电话纪要等原始描述粘贴进来，AI 自动解析成结构化档案（含体验场景、系统范围、预算上下限）并推荐关注品类。" />
         <TextArea rows={3} value={intakeText} onChange={(e) => setIntakeText(e.target.value)} placeholder="例：王先生，东湖玖章 128㎡ 四室两厅，预算 3 万左右，想做米家全屋智能，重点客厅灯光+主卧窗帘+全屋 WiFi 覆盖，下月开工…" maxLength={4000} />
         <Space style={{ margin: '10px 0' }}>
-          {/*
           <Button icon={<RobotOutlined />} loading={intakeLoading} onClick={() => void runIntake()} style={{ background: BRAND_GRADIENT, border: 'none', color: '#fff' }}>AI 解析建档</Button>
-          {/*
-          <Button icon={<RobotOutlined />} loading={intakeLoading} onClick={() => void runIntake()} style={{ background: BRAND_GRADIENT, border: 'none', color: '#fff' }}>AI 解析建档</Button>
-          */}
+
           {intakeLoading ? <Text type="secondary">正在解析…</Text> : null}
         </Space>
         {intake ? (

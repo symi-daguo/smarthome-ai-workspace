@@ -60,30 +60,41 @@ done
 
 echo ""
 echo "=== 4. 备份留盘（应有份数上限）==="
-BK="apps/api/uploads/backups"
-if [ -d "$BK" ]; then
-  CNT=$(find "$BK" -maxdepth 1 -name 'backup-*.json' 2>/dev/null | wc -l | tr -d ' ')
-  SZ=$(du -sh "$BK" 2>/dev/null | cut -f1)
+# 真实部署路径在容器卷里：aisaas-api-1:/repo/uploads/backups。
+# 原先读的是宿主 apps/api/uploads/backups —— 那是**开发目录**，
+# 线上真正占着几百 MB 的是 api-uploads 命名卷，两边完全不是一个地方，
+# 体检脚本读错地方就等于没体检（实测：宿主 3MB / 卷内 279MB）。
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^aisaas-api-1$'; then
+  BK="/repo/uploads/backups"
+  CNT=$(docker exec aisaas-api-1 sh -c "ls -1 '$BK' 2>/dev/null | grep -c '^backup-.*\.json$'" 2>/dev/null | tr -d ' ')
+  SZ=$(docker exec aisaas-api-1 sh -c "du -sh '$BK' 2>/dev/null | cut -f1" 2>/dev/null | tr -d ' ')
   # 变量后紧跟中文全角括号时必须写 ${SZ}——bash 会把 $SZ）当成一个变量名
   if [ "${CNT:-0}" -gt 3 ]; then
-    warn "备份 ${CNT} 份（${SZ}），超过保留上限 3 份"
+    warn "备份 ${CNT} 份（${SZ:-?}），超过保留上限 3 份"
   else
-    ok "备份 ${CNT} 份（${SZ}），在保留上限内"
+    ok "备份 ${CNT:-0} 份（${SZ:-?}），在保留上限内"
   fi
+  note "路径：aisaas-api-1:${BK}"
 else
-  note "尚无备份（$BK 不存在）"
+  note "aisaas-api-1 未运行，跳过（备份在容器卷 /repo/uploads/backups）"
 fi
 
 echo ""
 echo "=== 5. 产物占用 vs 配额 ==="
-UP=$(du -sm apps/api/uploads 2>/dev/null | cut -f1 | tr -d ' ')
-QUOTA=$(grep -oE 'UPLOAD_QUOTA_MB: \$\{UPLOAD_QUOTA_MB:-[0-9]+\}' docker-compose.yml 2>/dev/null | grep -oE '[0-9]+$')
-QUOTA=${QUOTA:-4096}
-if [ -n "$UP" ] && [ "$UP" -gt "$((QUOTA * 80 / 100))" ]; then
-  warn "产物 ${UP}MB / 配额 ${QUOTA}MB，已用超过 80%"
-  note "在「个人中心」可一键清理过期未引用产物（POST /api/admin/storage/cleanup）"
+# 同上：占用必须读容器卷 /repo/uploads（宿主 apps/api/uploads 只是开发目录）
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^aisaas-api-1$'; then
+  UP=$(docker exec aisaas-api-1 sh -c 'du -sm /repo/uploads 2>/dev/null | cut -f1' 2>/dev/null | tr -d ' ')
+  QUOTA=$(grep -oE 'UPLOAD_QUOTA_MB: \$\{UPLOAD_QUOTA_MB:-[0-9]+\}' docker-compose.yml 2>/dev/null | grep -oE '[0-9]+$')
+  QUOTA=${QUOTA:-4096}
+  if [ -n "${UP:-}" ] && [ "$UP" -gt "$((QUOTA * 80 / 100))" ]; then
+    warn "产物 ${UP}MB / 配额 ${QUOTA}MB，已用超过 80%"
+    note "在「个人中心」可一键清理过期未引用产物（POST /api/admin/storage/cleanup）"
+  else
+    ok "产物 ${UP:-?}MB / 配额 ${QUOTA}MB"
+  fi
+  note "路径：aisaas-api-1:/repo/uploads"
 else
-  ok "产物 ${UP:-?}MB / 配额 ${QUOTA}MB"
+  note "aisaas-api-1 未运行，跳过（产物在容器卷 /repo/uploads）"
 fi
 
 echo ""

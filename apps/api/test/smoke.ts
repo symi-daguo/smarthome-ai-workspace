@@ -12,7 +12,8 @@ import { TokenService } from '../src/billing/token.service.js';
 import { CanvasService } from '../src/canvas/canvas.service.js';
 import { PrismaService } from '../src/prisma/prisma.module.js';
 import { resolveMinimaxVideoModel } from '../src/media/video-provider.js';
-import { buildUserContent, extractJsonValue, classifyJsonFailure } from '../src/llm/llm.service.js';
+import { buildUserContent, extractJsonValue, classifyJsonFailure, resolveChatModel, isTruncatedOutput } from '../src/llm/llm.service.js';
+import { DEFAULT_CHAT_MODEL } from '../src/llm/llm.constants.js';
 import { markCharged, isChargedError } from '../src/media/media.service.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
@@ -1062,6 +1063,56 @@ async function main(): Promise<void> {
   // 模型配置中心：RBAC 生效（viewer 无 platform:billing:manage → 403；tenant_admin 自部署默认可配置）
   // ---------- 模型配置在线编辑 + 持久化（临时把 A 提为 super_admin） ----------
   const prisma = app.get(PrismaService);
+
+  // ---------- 删除素材：被方案引用时必须拒绝（否则方案当场裂图） ----------
+  // 原实现只查「启用产品 imageUrl」，方案户型图/渲染图/交付包/灯光场景源图/用户头像全都没保护：
+  // 删掉其中那张图，方案页当场裂开，而接口还返回 200，用户以为删干净了。
+  // 用**独立上传的一张图**做实验：upAsset 后面还要当画布参考图用，这里删掉它会连累后面的断言。
+  {
+    const fdImg3 = new FormData();
+    fdImg3.append('file', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'asset-refused.png');
+    fdImg3.append('title', '引用保护图');
+    const upRes3 = await fetch(`${base}/api/media/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${regA.body.token}` }, body: fdImg3 });
+    const upAsset3 = (await upRes3.json()) as { id: string };
+    const refPlan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '引用保护冒烟方案', style: 'A', edition: 'standard',
+        pageCount: 1,
+        pages: [{ type: 'scene', heading: '冒烟', subtitle: '', body: '内容', bullets: [], narration: '', quote: '' }],
+        versionNo: 1,
+        floorplanAssetId: upAsset3.id,
+      },
+    });
+    const delRefused = await request(base, `/api/media/assets/${upAsset3.id}`, { ...auth0, method: 'DELETE' });
+    check('被方案户型图引用的素材删除被拒（400，防裂图）', delRefused.status === 400);
+    await prisma.planProject.delete({ where: { id: refPlan.id } });
+    const delAfterUnref = await request<{ id: string }>(base, `/api/media/assets/${upAsset3.id}`, { ...auth0, method: 'DELETE' });
+    check('解除引用后删除恢复 200', delAfterUnref.status === 200 && delAfterUnref.body.id === upAsset3.id);
+  }
+
+  // ---------- 删除方案：交付包（纯文件不入库）必须一起删掉 ----------
+  // 交付包 zip 只落盘、库里没有对应行；`prune` 只管「同一方案打包多次留最新几份」，
+  // 管不到「方案本身被删」—— 方案一删，包就成了没人认领的孤儿，永久留在卷里。
+  // 实测单个包 3-20MB，几十个方案就能吃掉几百 MB，正是「无错误数据挤爆硬盘」的典型来源。
+  {
+    const pkgPlan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '交付包清理冒烟方案', style: 'A', edition: 'standard',
+        pageCount: 1,
+        pages: [{ type: 'scene', heading: '冒烟', subtitle: '', body: '内容', bullets: [], narration: '', quote: '' }],
+        versionNo: 1,
+      },
+    });
+    const pkgDir = join(process.cwd(), 'uploads', 'plan-packages');
+    mkdirSync(pkgDir, { recursive: true });
+    const pkgFile = join(pkgDir, `${pkgPlan.id}-v1-1.zip`);
+    writeFileSync(pkgFile, 'fake-package');
+    const delPlan = await request(base, `/api/plans/${pkgPlan.id}`, { ...auth0, method: 'DELETE' });
+    check('删除方案成功', delPlan.status === 200 || delPlan.status === 204);
+    check('删方案时交付包文件一并删除（否则永久残留、挤爆硬盘）', !existsSync(pkgFile));
+    if (existsSync(pkgFile)) writeFileSync(pkgFile, '');
+  }
+
   const superRole = await prisma.role.findUniqueOrThrow({ where: { key: 'super_admin' } });
   const viewerRole = await prisma.role.findUniqueOrThrow({ where: { key: 'viewer' } });
   const memberA = await prisma.membership.findFirstOrThrow({ where: { userId: me.body.id, tenantId: tenantA } });
@@ -2866,6 +2917,40 @@ async function main(): Promise<void> {
       { name: '长文.txt', dataUrl: `data:text/plain;base64,${Buffer.from('啊'.repeat(20000)).toString('base64')}` },
     ]);
     check('超长文本被截断并注明原长度（不白烧 token）', JSON.stringify(longText).includes('已截断'));
+
+    // ---------- 对话模型名解析：空串必须回退默认，不能把 '' 发给上游 ----------
+    // 故障现场（1.0.7 走查实测）：灯光诊断的「生成灯光建议」显式传 model: ''，
+    // 意为「不锁死模型、跟随默认」；而 chat() 当时用 `??` 兜底 ——
+    // 空串不是 null/undefined，会原样透传，上游回 `unknown model ''`，
+    // 功能 100% 不可用，且报错完全指不到真因（看起来像「模型没配」）。
+    {
+      check(
+        '未配置任何模型时回退默认模型',
+        resolveChatModel(undefined, undefined) === DEFAULT_CHAT_MODEL,
+      );
+      check(
+        '调用方传空串模型名时回退默认（灯光诊断的 model: ""）',
+        resolveChatModel(undefined, '') === DEFAULT_CHAT_MODEL,
+      );
+      check(
+        '数据库显式配置的模型优先于默认值',
+        resolveChatModel('my-model', '') === 'my-model',
+      );
+      check(
+        '调用方指定的模型在数据库未配置时生效',
+        resolveChatModel(undefined, 'caller-model') === 'caller-model',
+      );
+      // 预算被思考吃光时的可观测性：必须报出「截断」，不能把空串交给上层
+      // （上层只能显示「暂无数据」，根因被吞掉，现场无从判断是预算还是模型格式问题）
+      check(
+        '输出被预算截断且正文为空时判为截断',
+        isTruncatedOutput('length', '') && isTruncatedOutput('length', '   '),
+      );
+      check(
+        '正文非空或未截断时不误报截断',
+        !isTruncatedOutput('stop', '') && !isTruncatedOutput('length', '{"a":1}'),
+      );
+    }
     const badData = await request(base, '/api/llm/chat', {
       ...authA,
       method: 'POST',

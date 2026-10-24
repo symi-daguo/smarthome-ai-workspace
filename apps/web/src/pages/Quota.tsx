@@ -5,6 +5,8 @@ import { CheckCircleFilled, RocketOutlined } from '@ant-design/icons';
 import { useAuth } from '../store/AuthContext';
 import { PageHeader } from '../components/PageHeader';
 import { pageContainerStyle } from '../theme/tokens';
+import { PRESET_AGENT_COUNT } from '../data/agents';
+import { TOOL_COUNT } from './TreasureBox';
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -19,7 +21,7 @@ const CAPABILITIES: { group: string; items: string[] }[] = [
   {
     group: 'AI 能力',
     items: [
-      '通用对话智能体与 12 个预置智能体（文案 / 脚本 / 传记 / 直播稿）',
+      '通用对话智能体与 ' + PRESET_AGENT_COUNT + ' 个预置智能体（文案 / 脚本 / 传记 / 直播稿）',
       'AI 生图：自由生图 + 毛坯房效果图 / 视频封面 / 节假日海报 / 平面图转彩平图',
       'AI 生视频：首帧图生视频，支持 MiniMax Director 与 OpenAI Sora 切换',
       '智能方案生成：9 页原生可编辑 PPTX + 完整讲稿 + 免登录分享链接',
@@ -28,7 +30,7 @@ const CAPABILITIES: { group: string; items: string[] }[] = [
   {
     group: '方案与设计',
     items: [
-      '智能百宝箱 20 个工具入口',
+      '智能百宝箱 ' + TOOL_COUNT + ' 个工具入口',
       '设备点位布置：布点 → 导出图纸 PNG / 设备清单 CSV',
       '智能灯光场景编排：灯具编排 + 手工时间轴 → 出片',
       'WiFi 信号热力图、灯光点位效果图',

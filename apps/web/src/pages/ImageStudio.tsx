@@ -421,15 +421,10 @@ export function ImageStudio(): ReactNode {
     <div style={{ marginBottom: 18 }}>
       <SectionLabel>封面文案（可编辑）</SectionLabel>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-        {/*
         <Button size="small" icon={<BulbOutlined />} loading={copying} onClick={() => void genCoverCopy()}>
           一键生成标题与卖点
         </Button>
-        {/*
-        <Button size="small" icon={<BulbOutlined />} loading={copying} onClick={() => void genCoverCopy()}>
-          一键生成标题与卖点
-        </Button>
-        */}
+
         <Text type="secondary" style={{ fontSize: 12 }}>大标题、侧边标签与卖点可直接在此手写</Text>
       </div>
       <div style={{ marginBottom: 12 }}>
@@ -506,15 +501,10 @@ export function ImageStudio(): ReactNode {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <img src={refImage.url} alt="参考图" style={{ width: 108, height: 72, objectFit: 'cover', borderRadius: 8, border: `1px solid ${token.colorBorderSecondary}` }} />
                 <div style={{ flex: 1, minWidth: 180 }}>
-                  {/*
                   <Button type="primary" ghost size="small" icon={<BulbOutlined />} loading={reversing} onClick={() => void reversePrompt()} style={{ marginBottom: 6 }}>
                     反推提示词
                   </Button>
-                  {/*
-                  <Button type="primary" ghost size="small" icon={<BulbOutlined />} loading={reversing} onClick={() => void reversePrompt()} style={{ marginBottom: 6 }}>
-                    反推提示词
-                  </Button>
-                  */}
+
                   <div><Text type="secondary" style={{ fontSize: 12 }}>{wf.refHint}</Text></div>
                 </div>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setRefImage(null)}>移除</Button>
@@ -669,21 +659,13 @@ export function ImageStudio(): ReactNode {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            {/*
             <Button
               size="large" loading={generating} onClick={() => void generate()} icon={<ThunderboltFilled />}
               style={{ height: 50, paddingInline: 28, borderRadius: 9999, background: INK_BLACK, color: '#fff', border: 'none', fontWeight: 700, boxShadow: 'none' }}
             >
               {generating ? '生成中（约 15 秒）' : '生成图片'}
             </Button>
-            {/*
-            <Button
-              size="large" loading={generating} onClick={() => void generate()} icon={<ThunderboltFilled />}
-              style={{ height: 50, paddingInline: 28, borderRadius: 9999, background: INK_BLACK, color: '#fff', border: 'none', fontWeight: 700, boxShadow: 'none' }}
-            >
-              {generating ? '生成中（约 15 秒）' : '生成图片'}
-            </Button>
-            */}
+
             <Text type="secondary" style={{ fontSize: 13 }}>
               {isFree
                 ? '生成结果自动保存到「我的作品」，可直接用作生视频首帧'

@@ -55,6 +55,40 @@ function idOf(row: Record<string, unknown>): Record<string, unknown> {
   return { [field]: id };
 }
 
+/** 备份/恢复要访问的表操作集合（Prisma 模型名动态索引） */
+type RestoreTable = {
+  findMany: (a?: unknown) => Promise<unknown[]>;
+  deleteMany: (a?: unknown) => Promise<unknown>;
+  upsert: (a?: unknown) => Promise<unknown>;
+  create: (a?: unknown) => Promise<unknown>;
+};
+
+/**
+ * 恢复失败的逐表明细。
+ *
+ * 为什么原来不报：清空与写入都用空 catch 吞掉异常，
+ * 结果是「恢复了一部分」在响应里看起来和「完全成功」一模一样 ——
+ * 运维只能靠事后查库才知道少了数据，而那时已经晚了。
+ */
+export interface RestoreFailure {
+  /** 表名（Prisma 模型名） */
+  table: string;
+  /** 该表没能恢复进来的行数 */
+  failed: number;
+  /** 首个错误原因（截断后可直接读懂） */
+  reason: string;
+  /** 清空阶段是否失败（被外键挡住 → 该表退化为部分合并） */
+  clearFailed?: boolean;
+}
+
+/** 错误信息转成人能读懂的短文本（Prisma 原始报错带整条 SQL，太长） */
+function errorMessage(e: unknown): string {
+  const raw = e && typeof e === 'object' && typeof (e as { message?: unknown }).message === 'string'
+    ? (e as { message: string }).message
+    : String(e);
+  return raw.replace(/\s+/g, ' ').slice(0, 200);
+}
+
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('admin')
 export class BackupController {
@@ -119,13 +153,17 @@ export class BackupController {
    *
    * 破坏性操作，所以：权限要最高、必须带 confirmToken、必须写审计。
    * 顺序按 BACKUP_TABLES 逆序 —— 有外键关联的表先清空、后写入，失败时留下的破坏面最小。
+   *
+   * replace 模式包在**一个事务**里：原来是「清空一张表 → 写一行」逐条独立提交，
+   * 中途失败会留下「表已清空、数据没回来」的半截状态 —— 比整体失败更难收拾，
+   * 而且运维看不出丢了多少数据。现在要么整批生效，要么整批回滚。
    */
   @RequirePermissions('platform:billing:manage')
   @Post('backup/restore')
   async restore(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
     @Body() body: { tables?: Record<string, unknown>; mode?: 'merge' | 'replace'; confirmToken?: string },
-  ): Promise<{ mode: string; restored: Record<string, number> }> {
+  ): Promise<{ mode: string; restored: Record<string, number>; failed: RestoreFailure[] }> {
     if (body?.confirmToken !== 'RESTORE') {
       throw new BadRequestException('RESTORE_CONFIRM_REQUIRED');
     }
@@ -137,61 +175,152 @@ export class BackupController {
     const picked = BACKUP_TABLES.filter((t) => Array.isArray(tables[t]));
     if (picked.length === 0) throw new BadRequestException('BACKUP_NO_KNOWN_TABLE');
     const mode = body?.mode === 'replace' ? 'replace' : 'merge';
-    const db = this.prisma as unknown as Record<string, {
-      findMany: (a?: unknown) => Promise<unknown[]>;
-      deleteMany: (a?: unknown) => Promise<unknown>;
-      upsert: (a?: unknown) => Promise<unknown>;
-      create: (a?: unknown) => Promise<unknown>;
-    }>;
 
     const restored: Record<string, number> = {};
-    // 逆序：先处理靠后的表
-    for (const table of [...picked].reverse()) {
-      const rows = tables[table] as Record<string, unknown>[];
-      if (mode === 'replace') {
-        try {
-          await db[table].deleteMany({});
-        } catch {
-          // 有外键约束时可能删不掉（被别的表引用），此时退化为 merge 而不是整体失败
-        }
+    // 失败明细按表聚合：逐行记会把响应体撑爆（一张表几十条错误就没法看了）
+    const failures = new Map<string, { failed: number; reason: string; clearReason: string }>();
+    const noteFailure = (table: string, reason: string, isClear: boolean): void => {
+      const cur = failures.get(table) ?? { failed: 0, reason: '', clearReason: '' };
+      if (isClear) {
+        if (!cur.clearReason) cur.clearReason = reason;
+      } else {
+        cur.failed += 1;
+        if (!cur.reason) cur.reason = reason;
       }
-      let n = 0;
-      for (const row of rows) {
-        try {
-          if (mode === 'replace') {
-            await db[table].create({ data: row as never });
-          } else {
+      failures.set(table, cur);
+    };
+
+    if (mode === 'replace') {
+      // timeout 要显式给足：Prisma 默认 5s，对 30+ 张表的恢复远远不够（会被中途掐断）
+      await this.prisma.$transaction(
+        async (tx) => {
+          const db = tx as unknown as Record<string, RestoreTable>;
+          const raw = tx as unknown as { $executeRawUnsafe: (q: string) => Promise<unknown> };
+          // 逆序：先处理靠后的表（顺序与既有实现保持不变，不动）
+          const ordered = [...picked].reverse();
+          for (let ti = 0; ti < ordered.length; ti += 1) {
+            const table = ordered[ti];
+            const rows = tables[table] as Record<string, unknown>[];
+            // 每张表一个 SAVEPOINT：PostgreSQL 里一条语句失败会让**整个事务**进入
+            // aborted 状态，之后所有语句都直接报错（哪怕语句本身没问题）。
+            // 不逐段回滚到 SAVEPOINT，一行坏数据就能毁掉整次恢复。
+            const spTable = `sp_tbl_${ti}`;
+            await raw.$executeRawUnsafe(`SAVEPOINT ${spTable}`);
+            try {
+              await db[table].deleteMany({});
+            } catch (e) {
+              // 有外键约束时可能删不掉（被别的表引用）：只回滚这一张表的清空动作，
+              // 事务不受影响、后面的表照常恢复（退化为部分合并，而不是整体失败）
+              await raw.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${spTable}`);
+              noteFailure(table, errorMessage(e), true);
+            }
+            await raw.$executeRawUnsafe(`RELEASE SAVEPOINT ${spTable}`);
+
+            let n = 0;
+            for (let ri = 0; ri < rows.length; ri += 1) {
+              // 逐行一个 SAVEPOINT：单行失败（字段不兼容/约束冲突）只废掉这一行
+              const spRow = `sp_row_${ti}_${ri}`;
+              await raw.$executeRawUnsafe(`SAVEPOINT ${spRow}`);
+              try {
+                await db[table].create({ data: rows[ri] as never });
+                await raw.$executeRawUnsafe(`RELEASE SAVEPOINT ${spRow}`);
+                n += 1;
+              } catch (e) {
+                await raw.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${spRow}`);
+                await raw.$executeRawUnsafe(`RELEASE SAVEPOINT ${spRow}`);
+                // 原来这里是空 catch：失败被彻底吞掉，响应里「恢复成功」和
+                // 「一半数据没回来」长得一模一样。现在记下来逐表上报。
+                noteFailure(table, errorMessage(e), false);
+              }
+            }
+            restored[table] = n;
+          }
+        },
+        { timeout: 120000, maxWait: 20000 },
+      );
+    } else {
+      // merge 模式不包事务：每条语句各自独立提交，一行失败天然不会影响其它行
+      const db = this.prisma as unknown as Record<string, RestoreTable>;
+      for (const table of [...picked].reverse()) {
+        const rows = tables[table] as Record<string, unknown>[];
+        let n = 0;
+        for (const row of rows) {
+          try {
             const where = idOf(row);
             await db[table].upsert({ where, create: row as never, update: row as never });
+            n += 1;
+          } catch (e) {
+            noteFailure(table, errorMessage(e), false);
           }
-          n += 1;
-        } catch {
-          // 单行失败（字段不兼容/约束冲突）跳过，不让一行坏数据毁掉整次恢复
         }
+        restored[table] = n;
       }
-      restored[table] = n;
+    }
+
+    const failed: RestoreFailure[] = [];
+    for (const [table, f] of failures) {
+      failed.push({
+        table,
+        failed: f.failed,
+        reason: f.reason || f.clearReason || '未知原因',
+        ...(f.clearReason ? { clearFailed: true } : {}),
+      });
     }
 
     // 审计不在这里手写：audit.interceptor 会统一记，且它带 requestId / actorKind /
     // payloadDigest —— 手写那条既重复又缺这些字段，还会让「审计带 requestId」这条
     // 断言因为一行空值而失败。恢复是 POST 破坏性操作，拦截器本来就覆盖。
-    return { mode, restored };
+    return { mode, restored, failed };
   }
 
+  /**
+   * 产物占用统计。
+   *
+   * 口径从「MediaAsset 表记账之和」改成「**卷内真实占用**」：
+   * 交付包（plan-packages）与全库备份（backups）是纯文件、不入库，
+   * 孤儿文件（有文件、无 MediaAsset 行）连表都没有 ——
+   * 只统计入库行会把真实占用严重低估（实测报表 4.2MB，卷内实际 314MB），
+   * 面板说「才用了 4MB」，卷其实早被写满了。
+   *
+   * 字段保持向后兼容：usedBytes / quotaBytes / assets / oldest 名字不变，
+   * 只是 usedBytes 换成真实占用；原来那个记账口径保留在 trackedBytes 里。
+   */
   @RequirePermissions('platform:billing:manage')
   @Get('storage')
-  async storage(): Promise<{ usedBytes: number; quotaBytes: number; assets: number; oldest: string | null }> {
+  async storage(@CurrentUser() user: AuthProfile & { activeTenantId?: string }): Promise<{
+    usedBytes: number; quotaBytes: number; assets: number; oldest: string | null;
+    trackedBytes: number; onDiskMediaBytes: number; orphanBytes: number;
+    planPackageBytes: number; backupBytes: number; files: number;
+    tenantUsedBytes: number;
+  }> {
     const agg = await this.prisma.mediaAsset.aggregate({ _sum: { sizeBytes: true }, _count: true, _min: { createdAt: true } });
-    const quotaMb = Number(process.env.UPLOAD_QUOTA_MB ?? 4096);
+    // 配额换算与上传闸门同一份来源（media.quotaBytes），避免「面板说还有空间、上传却被拒」
+    const quotaBytes = this.media.quotaBytes();
+    const usage = await this.media.volumeUsage();
     return {
-      usedBytes: agg._sum.sizeBytes ?? 0,
-      quotaBytes: quotaMb * 1024 * 1024,
+      // usedBytes = 卷内真实占用（含交付包与全库备份，回答「磁盘会不会满」）
+      usedBytes: usage.usedBytes,
+      // tenantUsedBytes = 本租户已用产物字节，与上传闸门同一个函数算出来的（回答「我还能传多少」）
+      // 两个口径不同是有意的：配额按租户算，磁盘占用是全局的；混用会得出「还有空间却传不上去」
+      tenantUsedBytes: await this.media.tenantUsedBytes(user.activeTenantId as string),
+      quotaBytes,
       assets: agg._count,
       oldest: agg._min.createdAt?.toISOString() ?? null,
+      trackedBytes: usage.trackedBytes,
+      onDiskMediaBytes: usage.onDiskMediaBytes,
+      orphanBytes: usage.orphanBytes,
+      planPackageBytes: usage.planPackageBytes,
+      backupBytes: usage.backupBytes,
+      files: usage.files,
     };
   }
 
-  /** 清理 beforeDays 天前、且未被方案户型图/点位布局引用的产物（DB 行 + 本地文件） */
+  /**
+   * 清理 beforeDays 天前、且未被任何地方引用的产物（DB 行 + 本地文件）。
+   *
+   * 引用集合来自 MediaService.referencedAssetIds()（唯一真源）：
+   * 少收一个字段 = 删掉仍在用的图 —— 方案户型图裂了、交付包缺图、头像变空白。
+   */
   @RequirePermissions('platform:billing:manage')
   @Post('storage/cleanup')
   async cleanup(@Query('beforeDays') beforeDaysRaw?: string): Promise<{ deleted: number; freedBytes: number }> {
@@ -201,18 +330,9 @@ export class BackupController {
       where: { createdAt: { lt: cutoff } },
       select: { id: true, filePath: true, sizeBytes: true },
     });
-    // 排除仍被引用的资产
-    const [plans, layouts, products] = await Promise.all([
-      this.prisma.planProject.findMany({ where: { floorplanAssetId: { not: null } }, select: { floorplanAssetId: true } }),
-      this.prisma.floorplanLayout.findMany({ select: { mediaAssetId: true } }),
-      // 产品主图（=点位图标）被引用时不得清理
-      this.prisma.product.findMany({ where: { active: true, imageUrl: { not: '' } }, select: { imageUrl: true } }),
-    ]);
-    const referenced = new Set<string>([
-      ...plans.map((p) => p.floorplanAssetId),
-      ...layouts.map((l) => l.mediaAssetId),
-      ...products.map((p) => p.imageUrl.match(/\/api\/media\/assets\/([^/]+)\/file/)?.[1]),
-    ].filter((v): v is string => Boolean(v)));
+    // 引用集合在这里查、规则只有一处定义（MediaService.collectReferencedAssetIds）：
+    // 方案户型图/附加户型图/渲染图/视频、布局点位图、产品主图、灯光场景源图与视频、用户头像
+    const referenced = await this.media.referencedAssetIds();
 
     let deleted = 0;
     let freedBytes = 0;

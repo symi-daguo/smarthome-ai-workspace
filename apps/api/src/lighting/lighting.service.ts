@@ -203,7 +203,13 @@ export class LightingDiagnosisService {
     try {
       await this.tokens.consume(tenantId, DIAGNOSE_TOKENS, 'CONSUME', { kind: 'lighting-diagnose', title: dto.modeId }, userId);
       const prompt = this.buildPrompt(dto.modeId, dto.answers);
-      const res = await this.llm.chat({ model: '', prompt, maxTokens: 1200, systemPrompt: DIAGNOSIS_BOUNDARY });
+      // 预算 6000 是实测值，不是拍脑袋：这份提示词要 3-6 条问题分级 + 3-6 条灯组
+      // + 3-6 条场景 + 3-6 条灯位，全中文结构化输出。
+      // 原先给 1200，M3.1-Flash 的**思考 token 也占 max_tokens 预算**，
+      // 实测 1200 里 1199 被思考吃掉、正文长度 0（finish_reason=length）——
+      // 表现是「点生成毫无反应、页面全是暂无数据」，且完全看不出是预算问题。
+      // 6000 实测 finish_reason=stop，正文 2312 字符。
+      const res = await this.llm.chat({ prompt, maxTokens: 6000, systemPrompt: DIAGNOSIS_BOUNDARY });
       const out = this.parse(res.reply);
       await this.idem.complete(tenantId, dto.clientRequestId, 'lighting-diagnose', out);
       return out;

@@ -82,6 +82,8 @@ interface StorageStat {
   quotaBytes: number;
   assets: number;
   oldest: string | null;
+  /** 本租户已用产物字节：与上传闸门同源；旧后端没有这个字段时回退 usedBytes */
+  tenantUsedBytes?: number;
 }
 
 const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
@@ -560,7 +562,6 @@ export function TokenCenter(): ReactNode {
                 options={THEME_OPTIONS}
                 block
               />
-              {/*
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
                 <Space direction="vertical" size={0}>
                   <Text style={{ fontSize: 13 }}>顶栏显示额度与开源说明</Text>
@@ -568,22 +569,13 @@ export function TokenCenter(): ReactNode {
                 </Space>
                 <Switch checked={showBilling} onChange={(v) => { setShowBillingState(v); setShowBilling(v); }} />
               </div>
-              {/*
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
-                <Space direction="vertical" size={0}>
-                  <Text style={{ fontSize: 13 }}>顶栏显示额度与开源说明</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>默认隐藏，开源免费使用下这两项没有实际意义</Text>
-                </Space>
-                <Switch checked={showBilling} onChange={(v) => { setShowBillingState(v); setShowBilling(v); }} />
-              </div>
-              */}
+
               <Button type="primary" loading={profileSaving} onClick={() => void saveProfile()} block style={{ marginTop: 8 }}>
                 保存资料
               </Button>
             </Form>
           </Card>
         </Col>
-        {/*
         <Col xs={24} lg={12}>
           <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
             <Text strong style={{ fontSize: 15 }}>我的额度</Text>
@@ -630,54 +622,7 @@ export function TokenCenter(): ReactNode {
             </div>
           </Card>
         </Col>
-        {/*
-        <Col xs={24} lg={12}>
-          <Card style={{ height: '100%' }} styles={{ body: { padding: 20 } }}>
-            <Text strong style={{ fontSize: 15 }}>我的额度</Text>
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginTop: 12, fontSize: 12.5 }}
-              message="这是你自己部署的实例，额度由你设定，不设付费墙"
-              description="本项目开源免费：任何功能都不会因为额度不足被锁。额度只是让部署者能看清成本、避免误用；计费单价与初始额度都可用 BILLING_* 环境变量调整，额度用完也只是暂停 AI 调用，资料、方案、报价、团队等功能不受影响。"
-            />
-            <Row gutter={[16, 16]} style={{ marginTop: 14 }}>
-              <Col xs={24} md={10}>
-                <div style={{ fontSize: 34, fontWeight: 700, color: token.colorPrimary, lineHeight: 1.2 }}>
-                  {balance ? tokenToYuan(balance.tokenBalance) : '--'}
-                </div>
-                <Text type="secondary" style={{ fontSize: 13 }}>额度剩余</Text>
-              </Col>
-              <Col xs={12} md={7}>
-                <Text type="secondary" style={{ fontSize: 12 }}>总额度</Text>
-                <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(total)}</div>
-              </Col>
-              <Col xs={12} md={7}>
-                <Text type="secondary" style={{ fontSize: 12 }}>已使用</Text>
-                <div style={{ fontSize: 18, fontWeight: 600 }}>{tokenToYuan(consumed)}</div>
-              </Col>
-            </Row>
-            <Progress percent={usedPct} showInfo={false} strokeColor={token.colorPrimary} style={{ marginTop: 12 }} />
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-              {PRICE_CHIPS.map((p) => (
-                <span
-                  key={p}
-                  style={{
-                    fontSize: 12,
-                    padding: '4px 12px',
-                    borderRadius: 9999,
-                    background: token.colorFillQuaternary,
-                    border: `1px solid ${token.colorBorderSecondary}`,
-                    color: token.colorTextSecondary,
-                  }}
-                >
-                  {p}
-                </span>
-              ))}
-            </div>
-          </Card>
-        </Col>
-        */}
+
 
         {/* 第二行：备份治理（管理员）+ 改密 + 账号安全；邀请返点已随「免费商用、全员最高权限」定位移除 */}
         {isAdmin ? (
@@ -716,12 +661,20 @@ export function TokenCenter(): ReactNode {
                 </Text>
                 <Space.Compact block>
                   <Button style={{ flex: 1 }} onClick={() => void loadStorage()}>
-                    {storage ? `产物占用 ${(storage.usedBytes / 1048576).toFixed(1)} / ${(storage.quotaBytes / 1048576).toFixed(0)} MB` : '查看产物存储占用'}
+                    {storage
+                      ? `本租户产物 ${((storage.tenantUsedBytes ?? storage.usedBytes) / 1048576).toFixed(1)} / 配额 ${(storage.quotaBytes / 1048576).toFixed(0)} MB`
+                      : '查看产物存储占用'}
                   </Button>
                   <Button danger loading={cleaning} disabled={!storage} onClick={() => void cleanup()}>
                     清理 30 天前未引用产物
                   </Button>
                 </Space.Compact>
+                {storage ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    卷内总占用 {(storage.usedBytes / 1048576).toFixed(1)} MB（含交付包、全库备份与未入库文件）；
+                    配额按租户算，与上传闸门同一口径，所以「本租户产物」才是还能传的量。
+                  </Text>
+                ) : null}
               </Space>
             </Card>
           </Col>

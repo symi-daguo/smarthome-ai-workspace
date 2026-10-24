@@ -155,15 +155,10 @@ export function LightingDiagnosis(): ReactNode {
               ))}
             </Space>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 22 }}>
-              {/*
               <Button type="primary" disabled={!allAnswered} loading={running} icon={<ThunderboltFilled />} onClick={() => void run()}>
                 生成灯光建议
               </Button>
-              {/*
-              <Button type="primary" disabled={!allAnswered} loading={running} icon={<ThunderboltFilled />} onClick={() => void run()}>
-                生成灯光建议
-              </Button>
-              */}
+
               <Text type="secondary" style={{ fontSize: 12 }}>
                 已回答 {answered}/{mode.questions.length} 题{allAnswered ? '' : '（全部作答后可生成）'}
               </Text>

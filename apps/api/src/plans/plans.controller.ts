@@ -199,11 +199,16 @@ export class PlansController {
 
   @RequirePermissions('content:generate')
   @Delete(':id')
-  remove(
+  async remove(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
     @Param('id') id: string,
-  ) {
-    return this.plans.remove(user.activeTenantId as string, id);
+  ): Promise<void> {
+    await this.plans.remove(user.activeTenantId as string, id);
+    // 交付包是纯文件、不入库：方案删了，包必须一起删。
+    // 原来没有任何人回收它 —— 每删一个方案就永久留下一个包（实测单个 3-20MB），
+    // 几十个方案就能吃掉几百 MB，正是「无错误数据挤爆硬盘」的典型来源。
+    // 清理失败不阻断（方案已删，包只是残留，还能由运维兜底回收）。
+    await this.packages.removeByPlan(id);
   }
 
   /**

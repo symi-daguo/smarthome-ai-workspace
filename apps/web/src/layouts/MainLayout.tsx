@@ -577,21 +577,13 @@ export function MainLayout(): ReactNode {
             {user?.displayName ?? '未命名'}
           </div>
           <Space size={4} split={<Divider type="vertical" style={{ margin: 0 }} />} style={{ fontSize: 12, color: token.colorTextTertiary }}>
-            {/*
             <span
               style={{ cursor: 'pointer' }}
               onClick={() => go('/tokens')}
             >
               额度
             </span>
-            {/*
-            <span
-              style={{ cursor: 'pointer' }}
-              onClick={() => go('/tokens')}
-            >
-              额度
-            </span>
-            */}
+
             <span
               style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
               onClick={() => go('/tokens')}
@@ -818,7 +810,7 @@ export function MainLayout(): ReactNode {
               </div>
             )}
             {/*
-            {GUIDE_PRICE_ROWS.map((row) => (
+{GUIDE_PRICE_ROWS.map((row) => (
               <div
                 key={row.name}
                 style={{
@@ -834,24 +826,8 @@ export function MainLayout(): ReactNode {
                 <Text strong>{row.price}</Text>
               </div>
             ))}
-            {/*
-            {GUIDE_PRICE_ROWS.map((row) => (
-              <div
-                key={row.name}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  border: `1px solid ${token.colorBorderSecondary}`,
-                  marginBottom: 8,
-                }}
-              >
-                <Text>{row.name}</Text>
-                <Text strong>{row.price}</Text>
-              </div>
-            ))}
-            */}
+
+*/}
             <Text type="secondary" style={{ fontSize: 12 }}>
               一个公司可开通多个员工账号，个人对话与资料相互隔离；所有内容与数据都留在你自己的部署里。
             </Text>

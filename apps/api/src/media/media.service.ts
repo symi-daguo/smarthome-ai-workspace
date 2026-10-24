@@ -8,16 +8,143 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
 import { ModelConfigService } from '../llm/model-config.service.js';
+import { resolveChatModel, isTruncatedOutput } from '../llm/llm.service.js';
 import { generateViaComfyui, generateViaMinimax, generateViaOpenai,
   generateViaOpenaiEdit, type GeneratedImage } from './image-provider.js';
 import { generateViaMinimaxVideo, generateViaOpenaiVideo } from './video-provider.js';
 import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../common/upstream-timeout.js';
+
+/**
+ * 产物配额（字节）：UPLOAD_QUOTA_MB（MB）。
+ *
+ * 为什么放在这里而不是各端点各读一次 env：
+ * 配额此前**只被读取用于报告**，没有任何写入路径比较过它 ——
+ * 于是「配额」只是个好看的数字，反复上传就能把 uploads 卷写爆。
+ * 现在上传闸门与 GET /api/admin/storage 共用这一份换算，报告与实际拦截不会漂移。
+ */
+export const DEFAULT_UPLOAD_QUOTA_MB = 4096;
+
+/** 配额换算：env 值（MB）→ 字节。缺失/非法一律回落到默认值（与部署默认值一致）。 */
+export function uploadQuotaBytes(rawMb: string | number | null | undefined): number {
+  const mb = Number(rawMb ?? DEFAULT_UPLOAD_QUOTA_MB);
+  if (!Number.isFinite(mb) || mb <= 0) return DEFAULT_UPLOAD_QUOTA_MB * 1024 * 1024;
+  return Math.floor(mb) * 1024 * 1024;
+}
+
+/** 体积统一按 MB 显示，一位小数。报告与错误提示共用，避免两处口径不同。 */
+export function formatMb(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * 上传配额判定（纯函数，便于单独验证）。
+ *
+ * 两道闸门是**并存的**：单文件体积上限（控制器里的 multer limits）挡单个大文件，
+ * 配额上限挡「反复上传把卷撑满」。两道都要留。
+ *
+ * 为什么上传不扣 token：上传不消耗模型算力，扣 token 会破坏「上传免费」的语义。
+ * 这里只做配额校验，不做任何额度扣减。
+ */
+export function checkUploadQuota(
+  usedBytes: number,
+  incomingBytes: number,
+  quotaBytes: number,
+): { ok: true } | { ok: false; message: string } {
+  const used = Math.max(0, usedBytes);
+  const incoming = Math.max(0, incomingBytes);
+  if (used + incoming <= quotaBytes) return { ok: true };
+  return {
+    ok: false,
+    message:
+      `存储配额已满：当前已用 ${formatMb(used)} / 配额 ${formatMb(quotaBytes)}，`
+      + `本次上传还需 ${formatMb(incoming)}。`
+      + '请先在「个人中心」清理未被引用的历史产物（POST /api/admin/storage/cleanup）后再上传。',
+  };
+}
+
+/** 从引用路径里取 MediaAsset id：优先 /api/media/assets/<id>/file，其次路径里最后一段 uuid。 */
+export function extractAssetIdFromPath(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const m = path.match(/\/api\/media\/assets\/([^/]+)\/file/);
+  if (m) return m[1];
+  const u = path.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return u ? u[0] : null;
+}
+
+/**
+ * 「仍被引用、不能删」的素材集合（纯函数，便于单独验证）。
+ *
+ * **为什么必须收全**：清理工具（POST /api/admin/storage/cleanup）按「未被引用」决定删谁。
+ * 少收一个字段 = 删掉仍在用的图 —— 方案页户型图裂了、交付包缺图、头像变空白。
+ * 这里列的是**全部**存着 MediaAsset id 的地方（按 schema 逐条核对）：
+ *   - planProject.floorplanAssetId / extraFloorplanAssetIds[] / renderAssetIds[]
+ *     / renderedFloorplanAssetId / videoAssetIds[]
+ *   - floorplanLayout.mediaAssetId
+ *   - product.imageUrl（路径形态，取其中的 id）
+ *   - lightingScene.sourceAssetId / videoAssetId
+ *   - user.avatarUrl（路径形态，取其中的 id）
+ * 数组字段（extraFloorplanAssetIds / renderAssetIds / videoAssetIds）是
+ * Postgres 的 String[]，必须按「数组包含该 id」判断，不能当标量比。
+ */
+export interface AssetReferenceRows {
+  plans: Array<{
+    floorplanAssetId: string | null;
+    extraFloorplanAssetIds: string[];
+    renderAssetIds: string[];
+    renderedFloorplanAssetId: string | null;
+    videoAssetIds: string[];
+  }>;
+  layouts: Array<{ mediaAssetId: string }>;
+  products: Array<{ imageUrl: string }>;
+  lightingScenes: Array<{ sourceAssetId: string | null; videoAssetId: string | null }>;
+  users: Array<{ avatarUrl: string }>;
+}
+
+export function collectReferencedAssetIds(rows: AssetReferenceRows): Set<string> {
+  const out = new Set<string>();
+  const add = (v: string | null | undefined): void => {
+    if (v) out.add(v);
+  };
+  for (const p of rows.plans ?? []) {
+    add(p.floorplanAssetId);
+    add(p.renderedFloorplanAssetId);
+    for (const id of p.extraFloorplanAssetIds ?? []) add(id);
+    for (const id of p.renderAssetIds ?? []) add(id);
+    for (const id of p.videoAssetIds ?? []) add(id);
+  }
+  for (const l of rows.layouts ?? []) add(l.mediaAssetId);
+  for (const p of rows.products ?? []) add(extractAssetIdFromPath(p.imageUrl));
+  for (const s of rows.lightingScenes ?? []) {
+    add(s.sourceAssetId);
+    add(s.videoAssetId);
+  }
+  for (const u of rows.users ?? []) add(extractAssetIdFromPath(u.avatarUrl));
+  return out;
+}
+
+/** 卷内真实占用（字节）。口径说明见 MediaService.volumeUsage()。 */
+export interface VolumeUsage {
+  /** 卷内真实占用：产物 + 交付包 + 备份 + 孤儿文件 */
+  usedBytes: number;
+  /** MediaAsset 表记账的字节（只算有行的产物） */
+  trackedBytes: number;
+  /** 磁盘上产物目录的实际字节 */
+  onDiskMediaBytes: number;
+  /** 有文件、无 MediaAsset 行的孤儿字节（清理端点删不到，只会一直占着） */
+  orphanBytes: number;
+  /** 交付包字节（纯文件，不入库） */
+  planPackageBytes: number;
+  /** 全库备份字节（纯文件，不入库） */
+  backupBytes: number;
+  /** 卷内文件总数 */
+  files: number;
+}
 
 /** 图片/视频生成代理：产物一律下载到本地 UPLOAD_DIR，前端只访问本地文件 */
 
@@ -78,6 +205,126 @@ export class MediaService {
 
   private uploadDir(): string {
     return this.config.get<string>('UPLOAD_DIR', 'uploads');
+  }
+
+  /**
+   * 产物配额上限（字节）。
+   *
+   * 与 GET /api/admin/storage 用的是同一个换算函数 —— 报告与实际拦截必须同源，
+   * 否则会出现「面板显示还有空间、上传却被拒」这种没法解释的现象。
+   */
+  quotaBytes(): number {
+    return uploadQuotaBytes(this.config.get<string>('UPLOAD_QUOTA_MB') ?? process.env.UPLOAD_QUOTA_MB);
+  }
+
+  /**
+   * 该租户当前已用的产物字节（MediaAsset 记账口径）。
+   *
+   * 配额是**按租户**算的：租户之间互不影响，平台租户（platform）同样受这条约束，
+   * 不给任何绕过口子 —— 否则单租户自部署等于没有上限。
+   */
+  async tenantUsedBytes(tenantId: string): Promise<number> {
+    const agg = await this.prisma.mediaAsset.aggregate({ where: { tenantId }, _sum: { sizeBytes: true } });
+    return agg._sum.sizeBytes ?? 0;
+  }
+
+  /**
+   * 上传前的配额闸门：超了直接抛 400，错误信息带具体数字与下一步动作。
+   *
+   * 为什么必须在**写文件之前**判：判晚了文件已经落盘，
+   * 拒绝上传却留下垃圾文件，占用照涨、还得靠清理端点兜底。
+   */
+  async assertUploadWithinQuota(tenantId: string, incomingBytes: number): Promise<void> {
+    const quotaBytes = this.quotaBytes();
+    const usedBytes = await this.tenantUsedBytes(tenantId);
+    const verdict = checkUploadQuota(usedBytes, incomingBytes, quotaBytes);
+    if (!verdict.ok) throw new BadRequestException(verdict.message);
+  }
+
+  /**
+   * 仍被引用的素材 id 集合（数据库侧收集，具体规则见 collectReferencedAssetIds）。
+   *
+   * 清理工具（POST /api/admin/storage/cleanup）靠它决定「谁不许删」。
+   * 放在这里而不是控制器里，是为了让「引用关系」这件事只有一处定义：
+   * 少收一个字段 = 删掉仍在用的图（方案户型图裂、交付包缺图、头像变空白）。
+   */
+  async referencedAssetIds(): Promise<Set<string>> {
+    const [plans, layouts, products, lightingScenes, users] = await Promise.all([
+      this.prisma.planProject.findMany({
+        select: {
+          floorplanAssetId: true,
+          extraFloorplanAssetIds: true,
+          renderAssetIds: true,
+          renderedFloorplanAssetId: true,
+          videoAssetIds: true,
+        },
+      }),
+      this.prisma.floorplanLayout.findMany({ select: { mediaAssetId: true } }),
+      this.prisma.product.findMany({ where: { active: true, imageUrl: { not: '' } }, select: { imageUrl: true } }),
+      this.prisma.lightingScene.findMany({ select: { sourceAssetId: true, videoAssetId: true } }),
+      this.prisma.user.findMany({ where: { avatarUrl: { not: '' } }, select: { avatarUrl: true } }),
+    ]);
+    return collectReferencedAssetIds({ plans, layouts, products, lightingScenes, users });
+  }
+
+  /**
+   * 卷内真实占用（字节）。
+   *
+   * 为什么不能只报 MediaAsset.sizeBytes 之和：交付包（plan-packages）与全库备份（backups）
+   * 是**纯文件不入库**，孤儿文件（有文件、无 MediaAsset 行）更是连表都没有 ——
+   * 只统计入库行会把真实占用严重低估（实测 4.2MB vs 实际 314MB），
+   * 面板说「才用了 4MB」，卷其实已经被写满。
+   */
+  async volumeUsage(): Promise<VolumeUsage> {
+    const root = this.uploadDir();
+    const agg = await this.prisma.mediaAsset.aggregate({ _sum: { sizeBytes: true } });
+    const trackedBytes = agg._sum.sizeBytes ?? 0;
+    const trackedPaths = new Set(
+      (await this.prisma.mediaAsset.findMany({ select: { filePath: true } })).map((r) => r.filePath),
+    );
+
+    let onDiskMediaBytes = 0;
+    let orphanBytes = 0;
+    let planPackageBytes = 0;
+    let backupBytes = 0;
+    let files = 0;
+    try {
+      // recursive 读目录，返回相对 UPLOAD_DIR 的路径（与 MediaAsset.filePath 同一形态，可直接比对）
+      const names = await readdir(root, { recursive: true });
+      for (const raw of names) {
+        // 统一成正斜杠：MediaAsset.filePath 存的是 'images/2026-10-06/x.jpg' 这种形态，
+        // Windows 上 readdir 返回的是反斜杠，不归一就比不上，孤儿会被全量误判。
+        const name = raw.split(sep).join('/');
+        const abs = join(root, raw);
+        let st: Awaited<ReturnType<typeof stat>>;
+        try {
+          st = await stat(abs);
+        } catch {
+          continue; // 读不到（并发删除/权限）就跳过，不让统计整体失败
+        }
+        if (!st.isFile()) continue;
+        files += 1;
+        if (name.startsWith('plan-packages/')) planPackageBytes += st.size;
+        else if (name.startsWith('backups/')) backupBytes += st.size;
+        else {
+          onDiskMediaBytes += st.size;
+          // 有文件但库里没有对应行 = 孤儿（清理端点删不到它，会一直占着卷）
+          if (!trackedPaths.has(name)) orphanBytes += st.size;
+        }
+      }
+    } catch {
+      // uploads 目录还不存在：全部按 0 计（首次启动的正常状态）
+    }
+
+    return {
+      usedBytes: onDiskMediaBytes + planPackageBytes + backupBytes,
+      trackedBytes,
+      onDiskMediaBytes,
+      orphanBytes,
+      planPackageBytes,
+      backupBytes,
+      files,
+    };
   }
 
   /** 相对路径 -> 绝对路径，并阻止路径穿越 */
@@ -395,6 +642,9 @@ export class MediaService {
   /** 用户上传本地图片（户型平面图等）：落盘 UPLOAD_DIR + 写 MediaAsset，复用 ?token= 文件流 */
   async uploadImage(tenantId: string, userId: string, file: { buffer: Buffer; mimeType: string }, title: string): Promise<{ id: string; url: string }> {
     if (!file?.buffer?.length) throw new BadRequestException('EMPTY_FILE');
+    // 配额闸门：判在写盘之前。超配额直接 400，文件不落盘（否则拒了却留下垃圾，占用照涨）。
+    // 注意这里**不扣 token** —— 上传不消耗模型算力，扣 token 会破坏「上传免费」的语义。
+    await this.assertUploadWithinQuota(tenantId, file.buffer.length);
     const ext = (file.mimeType ?? '').includes('png') ? 'png' : 'jpg';
     const rel = `uploads/${this.dayDir()}/${randomUUID()}.${ext}`;
     const abs = join(this.uploadDir(), rel);
@@ -468,7 +718,10 @@ export class MediaService {
         message: '对话模型（需支持图片理解的多模态模型）API Key 未配置，无法反推提示词',
       });
     }
-    const model = cfg.model || 'multimodal-model';
+    // 模型名兜底口径与 llm.service 保持一致（resolveChatModel）：
+    // 原来的 'multimodal-model' 是**编造的名字**，上游不认，发出去必然回
+    // `unknown model 'multimodal-model'`，反推提示词功能等于 100% 不可用。
+    const model = resolveChatModel(cfg.model, undefined);
     const system = [
       '你是资深 AI 绘画提示词工程师，擅长从一张室内参考图反推文生图提示词。',
       '输出一段 120-260 字的中文画面描述，必须覆盖：空间类型与布局、整体风格、主色调与色温、',
@@ -492,7 +745,13 @@ export class MediaService {
             ] },
           ],
           temperature: 0.4,
-          max_tokens: 600,
+          // 8000 是实测值，不是拍的：同一条多模态反推请求直连上游对比
+          //   max_tokens=600  → finish_reason=length，completion=600 里 reasoning=599，正文长度 0（功能 100% 不可用）
+          //   max_tokens=4000 → finish_reason=length，reasoning=3297，正文 1951 但末尾代码块未闭合（仍被截断）
+          //   max_tokens=8000 → finish_reason=stop，reasoning=2941，正文 3319 字 ✅
+          //   max_tokens=16000→ finish_reason=stop，reasoning=2645，正文 3117 字 ✅（与 8000 同等效果，白花预算）
+          // 关键：**思考 token 也占 max_tokens 预算**，600 全被思考吃掉，正文一个字都没吐。
+          max_tokens: 8000,
         }),
       },
       UPSTREAM_TIMEOUT_MS.llm,
@@ -508,8 +767,27 @@ export class MediaService {
         upstream: body.slice(0, 200),
       });
     }
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[]; model?: string };
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
+      model?: string;
+      usage?: { completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
+    };
     const prompt = (data.choices?.[0]?.message?.content ?? '').replace(/[\s\S]*?<\/think>\s*/g, '').trim();
+    // 预算被思考吃光（正文一个字都没吐）与「模型没听话」处置完全不同：
+    // 前者要调大 max_tokens，后者要改提示词 —— 判据必须能一眼分开。
+    // 这条链路自己直连 fetchUpstream、不走 LlmService.chat()，所以 llm.service 里那道保护覆盖不到，
+    // 这里复用**同一个纯函数**（两处各写一遍正则口径，早晚会长歪）。
+    const finishReason = data.choices?.[0]?.finish_reason ?? 'unknown';
+    const completionTokens = data.usage?.completion_tokens ?? 0;
+    const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+    if (isTruncatedOutput(finishReason, prompt)) {
+      throw new ServiceUnavailableException({
+        code: 'LLM_OUTPUT_TRUNCATED',
+        message: `模型输出被 max_tokens 预算截断，正文为空（思考 token 用了 ${reasoningTokens}/${completionTokens}）。`
+          + '该功能已按实测把预算调到 8000；若仍被截断，请在「模型配置」页换成思考更省的多模态模型，或直接手写提示词。',
+        usage: { completionTokens, reasoningTokens },
+      });
+    }
     if (prompt.length < 10) throw new ServiceUnavailableException({ code: 'VISION_EMPTY', message: '模型未返回有效描述，请重试或手写提示词' });
     await this.tokens.consume(tenantId, 10, 'CONSUME', { kind: 'image-reverse-prompt' }, userId).catch(() => undefined);
     return { prompt, model: data.model ?? model };
@@ -531,13 +809,23 @@ export class MediaService {
 
   /**
    * 删除本租户产物：DB 行 + 本地文件一并清。
-   * 公共产品图引用保护：与 StorageCleanup 同逻辑，被任一启用产品 imageUrl 引用的产物不可删。
+   *
+   * 引用保护必须用唯一真源（referencedAssetIds）：原来这里只查「启用产品 imageUrl」，
+   * 漏掉方案户型图、渲染图、交付包、灯光场景源图、用户头像 ——
+   * 删掉其中任何一个，方案当场裂图，而接口当时还返回成功，用户以为删干净了。
    */
   async deleteAsset(tenantId: string, id: string): Promise<{ id: string }> {
     const asset = await this.prisma.mediaAsset.findFirst({ where: { id, tenantId } });
     if (!asset) throw new NotFoundException('ASSET_NOT_FOUND');
-    const referenced = await this.prisma.product.findFirst({ where: { active: true, imageUrl: { contains: id } } });
-    if (referenced) throw new BadRequestException('ASSET_REFUSED_BY_PRODUCT');
+    const referenced = await this.referencedAssetIds();
+    if (referenced.has(id)) {
+      throw new BadRequestException({
+        code: 'ASSET_REFUSED_BY_REFERENCE',
+        message:
+          '该产物正被引用（方案户型图 / 渲染图 / 交付包 / 灯光场景 / 用户头像 / 启用产品图），'
+          + '删除会让引用处当场裂图，请先解除引用再删。',
+      });
+    }
     try {
       await unlink(this.resolveSafe(asset.filePath));
     } catch {
@@ -550,6 +838,9 @@ export class MediaService {
   /** 视频素材上传（与图片上传分离，体积与类型各自独立） */
   async uploadVideo(tenantId: string, userId: string, file: { buffer: Buffer; mimeType: string }, title: string): Promise<{ id: string; url: string }> {
     if (!file?.buffer?.length) throw new BadRequestException('EMPTY_FILE');
+    // 配额闸门：与图片上传同一条路径，同样在写盘之前判、同样不扣 token。
+    // 视频单文件上限 100MB，比图片大一个量级，更需要这道闸门兜底。
+    await this.assertUploadWithinQuota(tenantId, file.buffer.length);
     const mime = file.mimeType || 'video/mp4';
     const ext = mime.includes('webm') ? 'webm' : mime.includes('quicktime') ? 'mov' : 'mp4';
     const rel = `uploads/${this.dayDir()}/${randomUUID()}.${ext}`;

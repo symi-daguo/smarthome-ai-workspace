@@ -69,6 +69,87 @@ export const SNAPSHOT_TABLES: SnapshotTable[] = [
   { table: 'orderNote', scope: 'child', parent: 'orderRequest', fk: 'orderId', upsertAfter: ['orderRequest'], deleteAfter: ['orderRequest'] },
 ];
 
+// ---------- 保留期（长期运行的磁盘边界） ----------
+
+/**
+ * AUTO 快照保留窗口（份/租户）。
+ *
+ * 为什么必须有窗口：自动快照是「破坏性操作前的整租户底」，20 张表全量 JSON，
+ * 实测平均每份 10.7KB。破坏性操作越多、租户数据越大，快照总量呈**平方级**增长
+ * （实测备份里 changeSnapshot 占 76.6%、80MB/7525 份），而自动底几乎从不被读 ——
+ * 误删之后人来还原，用的都是最近那一份，更早的自动底是纯占位。
+ *
+ * 为什么是 20：够覆盖「Agent 一串操作里连续误删多次」的常见场景（20 份 ≈ 214KB，可控），
+ * 又不会无限长。手动打的底（MANUAL）**不在窗口内** —— 那是用户自己留的，
+ * 系统无权替他决定过期（可能存的是「上线前」这种要长期保留的版本）。
+ */
+export const AUTO_SNAPSHOT_KEEP = 20;
+
+/**
+ * 审计日志保留期（天）。
+ *
+ * 审计是只增的流水：每个写请求一行，实测单行约 513 字节。
+ * 保留 90 天够回溯一个季度的事故（出险时第一动作就是查「谁动过」），
+ * 再往前的价值急剧下降，而磁盘占用是线性增长的。
+ */
+export const AUDIT_LOG_RETENTION_DAYS = 90;
+
+/** 单批删除条数上限：IN 列表不能无限长（PG 参数上限），一批一批删 */
+const PURGE_BATCH = 500;
+
+/** 单次清理最多跑几轮：历史积压（如首次修复前的 7000+ 份）要摊到多次请求里，别把单个请求拖死 */
+const MAX_PURGE_ROUNDS = 20;
+
+/**
+ * lastUsedAt 的写入去重窗口（毫秒）。
+ *
+ * 取 5 分钟：lastUsedAt 只是观测数据（「这枚 Key 最近还在用吗」），
+ * 5 分钟的精度完全够用；写入量从「每请求一次」降到「每 Key 每 5 分钟一次」。
+ */
+const APIKEY_LAST_USED_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * 纯函数：从一批快照行里挑出**超出保留窗口、应当删除**的 AUTO 快照 id。
+ *
+ * 语义（测试就按这三条断言）：
+ *   1. 只认 AUTO —— MANUAL 是用户手动留的底，**永不自动删**
+ *   2. 窗口 = 最近 keep 份 AUTO；超出的最旧的先走
+ *   3. 只看传入的这些行（调用方负责只取「最新的若干份」，别把整表拉进内存）
+ *
+ * 抽成纯函数是为了能单独证伪：窗口边界、MANUAL 保护、乱序输入都要能测。
+ */
+export function selectExpiredAutoSnapshotIds(
+  rows: ReadonlyArray<{ id: string; trigger: string; createdAt: Date | string }>,
+  keep: number,
+): string[] {
+  if (keep < 0) return [];
+  const auto = rows
+    .filter((r) => r.trigger === 'AUTO')
+    // 按创建时间倒序；同刻保持入参顺序 —— 调用方是按 (createdAt desc, id desc) 取的，
+    // 稳定排序会把同刻的 id 倒序也带过来，与 DB 的窗口判定保持一致
+    .map((r) => ({ id: r.id, t: new Date(r.createdAt).getTime() }))
+    .sort((a, b) => b.t - a.t)
+    .slice(keep);
+  return auto.map((r) => r.id);
+}
+
+/** 纯函数：审计保留期的截止时刻 —— 比它早的审计记录算过期。 */
+export function auditRetentionCutoff(
+  now: Date | number = Date.now(),
+  retentionDays: number = AUDIT_LOG_RETENTION_DAYS,
+): Date {
+  return new Date(new Date(now).getTime() - retentionDays * 86_400_000);
+}
+
+/** 纯函数：这条审计记录是否已过保留期。 */
+export function isAuditLogExpired(
+  createdAt: Date | string,
+  now: Date | number = Date.now(),
+  retentionDays: number = AUDIT_LOG_RETENTION_DAYS,
+): boolean {
+  return new Date(createdAt).getTime() < auditRetentionCutoff(now, retentionDays).getTime();
+}
+
 const CAPABILITY_NOTE = [
   '快照与还原只作用于**数据库行**。',
   '已经扣掉的额度（模型调用费）、已由外部 API 生成的图片/视频、已发出的通知**撤不回**。',
@@ -210,8 +291,23 @@ export class AgentService {
     if (!key) return false;
     if (key.revokedAt) return false;
     if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return false;
-    // lastUsedAt 是观测数据，写失败不能影响鉴权结论
-    void this.prisma.apiKey.update({ where: { id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
+    // lastUsedAt 是观测数据，写失败不能影响鉴权结论。
+    //
+    // 为什么必须去重（这是「长期运行不持续擦写硬盘」的一条主线）：
+    // 原来这里是**每个**带 Key 的请求都 UPDATE 同一行。Agent 每调一次接口就写一次，
+    // PG 的 HOT 更新会在同一页不断累积死元组，只能靠 VACUUM 回收 ——
+    // 一天几万次调用就是几万次纯写，还把 autovacuum 拖起来持续擦盘。
+    //
+    // 为什么用条件 UPDATE（updateMany + where）而不是「先读 lastUsedAt 再决定写不写」：
+    // 并发请求会同时读到同一个旧值，然后一起写 —— 惊群。条件更新让数据库自己判：
+    // 只有「距上次写入已超过窗口」的那一次会真的改到行，并发里最多成功一个。
+    const staleBefore = new Date(Date.now() - APIKEY_LAST_USED_INTERVAL_MS);
+    void this.prisma.apiKey
+      .updateMany({
+        where: { id, OR: [{ lastUsedAt: null }, { lastUsedAt: { lt: staleBefore } }] },
+        data: { lastUsedAt: new Date() },
+      })
+      .catch(() => undefined);
     return true;
   }
 
@@ -250,6 +346,18 @@ export class AgentService {
       data: { tenantId, actorId, label, trigger, data: data as never, counts: counts as never, sizeBytes: json.length },
       select: { id: true, label: true, counts: true, sizeBytes: true, createdAt: true },
     });
+    // 建完再清：窗口才始终有界。反过来（先删后加）会在某次创建前把窗口删光，
+    // 那一刻恰好没有底可回滚 —— 顺序不能反。
+    // 清理失败**不影响**这次快照：它已经落库了，是回滚的底，必须保住；
+    // 清理只是 housekeeping，失败下轮再来。
+    try {
+      const purged = await this.purgeExpiredAutoSnapshots(tenantId);
+      if (purged > 0) {
+        this.logger.log(`AUTO 快照超出保留窗口，已清理 ${purged} 份 tenant=${tenantId} 窗口=${AUTO_SNAPSHOT_KEEP}`);
+      }
+    } catch (e) {
+      this.logger.warn(`AUTO 快照清理失败（不影响本次快照）tenant=${tenantId}: ${String(e)}`);
+    }
     return {
       id: row.id,
       label: row.label,
@@ -258,6 +366,58 @@ export class AgentService {
       createdAt: row.createdAt.toISOString(),
       capabilityNote: CAPABILITY_NOTE,
     };
+  }
+
+  /**
+   * 清掉该租户**超出保留窗口**的 AUTO 快照。
+   *
+   * 为什么挂在「创建快照之后」而不是定时器：
+   *   - 定时器要额外的生命周期管理（进程重启就不跑了、多实例还得防重入），
+   *     而快照本来就只在破坏性操作时产生 —— 创建点就是最自然、最可靠的触发点
+   *   - 窗口是按租户算的，挂在创建路径上天然只清自己的租户，不存在跨租户误删
+   *
+   * 分批删：IN 列表不能无限长（PG 参数上限），一批 PURGE_BATCH 条，最多跑
+   * MAX_PURGE_ROUNDS 轮。稳态下（每次只多出一份）就是「查 21 行 + 删 1 行」。
+   */
+  async purgeExpiredAutoSnapshots(tenantId: string): Promise<number> {
+    let removed = 0;
+    for (let round = 0; round < MAX_PURGE_ROUNDS; round += 1) {
+      const rows = await this.prisma.changeSnapshot.findMany({
+        where: { tenantId, trigger: 'AUTO' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: AUTO_SNAPSHOT_KEEP + PURGE_BATCH,
+        // 只取三列：data 是整租户 JSON，拉进内存就是自己制造内存尖峰
+        select: { id: true, trigger: true, createdAt: true },
+      });
+      const expired = selectExpiredAutoSnapshotIds(rows, AUTO_SNAPSHOT_KEEP);
+      if (expired.length === 0) break;
+      // where 里再带一次 tenantId + trigger：AUTO —— 就算上面的选择逻辑出 bug，
+      // 也**删不到别的租户**、**删不到 MANUAL**（SQL 层的双保险）
+      const res = await this.prisma.changeSnapshot.deleteMany({
+        where: { id: { in: expired }, tenantId, trigger: 'AUTO' },
+      });
+      removed += res.count;
+      // 这一批没删满 → 后面已经没有更多积压，不用再查
+      if (expired.length < PURGE_BATCH) break;
+    }
+    return removed;
+  }
+
+  /**
+   * 清掉过期的审计日志（保留期 AUDIT_LOG_RETENTION_DAYS 天）。
+   *
+   * 按租户隔离：只删**本租户**的过期审计，外加「不属于任何租户」的系统级审计
+   * （tenantId 为空的那种：请求没带租户上下文时记的）。
+   * 别的租户的审计一律不动 —— 租户 A 的请求不该顺手清掉租户 B 的记录。
+   *
+   * 触发频率不在这里定（见 audit.interceptor.ts 的 AUDIT_PURGE_EVERY）：
+   * 每个写请求都跑一次全表 DELETE 才是新的写放大，治日志反而在制造日志。
+   */
+  async purgeExpiredAuditLogs(tenantId: string): Promise<number> {
+    const cutoff = auditRetentionCutoff();
+    const own = await this.prisma.auditLog.deleteMany({ where: { tenantId, createdAt: { lt: cutoff } } });
+    const system = await this.prisma.auditLog.deleteMany({ where: { tenantId: null, createdAt: { lt: cutoff } } });
+    return own.count + system.count;
   }
 
   async listSnapshots(tenantId: string, limit = 20): Promise<{

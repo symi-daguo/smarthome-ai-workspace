@@ -295,5 +295,124 @@ check('lib/errorContext.ts 不再 import lib/api.ts（防循环依赖）',
   !/from '\.\/api'/.test(errCtxSrc),
 );
 
+// —— 12. JSX 注释不能吞掉代码 ——
+// JSX 注释是 `{/* ... */}`，遇到第一个 `*/` 就结束。
+// 当同一段代码被写成「外层 {/* + 代码 + 残留的 {/* + 同样一份代码 + */}」时，
+// 内层 `{/*` 没有自己的闭合，外层末尾的 `*/}` 会把**两份代码一起**注释掉 ——
+// 按钮在界面上根本不出现，而编译器完全沉默（被注释掉的代码不是语法错误，typecheck 查不出来）。
+//
+// 真实后果：1.0.4 放回的一批生成入口（生成图片 / 反推提示词 / 一键生成标题与卖点 /
+// 生成视频 / AI 解析建档 / AI 跟进建议 / AI 批量处理 / 生成方案文案 /
+// 生成灯光场景视频 / 生成灯光建议 / 我的额度 / /quota 路由）在 1.0.4 之后一直是隐藏的 ——
+// 页面文案写着「选好提示词后点『生成图片』」，但页面上根本没有那个按钮。
+//
+// 判据落源码，两条：
+// ① 全仓库不存在「注释块内再写 {/*」的嵌套注释
+// ② 关键入口在**去掉注释之后的代码**里 —— 只查「文件里有没有这个字符串」不够，
+//    因为被注释掉的字符串照样能被 grep 到
+const readdirSync2 = (await import('node:fs')).readdirSync;
+
+/** 找出所有「注释块内又出现 {/*」的嵌套注释块（这类块会把代码整段吞掉） */
+function findNestedCommentBlocks(src) {
+  const hits = [];
+  let pos = 0;
+  for (;;) {
+    const s = src.indexOf('{/*', pos);
+    if (s === -1) break;
+    const e = src.indexOf('*/}', s + 3);
+    if (e === -1) break;
+    if (src.slice(s + 3, e + 3).includes('{/*')) {
+      hits.push(src.slice(0, s).split('\n').length);
+    }
+    pos = s + 3;
+  }
+  return hits;
+}
+
+/** 去掉 JSX 注释块，得到「真正会渲染/生效的代码」 */
+const stripJsxComments = (src) => src.replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+
+const tsxFiles = [];
+const collectTsx = (dir) => {
+  for (const entry of readdirSync2(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) collectTsx(p);
+    else if (entry.name.endsWith('.tsx')) tsxFiles.push(p);
+  }
+};
+collectTsx(WEB_SRC);
+
+const nestedHits = [];
+const effectiveByFile = new Map();
+for (const f of tsxFiles) {
+  const src = readFileSync(f, 'utf8');
+  const hits = findNestedCommentBlocks(src);
+  for (const line of hits) nestedHits.push(`${f.replace(WEB_SRC + '/', '')}:${line}`);
+  effectiveByFile.set(f, stripJsxComments(src));
+}
+check('没有「JSX 注释块内再写 {/*」的嵌套注释（这类块会把代码整段吞掉）',
+  nestedHits.length === 0,
+  nestedHits.join('、'),
+);
+
+// 闸门本身要能证伪：拿一段含嵌套注释的样本喂给检测逻辑，必须报出来
+check('嵌套注释检测能抓到样本（闸门自身可证伪）',
+  findNestedCommentBlocks('{\/*\n<Button />\n{/*\n<Button />\n*\/}').length === 1,
+);
+check('去注释逻辑能剔掉注释块里的内容（否则第 ② 条断言会假通过）',
+  !stripJsxComments('{/* 生成图片 */}').includes('生成图片'),
+);
+
+// ② 关键入口必须在「去掉注释之后」的代码里
+const REQUIRED_ENTRIES = [
+  ['App.tsx', 'path="quota"', '额度说明页 /quota 路由'],
+  ['App.tsx', 'path="vip"', '/vip 旧别名重定向'],
+  ['pages/ImageStudio.tsx', '生成图片', 'AI 生图「生成图片」'],
+  ['pages/ImageStudio.tsx', '反推提示词', 'AI 生图「反推提示词」'],
+  ['pages/ImageStudio.tsx', '一键生成标题与卖点', 'AI 生图「一键生成标题与卖点」'],
+  ['pages/VideoStudio.tsx', '生成视频', 'AI 生视频「生成视频」'],
+  ['pages/OrderStudio.tsx', 'AI 解析建档', '接单「AI 解析建档」'],
+  ['pages/OrderStudio.tsx', 'AI 跟进建议', '接单「AI 跟进建议」'],
+  ['pages/ProductCenter.tsx', 'AI 批量处理', '产品中心「AI 批量处理」'],
+  ['pages/PlanStudio.tsx', '生成方案文案', '智能方案「生成方案文案」'],
+  ['pages/LightingStudio.tsx', '生成灯光场景视频', '灯光场景「生成灯光场景视频」'],
+  ['pages/LightingDiagnosis.tsx', '生成灯光建议', '灯光诊断「生成灯光建议」'],
+  ['pages/TokenCenter.tsx', '我的额度', '个人中心「我的额度」卡片'],
+  ['layouts/MainLayout.tsx', '开源说明', '顶栏「开源说明」按钮'],
+];
+const missingEntries = REQUIRED_ENTRIES
+  .filter(([rel, needle]) => !(effectiveByFile.get(join(WEB_SRC, rel)) ?? '').includes(needle))
+  .map(([rel, , label]) => `${label}（${rel}）`);
+check('关键入口都在生效代码里（不在注释块内）',
+  missingEntries.length === 0,
+  missingEntries.join('、'),
+);
+
+// —— 13. 说明页的数字不许手写 ——
+// 额度说明页要报「N 个预置智能体」「N 个工具入口」这两个数。
+// 手写过一次：说明页写「智能百宝箱 20 个工具入口」，实际清单里是 21 个 ——
+// 唯一来源是 TreasureBox 的 GROUPS，改一个加一个，说明页不跟着变就漂了。
+// 现在两个数字都从各自清单自动算，说明页里不再出现手写数字。
+const quotaSrc = readFileSync(join(WEB_SRC, 'pages/Quota.tsx'), 'utf8');
+const treasureSrc = readFileSync(join(WEB_SRC, 'pages/TreasureBox.tsx'), 'utf8');
+const { PRESET_AGENT_COUNT } = await import('../src/data/agents.ts');
+
+check('额度说明页不再手写「N 个预置智能体」（数字取自 agents.ts）',
+  !/\d+ 个预置智能体/.test(quotaSrc) && quotaSrc.includes('PRESET_AGENT_COUNT'),
+);
+check('额度说明页不再手写「N 个工具入口」（数字取自 TreasureBox 的清单）',
+  !/\d+ 个工具入口/.test(quotaSrc) && quotaSrc.includes('TOOL_COUNT'),
+);
+check('预置智能体数是 12（不含「通用对话」那一个）',
+  PRESET_AGENT_COUNT === 12,
+  `实测 ${PRESET_AGENT_COUNT}`,
+);
+// 百宝箱清单是 .tsx（带 JSX 与组件依赖），Node 里 import 不了，按源码条目数统计。
+const toolEntryCount = (treasureSrc.match(/\{ key: '[^']*', img: '\/images\/tools\//g) ?? []).length;
+check('百宝箱工具入口数是 21（说明页会显示这个数）',
+  toolEntryCount === 21,
+  `实测 ${toolEntryCount}`,
+);
+
 console.log(`\n小计: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

@@ -106,3 +106,11 @@ export const SEED_AGENTS: AgentDef[] = [
 5. 3000 元预算怎么分阶段投？`,
   },
 ];
+
+/**
+ * 预置智能体数量（不含「通用对话」那一个）。
+ *
+ * 说明页要报这个数字，唯一来源就是这份种子数据 —— 手写数字一定会漂
+ * （实测漂过一次：说明页写 12 个，实际种子里有 12 个预置 + 1 个通用对话）。
+ */
+export const PRESET_AGENT_COUNT = SEED_AGENTS.filter((a) => a.category !== '通用助手').length;

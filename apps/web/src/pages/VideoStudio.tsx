@@ -340,7 +340,6 @@ export function VideoStudio(): ReactNode {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            {/*
             <Button
               size="large"
               loading={generating}
@@ -359,26 +358,7 @@ export function VideoStudio(): ReactNode {
             >
               生成视频
             </Button>
-            {/*
-            <Button
-              size="large"
-              loading={generating}
-              onClick={generate}
-              icon={<ThunderboltFilled />}
-              style={{
-                height: 50,
-                paddingInline: 28,
-                borderRadius: 9999,
-                background: INK_BLACK,
-                color: '#fff',
-                border: 'none',
-                fontWeight: 700,
-                boxShadow: 'none',
-              }}
-            >
-              生成视频
-            </Button>
-            */}
+
             <Text type="secondary" style={{ fontSize: 13 }}>
               用你自己配置的模型生成，约需 1-3 分钟
             </Text>

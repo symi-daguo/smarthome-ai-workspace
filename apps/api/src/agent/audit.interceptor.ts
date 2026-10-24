@@ -13,6 +13,23 @@ const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 const SKIP_PREFIXES = ['/api/health', '/api/agent/audit'];
 
 /**
+ * 每写多少条审计，才做一次保留期清理。
+ *
+ * 为什么不能「每个写请求都清一次」：审计表本身就是只增的流水，
+ * 每个写请求都跑一次 DELETE = 把「治审计日志」变成「制造写放大」——
+ * 清一次要扫索引、写 WAL、留死元组，频率跟审计写入一样高的话，
+ * 磁盘写入量跟审计表本身一个量级，越用越慢（用户的要求：长期运行不持续擦写硬盘）。
+ *
+ * 取 500：一次清理的代价（一次索引扫描 + 一次批量删）摊到 500 次写请求上可以忽略，
+ * 而清理频率又远低于写入频率，长期不会积压。
+ * 一句话：**清理的开销必须远低于它省下来的东西**，否则就是白折腾。
+ *
+ * 为什么不用定时器：定时器要额外管生命周期（进程重启就不跑、多实例还要防重入），
+ * 而审计写入本身就是现成的触发点 —— 挂在已有路径上更简单可靠。
+ */
+const AUDIT_PURGE_EVERY = 500;
+
+/**
  * 全量审计（0.1.53）
  *
  * 为什么不用逐个 service 手写：改之前全项目只有 llm / layout / knowledge 三处在写 AuditLog，
@@ -33,11 +50,31 @@ export class AuditInterceptor implements NestInterceptor {
   private readonly logger = new Logger(AuditInterceptor.name);
   /** 破坏性操作模板（Nest 风格 :param → 匹配任意一段） */
   private readonly destructive = destructivePatterns();
+  /** 审计写入计数：每 AUDIT_PURGE_EVERY 次触发一次保留期清理（见该常量的说明） */
+  private auditWriteCount = 0;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly agent: AgentService,
   ) {}
+
+  /**
+   * 低频触发审计保留期清理。
+   *
+   * 绝大多数请求只做一次整数自增就返回（代价可忽略）；满 AUDIT_PURGE_EVERY 才真跑清理。
+   * 清理失败绝不能影响业务请求 —— 审计已经落库了，清理只是 housekeeping，失败下轮再来。
+   *
+   * 按租户隔离：清的是**触发这次清理的租户**自己的过期审计（外加不属于任何租户的
+   * 系统级审计）。别的租户的记录不动。
+   */
+  private maybePurgeAuditLogs(tenantId: string): void {
+    this.auditWriteCount += 1;
+    if (this.auditWriteCount < AUDIT_PURGE_EVERY) return;
+    this.auditWriteCount = 0;
+    void this.agent
+      .purgeExpiredAuditLogs(tenantId)
+      .catch((e: unknown) => this.logger.warn(`审计保留期清理失败 tenant=${tenantId}: ${String(e)}`));
+  }
 
   /** 命中破坏性操作模板才算；DELETE 一律算，POST/PATCH 只认清单里标了 destructive 的 */
   private isDestructive(method: string, path: string): boolean {
@@ -97,6 +134,9 @@ export class AuditInterceptor implements NestInterceptor {
           },
         })
         .catch((e: unknown) => this.logger.error(`审计写入失败 ${method} ${path}: ${String(e)}`));
+      // 保留期清理挂在这条已有的写入路径上：写审计的频率远高于清理的频率（见 AUDIT_PURGE_EVERY）
+      // 没有租户上下文时（tenantId 为空）不触发 —— 清理要按租户隔离，没有租户就没法隔离
+      if (tenantId) this.maybePurgeAuditLogs(tenantId);
     };
 
     if (!needAuto) {

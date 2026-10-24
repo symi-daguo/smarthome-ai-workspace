@@ -33,6 +33,36 @@ type ChatContentPart = { type: 'text'; text: string } | { type: 'image_url'; ima
 const ATTACH_TEXT_LIMIT = 8000;
 
 /**
+ * 解析本次请求实际使用的对话模型名。
+ *
+ * **为什么必须用 `||` 而不是 `??`**：
+ * 调用方常用「空串」表达「不锁死模型、跟随默认」（灯光诊断就是 `model: ''`），
+ * 而 `??` 只认 null/undefined —— 空串会原样透传，最终发给上游的是 `model: ''`，
+ * 上游回 `unknown model ''`，功能 100% 不可用，且报错完全指不到真因。
+ * 空模型名在任何场景下都没有意义，一律按「未指定」回退默认模型。
+ *
+ * 优先级：数据库显式配置 > 调用方指定 > 默认模型。
+ */
+export function resolveChatModel(cfgModel?: string, inputModel?: string): string {
+  return cfgModel || inputModel || DEFAULT_CHAT_MODEL;
+}
+
+/**
+ * 判断这次上游返回是不是「预算被吃光、正文一个字都没吐出来」。
+ *
+ * **为什么单独抽成纯函数**：这个故障在现场的表现是「功能点了没反应、数据全空」，
+ * 上层解析失败后只能给一句「暂无数据」，把根因吞掉了。判据必须可测：
+ * 断在预算上（finish_reason=length）还是断在模型格式上，处置方式完全不同。
+ *
+ * 实测依据（M3.1-Flash，灯光诊断任务，max_tokens=1200）：
+ * finish_reason=length，completion_tokens=1200 里 reasoning_tokens=1199，
+ * 正文长度 0 —— 预算全被思考吃掉，一个字正文都没吐。
+ */
+export function isTruncatedOutput(finishReason: string, reply: string): boolean {
+  return finishReason === 'length' && reply.trim() === '';
+}
+
+/**
  * 把附件真正组装进用户消息。
  *
  * **修复的是「看似能用、实则完全没用」**：此前前端只把「文件名(类型,大小)」拼进
@@ -222,7 +252,7 @@ export class LlmService {
     if (system.trim()) messages.push({ role: 'system', content: system.trim() });
     messages.push({ role: 'user', content: buildUserContent(input.prompt, input.attachments) });
 
-    const model = cfg.model ?? input.model ?? DEFAULT_CHAT_MODEL;
+    const model = resolveChatModel(cfg.model, input.model);
     const start = Date.now();
     const response = await fetchUpstream(
       `${cfg.baseUrl}/chat/completions`,
@@ -269,6 +299,16 @@ export class LlmService {
       completionTokens: data.usage?.completion_tokens ?? 0,
       reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
     };
+    // 输出被预算截断且正文为空 —— 必须当场报出，不能把空串交给上层。
+    // 上层拿到空串只能显示「暂无数据」，用户与运维都无从判断是模型没听话、
+    // 还是预算被思考吃光；前者改提示词，后者改 max_tokens，处置方式完全不同。
+    if (isTruncatedOutput(finishReason, reply)) {
+      throw new ServiceUnavailableException({
+        code: 'LLM_OUTPUT_TRUNCATED',
+        message: `模型输出被 max_tokens 预算截断，正文为空（思考 token 用了 ${usage.reasoningTokens}/${usage.completionTokens}）。该任务需要调大 max_tokens 后重试。`,
+        usage,
+      });
+    }
     return { reply, model: data.model ?? model, latencyMs, finishReason, usage };
   }
 

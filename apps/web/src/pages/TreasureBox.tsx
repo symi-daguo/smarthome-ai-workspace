@@ -73,6 +73,14 @@ const GROUPS: { title: string; tools: ToolDef[] }[] = [
 ];
 
 /**
+ * 工具入口总数。
+ *
+ * 说明页要报这个数字，唯一来源就是上面这份清单 —— 手写数字会漂
+ * （实测漂过一次：说明页写 20 个，实际清单里是 21 个）。
+ */
+export const TOOL_COUNT = GROUPS.reduce((n, g) => n + g.tools.length, 0);
+
+/**
  * 堆叠照片卡：三层错位叠放同一张语义图，整体居中。
  * 三层取景位置不同（background-position），避免「同一张图原样重复三次」的廉价感。
  * 角标压在图片右下角，不挤占标题行。

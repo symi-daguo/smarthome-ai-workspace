@@ -1677,7 +1677,6 @@ const [editing, setEditing] = useState<{
                     : '上传平面图 · 布点'}
               </Button>
               {/* 精装修生成：必须先有户型图，无则禁用 */}
-              {/*
               <Button
                 size="small"
                 ghost
@@ -1689,19 +1688,7 @@ const [editing, setEditing] = useState<{
               >
                 {plan.renderedFloorplanAssetId ? '重新生成精装修' : '生成精装修效果图'}
               </Button>
-              {/*
-              <Button
-                size="small"
-                ghost
-                type={plan.renderedFloorplanAssetId ? 'default' : 'primary'}
-                disabled={!plan.floorplanAssetId || renderingFloorplan}
-                loading={renderingFloorplan}
-                style={{ marginRight: 8 }}
-                onClick={renderFloorplan}
-              >
-                {plan.renderedFloorplanAssetId ? '重新生成精装修' : '生成精装修效果图'}
-              </Button>
-              */}
+
               <Button size="small" icon={<EditOutlined />} onClick={() => startEdit(realIndexOf(activePage), active)}>
                 修改当前页
               </Button>
@@ -1835,15 +1822,10 @@ const [editing, setEditing] = useState<{
           ) : null}
           {step === 0 ? (
             <>
-              {/*
               <Button data-testid="plan-generate-btn" size="large" type="primary" loading={generating} onClick={generate} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 180 }}>
                 生成方案文案
               </Button>
-              {/*
-              <Button data-testid="plan-generate-btn" size="large" type="primary" loading={generating} onClick={generate} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 180 }}>
-                生成方案文案
-              </Button>
-              */}
+
               <Text type="secondary" style={{ fontSize: 13 }}>
                 方案文案由智能体通过接口生成，生成后可回到本页逐页校对
               </Text>

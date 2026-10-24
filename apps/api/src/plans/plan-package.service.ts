@@ -216,4 +216,34 @@ export class PlanPackageService {
       await unlink(join(dir, n)).catch(() => undefined);
     }
   }
+
+  /**
+   * 删除某个方案的全部交付包（方案被删时调用）。
+   *
+   * **为什么必须删**：交付包是**纯文件、不入库**的（zip 落盘，库里没有对应行），
+   * `prune` 只管「同一方案打包多次时留最新 KEEP_PACKAGES 份」，管不到「方案本身被删」——
+   * 方案一删，包就成了没人认领的孤儿，永久留在卷里。
+   * 实测单个包 3-20MB，几十个方案就能吃掉几百 MB，正是「无错误数据挤爆硬盘」的典型来源。
+   *
+   * 返回删掉的数量，便于调用方观测。
+   */
+  async removeByPlan(planId: string): Promise<number> {
+    const dir = this.packageDir();
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return 0;
+    }
+    let removed = 0;
+    for (const n of names.filter((x) => x.startsWith(`${planId}-v`))) {
+      try {
+        await unlink(join(dir, n));
+        removed += 1;
+      } catch {
+        // 文件已不存在（或被并发删掉）就跳过，不能因为清理失败而让删除方案整体失败
+      }
+    }
+    return removed;
+  }
 }

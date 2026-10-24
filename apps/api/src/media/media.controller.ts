@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import type { AuthProfile } from '../auth/auth.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtQueryGuard } from '../common/jwt-query.guard.js';
@@ -141,6 +142,34 @@ export class MediaController {
 }
 
 /**
+ * 解析 Range 请求头（纯函数，便于单独验证）。
+ *
+ * 为什么不能直接按 '-' 硬拆字符串：bytes=100-（到末尾）与 bytes=-500（**最后** 500 字节）
+ * 是两种不同语义，拆错就会给出错误的 Content-Range，浏览器据此判定「文件损坏」而拒绝播放。
+ * 合法区间返回 {start,end}（闭区间），非法返回 null（调用方回 416）。
+ */
+export function parseByteRange(header: string, total: number): { start: number; end: number } | null {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header ?? '').trim());
+  if (!m) return null;
+  const startStr = m[1] ?? '';
+  const endStr = m[2] ?? '';
+  if (startStr === '' && endStr === '') return null;
+  if (total <= 0) return null;
+  if (startStr === '') {
+    // 后缀区间：取文件末尾 N 字节
+    const suffix = Number(endStr);
+    if (!Number.isFinite(suffix) || suffix <= 0) return null;
+    const start = Math.max(0, total - suffix);
+    return { start, end: total - 1 };
+  }
+  const start = Number(startStr);
+  if (!Number.isFinite(start) || start >= total) return null;
+  const end = endStr === '' ? total - 1 : Math.min(Number(endStr), total - 1);
+  if (!Number.isFinite(end) || end < start) return null;
+  return { start, end };
+}
+
+/**
  * 文件流独立控制器：img/video 标签无法携带 Authorization 头，
  * 走 JwtQueryGuard（?token= 查询参数认证），本地单机部署形态下可接受
  */
@@ -158,22 +187,51 @@ export class MediaFileController {
   ): Promise<void> {
     const asset = await this.media.resolveReadable(user.activeTenantId as string, id);
     const abs = this.media.resolveSafe(asset.filePath);
-    const buf = await readFile(abs);
+    // 流式发送而不是整文件读进内存：视频素材单文件上限 100MB，
+    // 原实现 readFile 会把整个文件塞进 Node 堆，并发几个请求就可能把进程压垮。
+    let size: number;
+    try {
+      size = (await stat(abs)).size;
+    } catch {
+      // 库里有行、磁盘上没文件（人工删过/卷没挂上）：按「文件不存在」回 404
+      throw new NotFoundException('ASSET_FILE_MISSING');
+    }
     res.setHeader('Content-Type', asset.mimeType || 'application/octet-stream');
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'private, max-age=3600');
     const range = res.req.headers.range;
     if (range) {
-      const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
-      const start = Number(startStr);
-      const end = endStr ? Math.min(Number(endStr), buf.length - 1) : buf.length - 1;
+      const parsed = parseByteRange(range, size);
+      if (!parsed) {
+        // 区间不合法：按 HTTP 语义回 416 并带上真实长度，客户端才知道该重新请求
+        res.status(416);
+        res.setHeader('Content-Range', `bytes */${size}`);
+        res.end();
+        return;
+      }
       res.status(206);
-      res.setHeader('Content-Range', `bytes ${start}-${end}/${buf.length}`);
-      res.setHeader('Content-Length', end - start + 1);
-      res.end(buf.subarray(start, end + 1));
+      res.setHeader('Content-Range', `bytes ${parsed.start}-${parsed.end}/${size}`);
+      res.setHeader('Content-Length', parsed.end - parsed.start + 1);
+      // 只把请求的那一段读出去，不多读也不全读
+      pipeFile(res, abs, { start: parsed.start, end: parsed.end });
       return;
     }
-    res.setHeader('Content-Length', buf.length);
-    res.end(buf);
+    res.setHeader('Content-Length', size);
+    pipeFile(res, abs);
   }
+}
+
+/**
+ * 把文件按流接到响应上。
+ *
+ * 为什么必须监听 'error'：Readable 没有 error 监听器时，出错会变成**未捕获异常**，
+ * 直接把进程带走（文件在 stat 之后被删、客户端中途断开都会触发）。
+ * 这里出错只毁掉这一次响应，不影响服务。
+ */
+function pipeFile(res: Response, abs: string, opts?: { start: number; end: number }): void {
+  const stream = createReadStream(abs, opts);
+  stream.on('error', () => {
+    res.destroy();
+  });
+  stream.pipe(res);
 }
