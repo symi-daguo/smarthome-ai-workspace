@@ -49,14 +49,24 @@ fi
 # 挂载点从容器实际挂载信息里取（不硬编码卷名：compose 项目名一变就失效，且失效是静默的）
 UPLOAD_MOUNT=$(docker inspect "$API_CID" --format '{{range .Mounts}}{{if eq .Destination "/repo/uploads"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
 if [ -n "$UPLOAD_MOUNT" ]; then
-  case "$(cd "$BACKUP_DIR" 2>/dev/null && pwd -P)" in
-    "${UPLOAD_MOUNT}"*)
+  # 两边都解析成**物理路径**再比：macOS 上 /var 是 /private/var 的软链，
+  # 只解析一边的话前缀判断必然对不上 —— 守卫形同虚设，备份会把自己又打进去。
+  BACKUP_REAL=$(cd "$BACKUP_DIR" 2>/dev/null && pwd -P)
+  UPLOAD_REAL=$(cd "$UPLOAD_MOUNT" 2>/dev/null && pwd -P || echo "$UPLOAD_MOUNT")
+  case "$BACKUP_REAL" in
+    "$UPLOAD_REAL"|"$UPLOAD_REAL"/*)
       die "备份目录不能放在 uploads 卷内（会自我递归打包）"
       ;;
   esac
 fi
 
-if docker exec "$API_CID" tar -C /repo/uploads -cf - . | gzip -1 > "${DEST}/uploads.tar.gz"; then
+# 排除 uploads/backups/：那是应用内 GET /api/admin/backup 留的 JSON 库快照，
+# 内容与上面 pg_dump 拿到的库数据完全重复，把它打进产物卷归档纯属白占空间。
+# 实测体积差：冒烟期库里 39746 条审计 + 7525 条变更快照，JSON 快照单份 105MB，
+# 卷内留 3 份 = 266MB，每做一次全量备份就多背 266MB（宿主侧还留 3 份 → 约 800MB）。
+# 它自己还会随库增长：审计与变更快照越多，JSON 越大 → 越背越沉。
+# 排除不丢东西：数据库内容由 db.dump 负责，产物卷归档只管文件。
+if docker exec "$API_CID" tar -C /repo/uploads --exclude=./backups -cf - . | gzip -1 > "${DEST}/uploads.tar.gz"; then
   ok "产物卷归档完成（$(du -h "${DEST}/uploads.tar.gz" | cut -f1)）"
 else
   die "产物卷归档失败，目录已保留在 ${DEST} 供排查"
@@ -81,6 +91,7 @@ fs.writeFileSync(dest + "/manifest.json", JSON.stringify({
     db: { file: "db.dump", bytes: Number(dbSize), sha256: dbSum },
     uploads: { file: "uploads.tar.gz", bytes: Number(upSize), sha256: upSum },
   },
+  excluded: ["uploads/backups/（应用内 JSON 库快照，内容由 db.dump 覆盖）"],
   note: "恢复用 bash scripts/restore-full.sh <备份目录>",
 }, null, 2));
 ' "$DEST" "$DB_SUM" "$UP_SUM" "$DB_SIZE" "$UP_SIZE" "$BACKUP_KEEP"

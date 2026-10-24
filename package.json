@@ -18,6 +18,7 @@
     "check:pptx": "pnpm --filter @app/web check:pptx",
     "check:docs": "node scripts/check-docs.mjs",
     "check:brand": "node scripts/check-brand.mjs",
+    "check:backup": "node apps/api/test/backup-scripts.mjs",
     "typecheck": "pnpm -r typecheck",
     "smoke": "pnpm --filter @app/api smoke",
     "db:migrate": "pnpm --filter @app/api prisma:migrate",

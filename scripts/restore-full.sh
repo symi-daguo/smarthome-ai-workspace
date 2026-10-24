@@ -36,10 +36,21 @@ die()  { printf '%s\n' "${RED}✗${OFF} $1" >&2; exit 1; }
 [ -f "${SRC}/uploads.tar.gz" ] || die "缺少 uploads.tar.gz：${SRC}"
 [ -f "${SRC}/manifest.json" ] || warn "没有 manifest.json，跳过完整性校验"
 
-API_CID=$(docker compose ps -q api 2>/dev/null)
+API_CID=$(docker compose ps -aq api 2>/dev/null | head -1)
 DB_CID=$(docker compose ps -q db 2>/dev/null)
-[ -n "$API_CID" ] || die "api 容器未运行"
+[ -n "$API_CID" ] || die "找不到 api 容器"
 [ -n "$DB_CID" ] || die "db 容器未运行"
+
+# api 容器在恢复期间要停掉（防止它继续写库写文件，写出混合状态）。
+# 但「停掉」也意味着不能再 docker exec 进去 —— 而产物卷的清空与解包正是要在卷里做的。
+# 所以卷操作改用**一次性临时容器**挂同一个卷：
+# 既保住「恢复全程 api 不写盘」这个前提，又不用把 api 拉起来。
+# 临时容器复用 api 自己的镜像（本机已有，不联网拉取）。
+API_IMAGE=$(docker inspect "$API_CID" --format '{{.Config.Image}}' 2>/dev/null)
+UPLOAD_VOL=$(docker inspect "$API_CID" --format '{{range .Mounts}}{{if eq .Destination "/repo/uploads"}}{{.Name}}{{end}}{{end}}' 2>/dev/null)
+[ -n "$API_IMAGE" ] || die "读不到 api 镜像名"
+[ -n "$UPLOAD_VOL" ] || die "读不到 uploads 卷名"
+API_WAS_UP=$(docker inspect "$API_CID" --format '{{.State.Running}}' 2>/dev/null)
 
 # --- 1. 完整性校验：备份文件损坏却照着恢复，等于用坏数据盖住好数据 ---
 if [ -f "${SRC}/manifest.json" ]; then
@@ -90,24 +101,29 @@ else
   RESTORE_FAILED=1
 fi
 
-# --- 5. 产物卷恢复 ---
+# --- 5. 产物卷恢复（用一次性临时容器挂同一卷；api 容器此时是停的，不能 exec）---
 if [ "$MERGE" = 1 ]; then
   note "解包产物卷（--merge，不清空）"
 else
   note "清空并重建产物卷"
-  docker exec "$API_CID" sh -c 'find /repo/uploads -mindepth 1 -maxdepth 1 -exec rm -rf {} \;' \
+  docker run --rm -v "${UPLOAD_VOL}:/repo/uploads" --entrypoint sh "$API_IMAGE" \
+    -c 'find /repo/uploads -mindepth 1 -maxdepth 1 -exec rm -rf {} \;' \
     || warn "清空产物卷失败，继续解包（可能残留快照之外的文件）"
 fi
-if gunzip -c "${SRC}/uploads.tar.gz" | docker exec -i "$API_CID" tar -C /repo/uploads -xf -; then
+if gunzip -c "${SRC}/uploads.tar.gz" | docker run --rm -i -v "${UPLOAD_VOL}:/repo/uploads" --entrypoint tar "$API_IMAGE" -C /repo/uploads -xf -; then
   ok "产物卷恢复完成"
 else
   warn "产物卷解包返回非零，请核对卷内容"
   RESTORE_FAILED=1
 fi
 
-# --- 6. 起 api ---
-note "启动 api 容器"
-docker compose start api >/dev/null 2>&1 || warn "api 启动失败，请手动检查"
+# --- 6. 起 api（只恢复成它原先的状态：原先停着就别擅自拉起来）---
+if [ "$API_WAS_UP" = "true" ]; then
+  note "启动 api 容器"
+  docker compose start api >/dev/null 2>&1 || warn "api 启动失败，请手动检查"
+else
+  note "api 容器恢复前就是停的，保持停机状态"
+fi
 
 echo ""
 if [ "$RESTORE_FAILED" = 0 ]; then
