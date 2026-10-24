@@ -45,7 +45,7 @@ const ALLOWED_DOMAINS = new Set([
   // Prisma 官方引擎二进制分发站（@prisma/fetch-engine 的默认下载源）
   'binaries.prisma.sh',
   // 代码托管与官方文档
-  'github.com', 'api.github.com', 'www.w3.org', 'json.schemastore.org', 'www.prisma.io', 'itunes.apple.com',
+  'github.com', 'api.github.com', 'uploads.github.com', 'www.w3.org', 'json.schemastore.org', 'www.prisma.io', 'itunes.apple.com',
   // 本机开发与示例
   'host.docker.internal', 'localhost',
   // example.com 是 RFC 2606 保留的示例域名（连同其子域），
