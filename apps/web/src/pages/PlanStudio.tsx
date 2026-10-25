@@ -282,7 +282,7 @@ const [editing, setEditing] = useState<{
   const [showNarration, setShowNarration] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  /** 打包三件套：要先跑一遍 canvas 预裁剪 + 点位合成，比单纯写 PPTX 慢，别共用一个 loading */
+  /** 打包交付包：要先跑一遍 canvas 预裁剪 + 点位合成，比单纯写 PPTX 慢，别共用一个 loading */
   const [packaging, setPackaging] = useState(false);
   /** 审稿页「完整文案」折叠区（整篇视图与逐页视图并存） */
   const [deckTextOpen, setDeckTextOpen] = useState(false);
@@ -892,7 +892,7 @@ const [editing, setEditing] = useState<{
   };
 
   /**
-   * 交付三件套：PPTX + 完整讲稿 + 图片包，打成一个 zip 给客户。
+   * 打包交付包：PPTX + 完整讲稿 + 图片包（+ 讲解音频），打成一个 zip 给客户。
    *
    * 为什么不直接下载：浏览器 blob 下载的文件名由宿主决定，实测一律落成随机名，
    * 而交付物的名字恰恰最不该丢。走服务端打包后，文件名由 Content-Disposition 给定，
@@ -1865,7 +1865,8 @@ const [editing, setEditing] = useState<{
               </Button>
             </div>
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
-              交付三件套 = 方案 PPTX + 完整讲稿 + 图片包（户型图与效果图原图），打成一个 zip 发给客户。
+              交付包 = 方案 PPTX + 完整讲稿 + 图片包（户型图与效果图原图），打成一个 zip 发给客户；
+              配了语音服务时再附一份逐页讲解音频，没配就不带（打包后提示里会写明带了没有）。
               图片包由服务端按方案素材自动收集，不用自己整理；链接 2 小时内有效，方案改版后自动失效。
             </Text>
             <div

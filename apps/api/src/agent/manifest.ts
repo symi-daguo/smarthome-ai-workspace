@@ -396,7 +396,7 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'POST', p: '/api/plans/{id}/render-floorplan', d: '渲染户型图（消耗算力）', risk: W },
       { m: 'PATCH', p: '/api/plans/{id}/videos', d: '绑定场景视频（最多 2 条，分享页内联播放）', risk: W },
       { m: 'PATCH', p: '/api/plans/{id}/assets', d: '把工具产物挂到工程上（渲染图/场景视频/户型图与点位）', risk: W },
-      { m: 'POST', p: '/api/plans/{id}/package', d: '打包交付三件套（PPTX + 讲稿 + 图片包），需已逐页校对；配了语音服务时多带一份讲解音频', risk: W },
+      { m: 'POST', p: '/api/plans/{id}/package', d: '打包交付（PPTX + 讲稿 + 图片包，配了语音服务时多带一份讲解音频），需已逐页校对', risk: W },
       { m: 'GET', p: '/api/plans/package/download', d: '按签名直链下载交付包（链接即凭证，2 小时过期且方案改版即失效）', risk: R },
       { m: 'GET', p: '/api/plans/{id}/narration-audio', d: '★ 讲解音频状态：有没有、地址在哪、多长（只读）。取到后可推给有喇叭的设备播报', risk: R },
       { m: 'POST', p: '/api/plans/{id}/narration-audio', d: '按讲稿文本合成讲解音频（同一版本重复调用复用已存的那份）', risk: W },

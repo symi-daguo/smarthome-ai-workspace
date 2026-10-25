@@ -8,7 +8,7 @@ import { MediaService } from '../media/media.service.js';
 import { PlansService } from './plans.service.js';
 
 /**
- * 交付三件套打包（`POST /package`）。
+ * 交付打包（`POST /package`）：默认三件套（PPTX + 讲稿 + 图片包），配了语音服务时多带一份讲解音频。
  *
  * 为什么要搬到服务端：**浏览器 blob 下载的文件名由宿主决定**，
  * 实测一律落成 `.com.minimax.agent.cn.XXXX`，客户拿到的是一串随机名，
