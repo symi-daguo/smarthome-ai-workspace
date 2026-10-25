@@ -130,7 +130,7 @@ export function collectReferencedAssetIds(rows: AssetReferenceRows): Set<string>
 
 /** 卷内真实占用（字节）。口径说明见 MediaService.volumeUsage()。 */
 export interface VolumeUsage {
-  /** 卷内真实占用：产物 + 交付包 + 备份 + 孤儿文件 */
+  /** 卷内真实占用：产物 + 交付包 + 讲解音频 + 备份 + 孤儿文件 */
   usedBytes: number;
   /** MediaAsset 表记账的字节（只算有行的产物） */
   trackedBytes: number;
@@ -140,6 +140,8 @@ export interface VolumeUsage {
   orphanBytes: number;
   /** 交付包字节（纯文件，不入库） */
   planPackageBytes: number;
+  /** 讲解音频字节（纯文件，不入库） */
+  narrationAudioBytes: number;
   /** 全库备份字节（纯文件，不入库） */
   backupBytes: number;
   /** 卷内文件总数 */
@@ -286,6 +288,7 @@ export class MediaService {
     let onDiskMediaBytes = 0;
     let orphanBytes = 0;
     let planPackageBytes = 0;
+    let narrationAudioBytes = 0;
     let backupBytes = 0;
     let files = 0;
     try {
@@ -305,6 +308,7 @@ export class MediaService {
         if (!st.isFile()) continue;
         files += 1;
         if (name.startsWith('plan-packages/')) planPackageBytes += st.size;
+        else if (name.startsWith('narration/')) narrationAudioBytes += st.size;
         else if (name.startsWith('backups/')) backupBytes += st.size;
         else {
           onDiskMediaBytes += st.size;
@@ -317,11 +321,12 @@ export class MediaService {
     }
 
     return {
-      usedBytes: onDiskMediaBytes + planPackageBytes + backupBytes,
+      usedBytes: onDiskMediaBytes + planPackageBytes + narrationAudioBytes + backupBytes,
       trackedBytes,
       onDiskMediaBytes,
       orphanBytes,
       planPackageBytes,
+      narrationAudioBytes,
       backupBytes,
       files,
     };

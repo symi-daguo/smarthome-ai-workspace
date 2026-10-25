@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   Patch,
   Post,
@@ -20,10 +21,12 @@ import { readFile } from 'node:fs/promises';
 import type { AuthProfile } from '../auth/auth.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { ZodValidationPipe } from '../common/zod.pipe.js';
+import { JwtQueryGuard } from '../common/jwt-query.guard.js';
 import { MediaService } from '../media/media.service.js';
 import { PermissionsGuard } from '../rbac/permissions.guard.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
 import { TenantGuard } from '../tenants/tenant.guard.js';
+import { NarrationAudioService } from './narration-audio.service.js';
 import { PlanPackageService } from './plan-package.service.js';
 import { PlanPreflightService } from './plan-preflight.service.js';
 import { PlansService } from './plans.service.js';
@@ -32,12 +35,14 @@ import {
   attachFloorplanSchema,
   bindVideosSchema,
   createPlanSchema,
+  narrationAudioSchema,
   updatePlanPageSchema,
   updatePlanTemplatesSchema,
   type AttachAssetDto,
   type AttachFloorplanDto,
   type BindVideosDto,
   type CreatePlanDto,
+  type NarrationAudioDto,
   type UpdatePlanPageDto,
   type UpdatePlanTemplatesDto,
 } from './plans.schemas.js';
@@ -45,11 +50,14 @@ import {
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('plans')
 export class PlansController {
+  private readonly logger = new Logger(PlansController.name);
+
   constructor(
     private readonly plans: PlansService,
     private readonly media: MediaService,
     private readonly packages: PlanPackageService,
     private readonly preflight: PlanPreflightService,
+    private readonly narrationAudio: NarrationAudioService,
   ) {}
 
   /**
@@ -209,6 +217,8 @@ export class PlansController {
     // 几十个方案就能吃掉几百 MB，正是「无错误数据挤爆硬盘」的典型来源。
     // 清理失败不阻断（方案已删，包只是残留，还能由运维兜底回收）。
     await this.packages.removeByPlan(id);
+    // 讲解音频同理：也是纯文件不入库，同样不能变成没人认领的孤儿。
+    await this.narrationAudio.removeByPlan(id);
   }
 
   /**
@@ -251,6 +261,10 @@ export class PlansController {
   /**
    * 交付三件套打包（`POST /package`）。
    * 只收前端生成好的 PPTX 与讲稿：图片包由服务端从 media 取，不必再传一遍原图。
+   *
+   * 讲解音频是**第四件**：讲稿文本传上来后，服务端顺带调语音服务合成一份音频放进包里。
+   * 没配语音服务（或合成失败）时**降级为三件套**并在响应里说明原因 ——
+   * 语音是加分项，不该让「没有语音服务」的部署交不出方案。
    */
   @RequirePermissions('content:generate')
   @Post(':id/package')
@@ -262,13 +276,130 @@ export class PlansController {
     @Body('narration') narration?: string,
   ) {
     if (!pptx) throw new BadRequestException('PPTX_FILE_MISSING');
-    return this.packages.build({
-      tenantId: user.activeTenantId as string,
+    const tenantId = user.activeTenantId as string;
+    const plan = await this.plans.detail(tenantId, id);
+    let audio: { name: string; buffer: Buffer } | null = null;
+    let audioReason = '';
+    if (this.narrationAudio.configured()) {
+      try {
+        const info = await this.narrationAudio.ensure(id, plan.versionNo, narration ?? '', plan.title);
+        const buf = await this.narrationAudio.read(id, plan.versionNo);
+        if (buf && buf.length) audio = { name: info.fileName, buffer: buf };
+        else audioReason = 'NARRATION_AUDIO_EMPTY';
+      } catch (e) {
+        audioReason = e instanceof Error ? e.message : String(e);
+        this.logger.warn(`讲解音频合成失败，降级为三件套：${audioReason}`);
+      }
+    } else {
+      audioReason = 'NARRATION_TTS_NOT_CONFIGURED';
+    }
+    const result = await this.packages.build({
+      tenantId,
       planId: id,
       userId: user.id,
       pptx: pptx.buffer,
       narration: narration ?? '',
+      audio,
     });
+    return { ...result, audio: { included: Boolean(audio), reason: audio ? '' : audioReason } };
+  }
+
+  /**
+   * 讲解音频状态（只读）。
+   *
+   * 给智能体用：它要知道「这个方案的讲解音频有没有、地址在哪、念了多久」，
+   * 才能决定要不要推到有喇叭的设备上播。
+   * 还没生成过不是错误 —— 返回 `available: false` 并说明原因。
+   */
+  @RequirePermissions('content:read')
+  @Get(':id/narration-audio')
+  async narrationAudioInfo(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+  ) {
+    const plan = await this.plans.detail(user.activeTenantId as string, id);
+    const info = await this.narrationAudio.find(id, plan.versionNo, plan.title);
+    if (!info) {
+      return {
+        available: false,
+        reason: this.narrationAudio.configured() ? 'NARRATION_AUDIO_NOT_GENERATED' : 'NARRATION_TTS_NOT_CONFIGURED',
+        versionNo: plan.versionNo,
+      };
+    }
+    return {
+      available: true,
+      versionNo: plan.versionNo,
+      fileName: info.fileName,
+      bytes: info.bytes,
+      mimeType: info.mimeType,
+      durationSec: info.durationSec,
+      generatedAt: info.generatedAt,
+      downloadUrl: `/api/plans/${id}/narration-audio/file`,
+    };
+  }
+
+  /**
+   * 按需生成讲解音频。
+   *
+   * 文本由调用方给（讲稿的唯一来源在前端，服务端不重建页序），
+   * 生成后落盘，同一版本重复调用会直接复用已存的那份。
+   */
+  @RequirePermissions('content:generate')
+  @Post(':id/narration-audio')
+  async generateNarrationAudio(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(narrationAudioSchema)) dto: NarrationAudioDto,
+  ) {
+    const plan = await this.plans.detail(user.activeTenantId as string, id);
+    const info = await this.narrationAudio.ensure(id, plan.versionNo, dto.text, plan.title);
+    return {
+      available: true,
+      versionNo: plan.versionNo,
+      fileName: info.fileName,
+      bytes: info.bytes,
+      mimeType: info.mimeType,
+      durationSec: info.durationSec,
+      generatedAt: info.generatedAt,
+      downloadUrl: `/api/plans/${id}/narration-audio/file`,
+    };
+  }
+}
+
+/**
+ * 讲解音频文件流独立控制器：`<audio>` / 下载链接无法携带 Authorization 头，
+ * 走 JwtQueryGuard（`?token=` 查询参数认证），与素材文件流同一套做法。
+ *
+ * 单独一个控制器而不是挂在 PlansController 上：类级守卫是 `AuthGuard('jwt')`，
+ * 方法级守卫是**追加**而不是替换 —— 同一个类上两个守卫会先跑无 query 兜底的
+ * 那个，`?token=` 永远轮不到，直接 401。
+ */
+@UseGuards(JwtQueryGuard, TenantGuard, PermissionsGuard)
+@Controller('plans')
+export class PlanNarrationAudioFileController {
+  constructor(
+    private readonly plans: PlansService,
+    private readonly narrationAudio: NarrationAudioService,
+  ) {}
+
+  @RequirePermissions('content:read')
+  @Get(':id/narration-audio/file')
+  async narrationAudioFile(
+    @CurrentUser() user: AuthProfile & { activeTenantId?: string },
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const plan = await this.plans.detail(user.activeTenantId as string, id);
+    const buf = await this.narrationAudio.read(id, plan.versionNo);
+    if (!buf) {
+      res.status(404);
+      res.end();
+      return;
+    }
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Length', buf.length);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(buf);
   }
 }
 

@@ -96,6 +96,12 @@ services:
       WEKNORA_KB_IDS: ${WEKNORA_KB_IDS:-}
       OBSIDIAN_BASE_URL: ${OBSIDIAN_BASE_URL:-http://host.docker.internal:27124}
       OBSIDIAN_API_KEY: ${OBSIDIAN_API_KEY:-}
+      # 方案讲解音频：外部语音合成服务（可插拔）。
+      # 留空 NARRATION_TTS_URL = 本部署不出讲解音频（交付包自动降级为三件套，功能不受影响）。
+      # 容器内 127.0.0.1 指向 api 容器自身，本机服务必须走 host.docker.internal（已配 host-gateway）。
+      NARRATION_TTS_URL: ${NARRATION_TTS_URL:-}
+      NARRATION_TTS_TOKEN: ${NARRATION_TTS_TOKEN:-}
+      NARRATION_TTS_TIMEOUT_MS: ${NARRATION_TTS_TIMEOUT_MS:-60000}
       # 生成产物本地落盘目录（容器内路径，宿主机卷持久化）
       UPLOAD_DIR: /repo/uploads
       # 磁盘治理：产物配额（MB，个人中心可查看占用并一键清理过期未引用产物）+ 限流可配

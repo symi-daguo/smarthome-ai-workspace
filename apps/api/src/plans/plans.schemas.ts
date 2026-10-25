@@ -173,3 +173,15 @@ export const bindVideosSchema = z.object({
   videoAssetIds: z.array(z.string().uuid('视频资产 id 不合法')).max(2, '最多绑定 2 条场景视频').default([]),
 });
 export type BindVideosDto = z.infer<typeof bindVideosSchema>;
+
+/**
+ * 按需生成讲解音频：把讲稿文本交给语音服务合成。
+ *
+ * 文本由调用方给：讲稿的唯一来源在前端（页序含点位清单续页），
+ * 服务端再实现一遍就会变成两份会漂移的真相。
+ * 上限 20 万字符与内容提取的纪要入口对齐 —— 一份方案的讲稿远小于这个量。
+ */
+export const narrationAudioSchema = z.object({
+  text: z.string().min(1, '讲稿文本不能为空').max(200_000, '讲稿文本过长'),
+});
+export type NarrationAudioDto = z.infer<typeof narrationAudioSchema>;

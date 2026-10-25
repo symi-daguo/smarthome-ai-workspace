@@ -290,7 +290,7 @@ export class BackupController {
   async storage(@CurrentUser() user: AuthProfile & { activeTenantId?: string }): Promise<{
     usedBytes: number; quotaBytes: number; assets: number; oldest: string | null;
     trackedBytes: number; onDiskMediaBytes: number; orphanBytes: number;
-    planPackageBytes: number; backupBytes: number; files: number;
+    planPackageBytes: number; narrationAudioBytes: number; backupBytes: number; files: number;
     tenantUsedBytes: number;
   }> {
     const agg = await this.prisma.mediaAsset.aggregate({ _sum: { sizeBytes: true }, _count: true, _min: { createdAt: true } });
@@ -310,6 +310,7 @@ export class BackupController {
       onDiskMediaBytes: usage.onDiskMediaBytes,
       orphanBytes: usage.orphanBytes,
       planPackageBytes: usage.planPackageBytes,
+      narrationAudioBytes: usage.narrationAudioBytes,
       backupBytes: usage.backupBytes,
       files: usage.files,
     };

@@ -64,8 +64,12 @@ export class PlanPackageService {
   }
 
   /**
-   * 打包三件套：PPTX（前端生成）+ 图片包（服务端取原图）+ 完整讲稿。
+   * 打包交付物（`POST /package`）。
    * 返回签名直链所需的 token 与展示名。
+   *
+   * `audio` 是**可选的第四件**：调用方合成好了就带进来，没带就出三件套。
+   * 放在这里而不是在这里合成，是因为合成要调外部语音服务（网络与失败都可能），
+   * 打包这一步只该做「把已经准备好的东西装进 zip」。
    */
   async build(args: {
     tenantId: string;
@@ -73,6 +77,7 @@ export class PlanPackageService {
     userId: string;
     pptx: Buffer;
     narration: string;
+    audio?: { name: string; buffer: Buffer } | null;
   }): Promise<{ token: string; fileName: string; size: number; contents: string[] }> {
     const plan = await this.plans.detail(args.tenantId, args.planId);
     // 校对闸门：改任意一页都会 bump versionNo 并让 reviewedRevision 失效，
@@ -106,12 +111,20 @@ export class PlanPackageService {
       contents.push(`图片包/${img.name}`);
     }
 
+    // 4. 讲解音频：有就带上。文件名带方案名与版本号，客户拿到就知道对应哪一版
+    if (args.audio && args.audio.buffer.length) {
+      zip.file(args.audio.name, args.audio.buffer, { date: new Date() });
+      contents.push(args.audio.name);
+    }
+
     const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     const stored = `${args.planId}-v${version}-${Date.now()}.zip`;
     await mkdir(this.packageDir(), { recursive: true });
     await writeFile(join(this.packageDir(), stored), buf);
 
-    const fileName = `${plan.title}-V${version}-交付三件套.zip`;
+    const fileName = args.audio && args.audio.buffer.length
+      ? `${plan.title}-V${version}-交付四件套.zip`
+      : `${plan.title}-V${version}-交付三件套.zip`;
     const token = await this.jwt.signAsync(
       { sub: TOKEN_SUBJECT, planId: args.planId, tenantId: args.tenantId, versionNo: version, stored, downloadName: fileName },
       { expiresIn: TOKEN_TTL },

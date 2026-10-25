@@ -15,6 +15,7 @@ import {
   PlayCircleOutlined,
   PlusOutlined,
   RightOutlined,
+  SoundOutlined,
 } from '@ant-design/icons';
 import { Alert, App as AntApp, Button, Checkbox, Drawer, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Spin, Steps, Tag, Tooltip, Typography, theme } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -291,6 +292,15 @@ const [editing, setEditing] = useState<{
     warnings: { index: number; heading: string; field: string; snippet: string }[];
   } | null>(null);
   const [renderingFloorplan, setRenderingFloorplan] = useState(false);
+  /**
+   * 讲解音频状态（服务端判定，只读）。
+   * `available=false` 时 `reason` 说明为什么没有：没配语音服务，还是还没生成过。
+   */
+  const [narrationAudio, setNarrationAudio] = useState<{
+    available: boolean; reason?: string; versionNo?: number;
+    fileName?: string; bytes?: number; durationSec?: number | null; downloadUrl?: string;
+  } | null>(null);
+  const [audioBusy, setAudioBusy] = useState(false);
   /** 预算分配：只有用户改过的分类存覆盖值，其余跟随建议占比 */
   const [splitOverride, setSplitOverride] = useState<Record<string, number | null>>({});
   const [searchParams] = useSearchParams();
@@ -667,7 +677,7 @@ const [editing, setEditing] = useState<{
       setPlan(updated);
       setFpTpl(floorplanTemplate(updated.floorplanTemplate));
       setMkTpl(markerTemplate(updated.markerTemplate));
-      if (step === 3) void runPreflight(updated.id);
+      if (step === 3) { void runPreflight(updated.id); void loadNarrationAudio(updated.id); }
       message.success(`交付模版已更新（版本 ${updated.versionNo}），请重新校对后再打包交付`);
     } catch (e) {
       message.error((e as Error).message || '模版保存失败');
@@ -698,7 +708,7 @@ const [editing, setEditing] = useState<{
       setPlan(updated);
       setEditing(null);
       // 改过内容，之前那份预检结论可能已过时，立刻重查
-      if (step === 3) void runPreflight(updated.id);
+      if (step === 3) { void runPreflight(updated.id); void loadNarrationAudio(updated.id); }
       message.success(`已保存，文案版本 ${updated.versionNo}`);
     } catch (e) {
       const err = e as Error & { code?: string; status?: number; currentVersionNo?: number };
@@ -754,6 +764,52 @@ const [editing, setEditing] = useState<{
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** 讲解音频状态：只读、不扣额度。进交付步时查一次 */
+  const loadNarrationAudio = useCallback(async (planId: string): Promise<void> => {
+    try {
+      setNarrationAudio(await api<typeof narrationAudio>(`/api/plans/${planId}/narration-audio`));
+    } catch {
+      // 查不到状态不该打断交付流程：音频是加分项，没有它照样能交方案
+      setNarrationAudio(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * 生成讲解音频。
+   *
+   * 讲稿文本由前端给（`buildNarrationText` 是讲稿的唯一来源，服务端不重建页序）。
+   * 合成可能要十几秒到一分钟（外部语音服务），所以按钮要有 loading 态。
+   */
+  const generateNarrationAudio = async (): Promise<void> => {
+    if (!plan) return;
+    setAudioBusy(true);
+    try {
+      const payload = exportPayload(plan, quoteSummary);
+      const res = await api<typeof narrationAudio & { available: boolean }>(
+        `/api/plans/${plan.id}/narration-audio`,
+        { method: 'POST', body: JSON.stringify({ text: buildNarrationText(payload) }) },
+      );
+      setNarrationAudio(res);
+      message.success(res.available ? '讲解音频已生成' : '讲解音频未生成');
+    } catch (e) {
+      message.error((e as Error).message || '生成讲解音频失败');
+    } finally {
+      setAudioBusy(false);
+    }
+  };
+
+  /** 下载讲解音频。走 fileUrl 带上 token（下载链接带不了 Authorization 头） */
+  const downloadNarrationAudio = (): void => {
+    if (!plan || !narrationAudio?.downloadUrl) return;
+    const a = document.createElement('a');
+    a.href = fileUrl(narrationAudio.downloadUrl);
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
 
   const shareUrl = plan ? `${window.location.origin}/share/plan/${plan.shareToken}` : '';
 
@@ -851,7 +907,10 @@ const [editing, setEditing] = useState<{
       const fd = new FormData();
       fd.append('pptx', new File([blob], `${plan.title}.pptx`, { type: 'application/octet-stream' }));
       fd.append('narration', buildNarrationText(payload));
-      const res = await api<{ token: string; fileName: string; size: number; contents: string[] }>(
+      const res = await api<{
+        token: string; fileName: string; size: number; contents: string[];
+        audio?: { included: boolean; reason?: string };
+      }>(
         `/api/plans/${plan.id}/package`,
         { method: 'POST', body: fd },
       );
@@ -864,7 +923,10 @@ const [editing, setEditing] = useState<{
       document.body.appendChild(a);
       a.click();
       a.remove();
-      message.success(`交付包已生成（${res.contents.length} 个文件 · ${(res.size / 1024 / 1024).toFixed(1)} MB）：${res.fileName}`);
+      // 包里有没有讲解音频由服务端说话（配没配语音服务只有它知道）：
+      // 这里不自己数件数，免得与实际交付物对不上。
+      const audioNote = res.audio?.included ? '（含讲解音频）' : '（未含讲解音频）';
+      message.success(`交付包已生成（${res.contents.length} 个文件 · ${(res.size / 1024 / 1024).toFixed(1)} MB）${audioNote}：${res.fileName}`);
     } catch (e) {
       message.error((e as Error).message || '打包失败');
     } finally {
@@ -1749,9 +1811,37 @@ const [editing, setEditing] = useState<{
                 />
               )}
             </div>
+            {/* 讲解音频：把讲稿变成能播出来的东西。
+                配了语音服务才有；没配时只说明原因，不给一个点不动的按钮。 */}
+            {narrationAudio && (
+              <div style={{ marginTop: 12, textAlign: 'left' }}>
+                {narrationAudio.available ? (
+                  <Space size={8} wrap>
+                    <Tag color="success" icon={<SoundOutlined />}>
+                      讲解音频已生成
+                      {narrationAudio.durationSec ? ` · ${Math.round(narrationAudio.durationSec)} 秒` : ''}
+                      {narrationAudio.bytes ? ` · ${(narrationAudio.bytes / 1024 / 1024).toFixed(1)} MB` : ''}
+                    </Tag>
+                    <Button size="small" icon={<DownloadOutlined />} onClick={downloadNarrationAudio}>下载音频</Button>
+                    <Button size="small" loading={audioBusy} onClick={() => void generateNarrationAudio()}>重新生成</Button>
+                  </Space>
+                ) : narrationAudio.reason === 'NARRATION_TTS_NOT_CONFIGURED' ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    本部署未配置语音合成服务，交付包只含 PPTX、讲稿与图片包（讲解音频不影响交付）。
+                  </Text>
+                ) : (
+                  <Space size={8} wrap>
+                    <Text type="secondary" style={{ fontSize: 12 }}>还没有讲解音频。</Text>
+                    <Button size="small" icon={<SoundOutlined />} loading={audioBusy} onClick={() => void generateNarrationAudio()}>
+                      生成讲解音频
+                    </Button>
+                  </Space>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
               <Button type="primary" size="large" icon={<DownloadOutlined />} loading={packaging} onClick={packageDelivery} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 190 }}>
-                打包交付三件套
+                打包交付
               </Button>
               <Button size="large" icon={<DownloadOutlined />} loading={exporting} onClick={downloadPptx}>
                 只下载 PPTX
@@ -1831,7 +1921,7 @@ const [editing, setEditing] = useState<{
               </Text>
             </>
           ) : step < STEPS.length - 1 ? (
-            <Button data-testid="goto-delivery-btn" size="large" type="primary" onClick={() => { if (plan) void runPreflight(plan.id); setStep(step + 1); }} disabled={!plan} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
+            <Button data-testid="goto-delivery-btn" size="large" type="primary" onClick={() => { if (plan) { void runPreflight(plan.id); void loadNarrationAudio(plan.id); } setStep(step + 1); }} disabled={!plan} style={{ background: BRAND_GRADIENT, border: 'none', minWidth: 160 }}>
               {step === 1 ? '生成与校对' : '进入交付'}
             </Button>
           ) : (

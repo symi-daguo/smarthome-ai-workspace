@@ -26,6 +26,8 @@ import { guessModel } from '../src/layout/brand-import.service.js';
 import { assignByRoom, normalizeRooms, placeByRoom, roomTypeOf } from '../src/layout/floorplan-points.js';
 import { computeHotScore } from '../src/benchmark/benchmark.service.js';
 import { buildProjectionText, normalizeAnalysis } from '../src/benchmark/benchmark-analyze.service.js';
+import { isWavBuffer, wavDurationSeconds, NarrationAudioService } from '../src/plans/narration-audio.service.js';
+import { ConfigService } from '@nestjs/config';
 
 const MANIFEST_KEYS = MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
 
@@ -174,9 +176,63 @@ async function requestText(base: string, path: string, init?: RequestInit): Prom
   };
 }
 
+/**
+ * 造一段标准 PCM WAV（16kHz 单声道 16bit）。
+ *
+ * 假语音服务与断言共用它：假服务必须返回**真的** WAV 才有意义 ——
+ * 服务端会校验 RIFF/WAVE 头，返回假内容会被当场拒掉，
+ * 那样测到的就不是「能不能合成」，而是「会不会乱收」了。
+ */
+function makeWav(dataLen = 16000): Buffer {
+  const sampleRate = 16000;
+  const byteRate = sampleRate * 2;
+  const wav = Buffer.concat([
+    Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'),
+    Buffer.from('fmt '), Buffer.alloc(4), Buffer.from([1, 0]), Buffer.from([1, 0]),
+    Buffer.alloc(4), Buffer.alloc(4), Buffer.from([2, 0]), Buffer.from([16, 0]),
+    Buffer.from('data'), Buffer.alloc(4), Buffer.alloc(dataLen),
+  ]);
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(byteRate, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.writeUInt32LE(dataLen, 40);
+  return wav;
+}
+
 async function main(): Promise<void> {
   // 登录限流（RATE_LIMIT_AUTH=1000）放在 package.json 的 smoke 脚本里设：
   // @Throttle 装饰器在模块加载时求值，在这里设已经太晚，会把自己限流成 429。
+
+  // ---- 本地假语音服务 ----
+  // 为什么门禁要自带一个假的：语音服务地址是**部署相关**的 ——
+  // 容器里是 `host.docker.internal`，宿主机上这个名字根本解析不了。
+  // 门禁要是直接用真地址，外部服务不在线时就会红，
+  // 而那是环境问题不是代码问题（本机 .env 里一配地址就会这样）。
+  //
+  // 所以这里起一个本地假服务，断言只测代码本身：
+  // wav 模式返回真 WAV，json 模式返回一个错误页（用来验「不是音频必须被拒」）。
+  let fakeTtsMode: 'wav' | 'json' = 'wav';
+  const fakeTts = createServer((_req, res) => {
+    if (fakeTtsMode === 'json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '合成后端不可用' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'audio/wav' });
+    res.end(makeWav());
+  });
+  await new Promise<void>((resolve) => fakeTts.listen(0, '127.0.0.1', resolve));
+  const fakeTtsBase = `http://127.0.0.1:${(fakeTts.address() as AddressInfo).port}`;
+  // 必须在建 app **之前**设：配置在模块初始化时读一次。
+  // 进程环境变量优先于 .env 文件（@nestjs/config 的 assignVariablesToProcess
+  // 会跳过 process.env 里已存在的键），所以本机 .env 盖不掉它。
+  process.env.NARRATION_TTS_URL = `${fakeTtsBase}/api/tts/synthesize`;
+  process.env.NARRATION_TTS_TOKEN = 'fake-tts-token';
 
   // abortOnError:false —— 默认 true 时 DI 失败会直接 process.abort()，
   // 连 catch 都进不去，表现为「无任何输出的 exit 1」，排查时完全瞎掉
@@ -1111,6 +1167,109 @@ async function main(): Promise<void> {
     check('删除方案成功', delPlan.status === 200 || delPlan.status === 204);
     check('删方案时交付包文件一并删除（否则永久残留、挤爆硬盘）', !existsSync(pkgFile));
     if (existsSync(pkgFile)) writeFileSync(pkgFile, '');
+  }
+
+  // ---------- 讲解音频：校验、降级、随方案删除一起清 ----------
+  // 音频是「外部语音服务」合成的，返回值完全在对方手里 —— 所以两件事必须验：
+  // ① 对方给的不是音频时必须当场拒掉（不能把错误页存成 .wav 混进交付包）；
+  // ② 没配语音服务时是**降级**（503 且说清原因），不是 500 崩掉。
+  {
+    const narrDir = join(process.cwd(), 'uploads', 'narration');
+    mkdirSync(narrDir, { recursive: true });
+    // 标准 PCM WAV：16kHz 单声道 16bit，16000 字节数据 = 0.5 秒
+    const wav = makeWav();
+
+    check('WAV 校验：标准 WAV 头被认出来', isWavBuffer(wav));
+    check('WAV 校验：空内容不算音频', !isWavBuffer(Buffer.alloc(0)));
+    check('WAV 校验：JSON 错误页不算音频（不能存成 .wav 混进交付包）', !isWavBuffer(Buffer.from('{"detail":"bad token"}')));
+    check('WAV 校验：太短的片段不算音频', !isWavBuffer(Buffer.from('RIFFxxxxWAVE')));
+    check('WAV 时长：按 byteRate 与 data 长度算对（0.5 秒）', wavDurationSeconds(wav) === 0.5, `实际 ${wavDurationSeconds(wav)}`);
+    check('WAV 时长：不是音频时不给数字（宁可没有也不给错的）', wavDurationSeconds(Buffer.from('not audio')) === null);
+
+    // 端点降级：没配语音服务时按需生成要报「未配置」而不是 500
+    const audioPlan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '讲解音频冒烟方案', style: 'A', edition: 'standard',
+        pageCount: 1,
+        pages: [{ type: 'scene', heading: '冒烟', subtitle: '', body: '内容', bullets: [], narration: '这是讲稿。', quote: '' }],
+        versionNo: 1,
+      },
+    });
+    const info = await request<{ available: boolean; reason?: string }>(base, `/api/plans/${audioPlan.id}/narration-audio`, auth0);
+    check('讲解音频状态：还没生成过不是错误（available=false 带原因）',
+      info.status === 200 && info.body.available === false && typeof info.body.reason === 'string',
+      JSON.stringify(info.body));
+
+    // 文件流在**还没生成**时必须是 404（不是 500）。
+    // 这条必须排在生成之前：生成成功后文件已经在了，
+    // 那时再测到的就不是「还没生成」这个分支（曾因此把 200 误判成 bug）。
+    const fileBefore = await requestText(base, `/api/plans/${audioPlan.id}/narration-audio/file`, auth0);
+    check('讲解音频文件流：还没生成时回 404（而不是 500）', fileBefore.status === 404, `实际 ${fileBefore.status}`);
+
+    const gen = await request<{ message?: string; bytes?: number; durationSec?: number | null }>(
+      base, `/api/plans/${audioPlan.id}/narration-audio`, {
+        ...auth0, method: 'POST', headers: { ...(auth0.headers as Record<string, string>), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: '这是一段用于冒烟的讲稿文本，足够长以通过长度校验。' }),
+      });
+    // 门禁自带假语音服务，所以「配了」这条**恒成立** —— 本地与 CI 走同一条路径，
+    // 不会再出现「本机 .env 配了地址就跑得动、CI 没配就红」这种两套口径。
+    // 状态码是 201（Nest 的 @Post 默认）—— 之前这条断言写的是 200，
+    // 却因为成功分支从没被走到而一直没暴露。
+    check('配了语音服务时按需生成讲解音频成功',
+      (gen.status === 200 || gen.status === 201)
+        && typeof gen.body.bytes === 'number' && gen.body.durationSec === 0.5,
+      `实际 ${gen.status} ${JSON.stringify(gen.body)}`);
+
+    // 生成之后文件流必须能取到**真音频**（不是错误页）
+    const fileAfter = await requestText(base, `/api/plans/${audioPlan.id}/narration-audio/file`, auth0);
+    check('讲解音频文件流：生成后能取到真 WAV',
+      fileAfter.status === 200 && isWavBuffer(fileAfter.bytes),
+      `实际 ${fileAfter.status}，${fileAfter.bytes.length} 字节`);
+
+    // 假服务改成返回 JSON 错误页：必须当场拒掉，不能把错误页存成 .wav 混进交付包。
+    // 用**另一个方案**测：同一个方案同版本会命中「已生成就复用」，根本走不到合成。
+    fakeTtsMode = 'json';
+    const badPlan = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA, userId: me.body.id, title: '讲解音频错误页冒烟方案', style: 'A', edition: 'standard',
+        pageCount: 1,
+        pages: [{ type: 'scene', heading: '冒烟', subtitle: '', body: '内容', bullets: [], narration: '这是讲稿。', quote: '' }],
+        versionNo: 1,
+      },
+    });
+    const badGen = await request<{ message?: string }>(base, `/api/plans/${badPlan.id}/narration-audio`, {
+      ...auth0, method: 'POST', headers: { ...(auth0.headers as Record<string, string>), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: '这是另一段用于冒烟的讲稿文本，足够长以通过长度校验。' }),
+    });
+    check('语音服务返回的不是音频时被拒（错误页不能混进交付包）',
+      badGen.status === 503 && /NARRATION_TTS_NOT_AUDIO/.test(badGen.body.message ?? ''),
+      `实际 ${badGen.status} ${JSON.stringify(badGen.body)}`);
+    check('被拒的合成没有落盘（不留半个文件在卷里）',
+      !existsSync(join(narrDir, `${badPlan.id}-v1.wav`)));
+    fakeTtsMode = 'wav';
+
+    // 没配语音服务时是**降级**（503 且说清原因），不是 500 崩掉。
+    // 这里用一个**明确取不到任何键**的配置对象，不能用 `new ConfigService()`：
+    // 它的 get() 最后会回退查 process.env，而上面刚把假服务地址写进了
+    // process.env —— 那样测到的就不是「完全没配」这条分支了。
+    const noTtsSvc = new NarrationAudioService({ get: () => undefined } as unknown as ConfigService);
+    let noTtsErr = '';
+    try {
+      await noTtsSvc.synthesize('一段讲稿文本');
+    } catch (e) {
+      noTtsErr = e instanceof Error ? e.message : String(e);
+    }
+    check('没配语音服务时按需生成报「未配置」而不是 500（降级不崩）',
+      /NARRATION_TTS_NOT_CONFIGURED/.test(noTtsErr), noTtsErr || '居然没抛异常');
+
+    // 删方案时音频也要一起删：音频同样是纯文件不入库，不清就成了没人认领的孤儿
+    const narrFile = join(narrDir, `${audioPlan.id}-v1.wav`);
+    writeFileSync(narrFile, wav);
+    const delAudioPlan = await request(base, `/api/plans/${audioPlan.id}`, { ...auth0, method: 'DELETE' });
+    check('删除含讲解音频的方案成功', delAudioPlan.status === 200 || delAudioPlan.status === 204);
+    check('删方案时讲解音频一并删除（否则纯文件孤儿、永久占卷）', !existsSync(narrFile));
+    if (existsSync(narrFile)) writeFileSync(narrFile, '');
+    await request(base, `/api/plans/${badPlan.id}`, { ...auth0, method: 'DELETE' });
   }
 
   const superRole = await prisma.role.findUniqueOrThrow({ where: { key: 'super_admin' } });
