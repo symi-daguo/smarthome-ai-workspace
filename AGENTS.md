@@ -208,8 +208,14 @@ docker exec -i aisaas-db-1 pg_restore -U smarthome -d smarthome \
 只能按 id 精确删。清完要**逐项核对计数**，
 光看总数会漏（「产品 142 vs 基线 139」就是平台租户里残留 3 条自建产品）。
 
-**清完必须核对计数**（对照干净基线）：租户 1 / 用户 1 / 成员关系 1 / 角色 11 /
-产品 139（其中导入产品 115）/ 素材 36 / 方案 1 / 审计 0 / 预置分类 39 / 权限 26。
+**清完必须核对计数**（对照干净基线，2026-10-26 实测）：租户 1 / 用户 2 / 成员关系 2 /
+角色 11 / 权限 26 / 预置分类 39 / 产品 139（其中导入产品 115）/ 素材 35 / 方案 1 /
+审计 4 / 变更快照 0 / 抽取作业 0 / 抽取文档 0 / 额度账本 8 / ApiKey 1 / 工单 0；
+uploads 卷 35 个文件 / 17.2MB（与库里的素材引用逐条对账，无孤儿、无悬空引用）。
+
+> 「用户 2、成员关系 2、审计 4」不是残留，是正式痕迹：
+> 桌面端真机自证要在 platform 租户里登录一次，必然留下管理员用户与审计。
+> 清成 0 反而说明把正式数据也删了。
 
 ## 结构
 
@@ -462,6 +468,30 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
       共用同一份 —— 两处各写一遍正则，早晚会长歪
     **同源教训**：见第 20、22 条 —— 报错信息要能直接指向动作，
     「格式异常」这种话等于让人猜。
+
+25. **`spctl` 一评估，app bundle 就被内核冻结 —— 公证票据会凭空消失。**
+    macOS 给被 Gatekeeper 评估过的 app 逐文件打上 `com.apple.provenance` +
+    `com.apple.macl`，**内核层冻结内容**：往 bundle 里新建/修改任何文件都
+    `Operation not permitted`（EPERM）。触发条件：跑过 `spctl -a -vvv -t exec`、
+    或被双击打开过。
+    - 后果：`stapler staple` 的动作序列是「先 unlink 旧票、再写新票」，
+      第一步成功、第二步被 EPERM 拒 → **旧票没了、新票没写成**，
+      票据凭空消失（exit 73，报错只说 `Could not remove existing ticket`）。
+    - 迷惑点：`spctl` 说 `accepted / Notarized Developer ID`（它走联网查询，
+      本来就不需要本地票据），`stapler validate` 说没票 —— **两个结论同时成立**。
+    - 判据落在数据上：bundle 里 `touch` 任意文件得到 EPERM = 被冻结；
+      `xattr -l <bundle>/Contents` 里有 `com.apple.provenance` = 同上。
+    - 解法：已带票（`stapler validate` 通过）就**跳过 staple**，别再碰它；
+      要装订就换干净副本（`xattr -dr com.apple.provenance,com.apple.macl`
+      之后 staple），复制时用 `ditto --noextattr`。被冻结的原件改不了也删不掉，
+      但**可以整目录改名**（rename 只需父目录写权限），移走后用 `rmSync` 清。
+    - 连带：`ditto --sequesterRsrc` 打包会把 provenance 存进 zip，
+      **解出来仍带标记** —— 「从 zip 解出就是干净的」是错的，解完必须清。
+    - 验证签名用 `codesign --verify --deep --strict` 与 `verify-signature.mjs`
+      （两者都不调 `spctl`），`spctl` 留到最后或留到另一份副本上跑。
+    **同源教训**：见第 20、22 条 —— 「已装订 / 已公证」这类判据必须落在
+    文件内容上（`stapler validate`），不能落在「跑过一次没报错」上；
+    而**任何要写 bundle 的操作，动之前先确认 bundle 没被冻结**。
 
 ### CI（GitHub Actions）
 

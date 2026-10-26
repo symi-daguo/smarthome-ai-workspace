@@ -632,9 +632,25 @@ if (appPrior && appPrior.status === 'Accepted' && appAlreadyStapled) {
   }
 }
 
-log('装订电子签章到 .app');
-run('xcrun', ['stapler', 'staple', APP]);
-run('xcrun', ['stapler', 'validate', APP]);
+log('检查 .app 的电子签章');
+// 判据落在**内容**上：validate 通过 = 票就在这个 bundle 里 = 当前这份字节
+// 就是被 Apple 公证过的那一份（不再比对提交记录里的文件名）。
+//
+// 为什么不能无条件 staple（2026-10-26 实测，连踩两次）：
+// bundle 一旦被 Gatekeeper 评估过（跑过 spctl / 被打开过），macOS 会给它打上
+// `com.apple.provenance` + `com.apple.macl`，**内核层冻结内容** —— 此时
+// `stapler staple` 会先 unlink 掉旧票、写入新票时被 EPERM 拒绝，
+// 结果是「旧票没了、新票没写成」，票据凭空消失（exit 73）。
+// 实测：清掉 xattr 的干净副本上 staple 一次成功；原地那份无论试多少次都失败。
+// 所以已经带票就直接跳过，别去碰它 —— 不碰就不会丢。
+try {
+  run('xcrun', ['stapler', 'validate', APP]);
+  log('.app 已带有效电子签章，跳过装订（对被冻结的 bundle 再 staple 会把票弄丢）');
+} catch {
+  log('装订电子签章到 .app');
+  run('xcrun', ['stapler', 'staple', APP]);
+  run('xcrun', ['stapler', 'validate', APP]);
+}
 // 装订会往 bundle 里加电子签章，改完之后要重新确认封印仍然有效
 run('node', [join(HERE, 'verify-signature.mjs'), APP]);
 
@@ -727,11 +743,27 @@ if (reuseDmg) {
   log(`dmg：${DMG}`);
 }
 
-log('提交 dmg 公证');
-await submitAndWait(DMG, 'dmg');
+// 提交前先看：本地这个 dmg 是否**已经带着电子签章**。
+//
+// 有票 = 它已经被 Apple 公证过（票据按文件字节匹配，票能装得上就说明
+// 当前这份字节就是被公证的那一份）。这种情况下**绝不能再提交一次** ——
+// 227MB 传一趟要好几分钟，而重新提交出来的字节与被公证的那份又对不上号
+// （staple 会失败），等于白传一趟还把产物弄乱。
+if (reuseDmg) {
+  log(`dmg 已有 Accepted 提交（${priorSubmission.id}）且本地这份已带电子签章，跳过重复上传`);
+} else {
+  log('提交 dmg 公证');
+  await submitAndWait(DMG, 'dmg');
+}
 log('装订电子签章到 dmg');
-run('xcrun', ['stapler', 'staple', DMG]);
-run('xcrun', ['stapler', 'validate', DMG]);
+// 同 .app：已经带票就别再 staple —— 票是按字节算的，
+// 重复装订要么多余、要么在异常状态下把票弄丢。
+if (dmgHasTicket) {
+  log('dmg 已带有效电子签章，跳过装订');
+} else {
+  run('xcrun', ['stapler', 'staple', DMG]);
+  run('xcrun', ['stapler', 'validate', DMG]);
+}
 
 // ---------------------------------------------------------------- 6. 分发用 zip（装订后的 .app）
 
