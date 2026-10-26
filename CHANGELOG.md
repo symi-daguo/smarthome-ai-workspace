@@ -227,8 +227,13 @@ Agent 按清单「先打快照再删」的保护流程，对知识库文档**实
   页型配图 14 条）；typecheck / build / check:docs / check:brand /
   check:templates / check:pptx 全绿 —— 七道与 CI 的 gate job **完全一致**，
   少一道就是「本地全绿、CI 全红」。
-- **CI 三个 job 全绿**：门禁（typecheck + build + smoke）、桌面端编译（tsc）、
-  桌面端 Windows 打包（安装包 + zip）。
+- **CI 全绿**：门禁（typecheck + build + smoke）、桌面端编译（tsc）、
+  桌面端 Windows 打包（安装包 + zip）；Windows 产物**由 CI 直接推到 Release** ——
+  600MB 走本机代理实测只有几十 KB/s 且频繁断流，取回再上传要一个多小时，
+  CI runner 在内网是秒级。macOS 产物仍在本机上传：签名与公证只能用本机证书做。
+- 发布资产的那道 job 有个坑值得记：`gh` 在 CI 里靠 git remote 推断仓库会失败，
+  把「查不到 Release」误判成「Release 不存在」而**静默跳过** —— job 报成功、
+  资产没上传。改成 curl 显式路径，查不到就把原始响应打出来，不再吞错误。
 - 本地全绿而 CI 偶发红的那条断言也一并修了（见上文「一条时好时坏的冒烟断言」）。
 - 交付前数据清理并逐项核对回基线（租户 1 / 用户 2 / 成员关系 2 / 角色 11 /
   权限 **19** / 预置分类 39 / 产品 139 / 素材 33 / 方案 1 / 页型配图 0 /

@@ -570,17 +570,57 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     - 同源教训：见第 26 条 —— 判据要落在**被校验的那一份内容**上，
       不是落在「跑过一次」这个动作上。
 
+31. **「job 报成功，但事情根本没做」—— 静默跳过是最难发现的失败。**
+    2026-10-26 实测：发布 Windows 产物的 CI job **四个全绿**，
+    但 Release 上只有两个 mac 资产。日志里只有一句：
+    ```
+    Release v1.1.0 不存在，跳过
+    ```
+    同一个 Release 在本机 `gh release view v1.1.0` 查得到。
+    - 根因：**`gh` 靠 git remote 推断仓库**（还要剥掉 checkout 写进去的凭据），
+      在 CI 里这层推断失败 → `gh` 报「查不到」→ 脚本把「查不到」理解成「不存在」
+      → **跳过并退出 0**。退出码是绿的，日志有正常输出，只有回头核对产物才发现没做。
+    - 纪律一：**凡是「本该做某件事」的脚本，必须回显它到底做了什么**，
+      不能只靠退出码。跳过的分支也要打印**为什么**跳。
+    - 纪律二：**查不到的时候把原始响应打出来**，别 `2>&1` 吞掉 ——
+      吞掉的错误让排查从「猜」变成「读」。
+    - 纪律三：**CI 里别用靠推断的封装**。`gh release view` 会推断仓库，
+      `curl https://api.github.com/repos/$GH_REPO/...` 不会 ——
+      显式路径少一层猜，而且 `GH_REPO` 是 CI 自己注入的，天然可靠。
+    - 同源教训：见第 18 条 —— CI 上出问题时「让脚本自己说话」比「猜」快得多；
+      而「让脚本自己说话」的前提是**它得真的做了那件事**。
+    - 配套：**上传走 `uploads.github.com` 的一步到位端点**
+      （`POST .../assets?name=xxx` 直接传二进制，不必先建 asset 条目）。
+      注意 `name` 是 **query 参数**，放 body 里会 404。
+
+32. **「直连还是走代理」要按域名分别判断，别照抄上一次的结论。**
+    2026-10-26 实测（同一台机器、同一个代理配置）：
+    - **下载**走 `objects.githubusercontent.com`：直连 20MB 都传不完（超时），
+      走代理只有 42~62 KB/s。600MB 产物取回来要 2.6 小时。
+    - **上传**走 `uploads.github.com`：**直连 5.0 MB/s**（32MB 实测 6.7 秒），
+      走代理反而只有几十 KB/s 且频繁断流。
+    - 根因：**这是两条不同的 CDN 链路**，不能用「下载要挂代理」推出「上传也要挂」。
+    - 通用判据：**先量链路，再决定挂不挂**。测法要小步快验：
+      用一个几 MB 的文件直传一次，看 `speed_upload`，别拿 600MB 去试。
+    - 配套推论：**能由 CI 产出的产物就别在本机取回再传** ——
+      CI runner 在 GitHub 内网，直传是秒级。mac 产物因为签名与公证只能用本机证书做，
+      仍留在本机上传（直连，472MB 用了 1 分 54 秒）。
+    - 同源教训：见第 15 条 —— 这台机器上**每个工具各有一套规则**，
+      换域名、换工具都要重新核对。
+
 ### CI（GitHub Actions）
 
-`.github/workflows/ci.yml`，三个 job：
+`.github/workflows/ci.yml`，四个 job：
 
 - **gate**：`pgvector/pgvector:pg18` 服务 → `prisma generate` → `migrate deploy` → 灌种子
   → typecheck → build → smoke
 - **desktop**：`ELECTRON_SKIP_BINARY_DOWNLOAD=1` → 只跑 tsc
 - **desktop-windows**：`windows-latest` → 装依赖 → 探活引擎源 → generate → 编译
   → 裁运行时 → **运行时自证** → `electron-builder --win` → 产物名 ASCII 校验 → 上传
+- **release-windows**：取回上一 job 的产物 → 推送到 Release（版本号取自仓库变量
+  `vars.RELEASE_TAG`，同名资产已存在则跳过）
 
-三条要注意的：
+四条要注意的：
 
 - Windows job 的第 11–13 步（打包 / 校名 / 上传）都带 `if: always()`：
   **运行时自证失败时也要把包装出来**。job 该红还是红（门禁语义不变），

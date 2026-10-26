@@ -53,7 +53,10 @@ const ALLOWED_DOMAINS = new Set([
   'api.apple-cloudkit.com', 'appstoreconnect.apple.com', 'notarytool.apple.com',
   'timestamp.apple.com', 'sequoia.apple.com', 'seed-sequoia.siri.apple.com',
   // 代码托管与官方文档
-  'github.com', 'api.github.com', 'uploads.github.com', 'www.w3.org', 'json.schemastore.org', 'www.prisma.io', 'itunes.apple.com',
+  // objects.githubusercontent.com 是 GitHub Release 下载的真实分发端点
+  // （browser_download_url 会 302 到它），与 uploads.github.com 同一族 ——
+  // 都是 GitHub 自己的公开服务，不是第三方商业平台。
+  'github.com', 'api.github.com', 'uploads.github.com', 'objects.githubusercontent.com', 'www.w3.org', 'json.schemastore.org', 'www.prisma.io', 'itunes.apple.com',
   // 本机开发与示例
   'host.docker.internal', 'localhost',
   // example.com 是 RFC 2606 保留的示例域名（连同其子域），
