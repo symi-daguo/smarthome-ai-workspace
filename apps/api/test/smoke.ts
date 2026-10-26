@@ -244,6 +244,21 @@ async function main(): Promise<void> {
   const health = await request<{ status: string }>(base, '/api/health');
   check('health 200 且 status=ok', health.status === 200 && health.body.status === 'ok');
 
+  // 部署级品牌（白标）：产品名与图标此前写死，这里验它真的可配、且默认行为不变
+  {
+    const branding = await request<{ name: string; logoUrl: string }>(base, '/api/public/branding');
+    check('品牌端点可查（公开、免鉴权）', branding.status === 200 && typeof branding.body.name === 'string');
+    check('品牌名有默认值（不配 BRAND_NAME 也有名字可显示）', branding.body.name.trim().length > 0);
+    check('品牌图标默认留空（沿用界面自带标识，不额外依赖静态文件）', branding.body.logoUrl === '');
+    process.env.BRAND_NAME = '  冒烟品牌  ';
+    const branded = await request<{ name: string }>(base, '/api/public/branding');
+    check('BRAND_NAME 生效且两端空白被裁掉', branded.body.name === '冒烟品牌');
+    process.env.BRAND_NAME = '   ';
+    const blank = await request<{ name: string }>(base, '/api/public/branding');
+    check('BRAND_NAME 全是空白时回落默认（不是空白名）', blank.body.name.trim().length > 0);
+    delete process.env.BRAND_NAME;
+  }
+
   const phoneA = randomPhone();
   const phoneB = randomPhone();
   const regA = await request<{ token: string }>(base, '/api/auth/register', {
@@ -796,7 +811,7 @@ async function main(): Promise<void> {
 
   // 品牌官网抓取：对着**本地假品牌站**跑真实抓取（不依赖外网，CI 也能跑）
   //
-  // 假站复刻建站平台（faiusr/508sys）的产品中心结构（实测 2026-10-21 于 cnsymi.com）：
+  // 假站按建站平台的产品中心结构构造（实测 2026-10-21 于某品牌官网）：
   // - 分类名：<span class='tabButtonText'>灯控系统</span>
   // - 列表容器：id='productList426'
   // - 产品：<tr id='module426product101'>
@@ -4757,6 +4772,23 @@ async function main(): Promise<void> {
     check(
       `图标调用点不再写死尺寸（发现 ${stray.length} 处：${stray.join(',') || '无'}）`,
       stray.length === 0,
+    );
+
+    // ④ 权限 action 清单必须只有一个来源。后端 PERMISSIONS 是权威，
+    //    前端 TeamPage 的中文名表要逐项覆盖它 —— 少一项就等于
+    //    悄悄把这项权限从角色上抹掉，而且界面与后端都不报错。
+    //    （后端原来还存着一份平行的中文名表，零引用；已删除，此处守住不再漂移。）
+    const teamPageSrc = readFileSync(join(webRoot, 'src/pages/TeamPage.tsx'), 'utf8');
+    const catalogBlock = teamPageSrc.match(/const PERMISSION_CATALOG[\s\S]*?\n\];/)?.[0] ?? '';
+    const frontActions = new Set(
+      [...catalogBlock.matchAll(/action:\s*'([^']+)'/g)].map((m) => m[1]),
+    );
+    const missingActions = PERMISSIONS.filter((a) => !frontActions.has(a));
+    const extraActions = [...frontActions].filter((a) => !PERMISSION_SET.has(a));
+    check(
+      `前端权限名表与后端 action 清单逐项一致（后端 ${PERMISSIONS.length} 项，缺 ${missingActions.length} / 多 ${extraActions.length}）`,
+      missingActions.length === 0 && extraActions.length === 0,
+      missingActions.length ? `缺：${missingActions.join('、')}` : extraActions.length ? `多：${extraActions.join('、')}` : undefined,
     );
   }
 

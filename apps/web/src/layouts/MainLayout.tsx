@@ -59,6 +59,7 @@ import { useChatStore, type WorkbenchConversation } from '../store/ChatStore';
 import { useTheme, type ThemeMode } from '../theme/ThemeProvider';
 import { getHiddenSidebarKeys, subscribeSidebarVisibility } from '../lib/sidebarVisibility';
 import { SIDEBAR_GROUP_LABELS } from '../data/sidebarEntries';
+import { useBranding } from '../lib/branding';
 
 const { Text } = Typography;
 const { useToken } = theme;
@@ -159,6 +160,7 @@ type HistoryItem =
   | { kind: 'plan'; ts: number; plan: PlanSidebarItem };
 
 export function MainLayout(): ReactNode {
+  const branding = useBranding();
   const { modal } = AntApp.useApp();
   const { token } = useToken();
   const { user, logout, refresh } = useAuth();
@@ -368,7 +370,7 @@ export function MainLayout(): ReactNode {
   const tenantName =
     user?.memberships.find((m) => m.tenantId === user.activeTenantId)?.tenantName
     ?? user?.memberships[0]?.tenantName
-    ?? '智能家居 AI 工作台';
+    ?? branding.name;
 
   const renameTenant = async (): Promise<void> => {
     const next = window.prompt('工作台名称', tenantName);
@@ -386,7 +388,7 @@ export function MainLayout(): ReactNode {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 顶部品牌行 */}
       <div style={{ height: 56, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px 0 16px' }}>
-        <BrandMark size={28} />
+        <BrandMark size={28} logoUrl={branding.logoUrl} />
         <Tooltip title="点击改名">
           <Text
             strong
@@ -577,12 +579,17 @@ export function MainLayout(): ReactNode {
             {user?.displayName ?? '未命名'}
           </div>
           <Space size={4} split={<Divider type="vertical" style={{ margin: 0 }} />} style={{ fontSize: 12, color: token.colorTextTertiary }}>
-            <span
-              style={{ cursor: 'pointer' }}
-              onClick={() => go('/tokens')}
-            >
-              额度
-            </span>
+            {/* 额度入口与顶栏胶囊同一个开关：这个项目是开源免费自部署，
+                「额度」摆在侧栏底部同样会被读成「要先充值才能用」。
+                开关关掉时这一项整个不渲染（不是置灰）—— 置灰反而更像「有但不给看」。 */}
+            {showBilling ? (
+              <span
+                style={{ cursor: 'pointer' }}
+                onClick={() => go('/tokens')}
+              >
+                额度
+              </span>
+            ) : null}
 
             <span
               style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
@@ -672,7 +679,7 @@ export function MainLayout(): ReactNode {
           >
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', paddingTop: 14, gap: 10, overflow: 'hidden' }}>
               <Button type="text" icon={<RightOutlined />} aria-label="展开侧栏" onClick={() => setCollapsed(false)} />
-              <BrandMark size={28} />
+              <BrandMark size={28} logoUrl={branding.logoUrl} />
               <Tooltip title="新对话" placement="right">
                 <Button type="text" icon={<PlusOutlined />} aria-label="新对话" onClick={() => { createNew(); go('/'); }} />
               </Tooltip>

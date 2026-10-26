@@ -12,7 +12,7 @@
  *   这样格式规则变了不用改抓取器。
  * - **有超时**：外部站点不可控，fetch 必须带 signal（见 common/upstream-timeout.ts 的同类做法）。
  *
- * 站点适配：目前支持「建站平台（faiusr/508sys）」的产品中心，
+ * 站点适配：目前支持「建站平台的通用产品中心结构」，
  * 其余站点返回 SITE_NOT_SUPPORTED —— 宁可明确说不支持，也不要瞎猜出一个错格式。
  */
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
@@ -48,8 +48,6 @@ const FETCH_TIMEOUT_MS = 30_000;
 
 /** 站点适配器：一个站点怎么找到「分类」和「产品」 */
 interface SiteAdapter {
-  /** 站点标识，用于错误提示 */
-  siteId: string;
   /** 从首页 HTML 里取出各分类的模块 id（分页参数要用） */
   categories(html: string): { label: string; moduleId: string }[];
   /** 从某页 HTML 里取出该分类下的产品条目 */
@@ -59,9 +57,9 @@ interface SiteAdapter {
 }
 
 /**
- * 建站平台（faiusr / 508sys 系）适配器。
+ * 建站平台通用产品中心适配器。
  *
- * 这类站点的产品中心结构（实测 2026-10-21 于 cnsymi.com）：
+ * 这类站点的产品中心结构（实测 2026-10-21 于某品牌官网）：
  * - 分类：`<span class="tabButtonText">灯控系统</span>`
  * - 产品图 + id：`<tr id="module{MOD}product{PID}">`（`PID` 就是详情页的数字 id）
  * - 产品名：同一张卡里的 `<a class="fk-productName" ...>名称</a>`
@@ -77,8 +75,7 @@ interface SiteAdapter {
  * 用正则而不是 DOM 解析器：Node 没有内置 DOM；正则只取稳定的结构标记，
  * 且**解析失败时宁可少取也不要取错**（错数据会污染产品库）。
  */
-const faiusrAdapter: SiteAdapter = {
-  siteId: 'faiusr',
+const productCenterAdapter: SiteAdapter = {
   categories(html) {
     const labels = [...html.matchAll(/<span class=['"]tabButtonText['"]>([^<]+)<\/span>/g)].map((m) =>
       decodeEntities(m[1].trim()),
@@ -142,7 +139,6 @@ const faiusrAdapter: SiteAdapter = {
   },
 };
 
-const ADAPTERS: SiteAdapter[] = [faiusrAdapter];
 
 /** HTML 实体解码（官网里 &amp; &nbsp; &#39; 等） */
 function decodeEntities(s: string): string {
@@ -288,12 +284,14 @@ export class BrandSiteService {
     }
   }
 
-  /** 挑适配器：先按站点特征，再试通用解析 */
+  /**
+   * 挑适配器：按站点特征判断。
+   *
+   * 特征就是「产品中心有分类切换条」—— 没有它就不是这类站点，
+   * 宁可明确说不支持，也不要瞎猜出一个错格式。
+   */
   private pickAdapter(html: string): SiteAdapter | null {
-    for (const a of ADAPTERS) {
-      if (a.siteId === 'faiusr' && /tabButtonText/.test(html)) return a;
-    }
-    return null;
+    return /tabButtonText/.test(html) ? productCenterAdapter : null;
   }
 
   /** 分页 URL：沿用建站平台的 _reqArgs 约定 */

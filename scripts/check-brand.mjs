@@ -42,6 +42,8 @@ const ALLOWED_DOMAINS = new Set([
   'bailian.console.aliyun.com',
   // 包仓库与镜像
   'registry.npmjs.org', 'www.npmjs.com', 'registry.npmmirror.com',
+  // 公共镜像仓库（Docker Hub 不可达时的备选源，见 docker-compose.yml 的镜像来源说明）
+  'ghcr.io', 'quay.io',
   // Prisma 官方引擎二进制分发站（@prisma/fetch-engine 的默认下载源）
   'binaries.prisma.sh',
   // 代码托管与官方文档
@@ -53,6 +55,8 @@ const ALLOWED_DOMAINS = new Set([
   'example.com', 'work.example.com', 'evil.example', 'ollama.com', 'xxx.runpod.ws',
   // 本地模型服务与官方文档
   'lmstudio.ai', 'docs.vllm.ai', 'www.apple.com',
+  // 源码注释里出现的模型厂商 API 与镜像站（与上面同一批服务，只是写在代码注释里）
+  'com.minimax.agent.cn', 'platform.minimax.io', 'mirror.ccs.tencentyun.com', 'ghcr.io',
 ]);
 
 /**
@@ -87,6 +91,50 @@ const LOCAL_FILE_URL = /file:\/\/\/(?:Volumes|Users)\/[A-Za-z0-9._-]+\//g;
 // 真正的第三方产品名由下面的商标词表与域名白名单负责拦，
 // 不需要靠「对标」这两个字来兜底。
 const PROCESS_NARRATION = /\bREA\b|逆向|反编译|参考站|对标站|目标系统|目标站|原系统|同类产品/g;
+
+/**
+ * 自曝「借鉴来源」的措辞：**借鉴动词 + 大写英文专有名词**。
+ *
+ * 为什么不能只拦动词：中文工程语境里「照抄上一轮的结论」「照搬本文」
+ * 「校验范式照抄既有的 bindVideos」全是正常用法（照抄**自己**的代码），
+ * 逐字拦动词会一天误报十几次 —— 闸门天天误报就等于没有闸门。
+ * 而「照搬 Appwrite 的做法」这种句子才是真问题：**动词后面跟的是别人的产品名**。
+ *
+ * 所以判据落在两个条件同时成立上：动词 ∈ {照搬, 照抄, 仿照}，且紧跟一个
+ * 大写开头的英文专有名词（许可证缩写与 README 这类通用词排除在外）。
+ */
+const BORROWED_PRODUCT = /(?:照搬|照抄|仿照)\s*(?:自)?\s*([A-Z][A-Za-z0-9]{2,})/g;
+/** 通用词与许可证缩写：跟着「照抄」也不代表借鉴了谁 */
+const BORROWING_NOT_PRODUCT = new Set([
+  'README', 'MIT', 'BSD', 'Apache', 'GPL', 'AGPL', 'LGPL', 'ISC', 'SSPL', 'MPL', 'MSCL', 'CC0',
+]);
+
+/**
+ * 裸域名（不带协议的）。
+ *
+ * 只认常见顶级域，且要求**独立出现**：
+ * - 前面不能是标识符字符（`foo-bar.com` 里的横杠也算）；
+ * - 后面不能紧跟 `.标识符` —— 否则 `bubbleRoles.ai.footer` 这种「camelCase 属性链」
+ *   会被拆成「域名 bubbleRoles.ai」，那是代码不是网址；
+ * - 第一段不能是 JS 常见全局对象（`console.info`、`this.site`、`rect.top` 这类属性访问）。
+ *
+ * 这些排除不是洁癖：闸门天天误报就等于没有闸门。
+ */
+const BARE_DOMAIN =
+  /(?<![\w.$-])([a-z0-9][a-z0-9-]*)((?:\.[a-z0-9-]+)*\.(?:com|cn|net|org|io|co|ai|app|dev|xyz|top|site|cc|me|info))(?!\.[a-z0-9])(?![\w-])/gi;
+/** 属性访问误报：这些词打头的是代码标识符，不是域名首段 */
+const JS_GLOBALS = new Set([
+  'this', 'console', 'modal', 'message', 'rect', 'window', 'document', 'globalThis',
+  'options', 'props', 'state', 'config', 'params', 'res', 'err', 'data', 'event',
+]);
+
+/**
+ * 域名检测的文件级豁免。
+ *
+ * 这两个文件必然含域名字面量：闸门自身要写白名单，lockfile 是机器生成的
+ * （里面全是包仓库地址，与「第三方商业平台」无关）。
+ */
+const DOMAIN_EXEMPT = new Set(['scripts/check-brand.mjs', 'pnpm-lock.yaml']);
 
 let problems = 0;
 const report = (file, msg) => {
@@ -148,13 +196,35 @@ for (const rel of files) {
     if (narration) {
       report(rel, `出现过程自述 / 参照措辞「${narration[0]}」（公开文档只讲产品本身，不讲实现过程）`);
     }
+
+    for (const m of text.matchAll(BORROWED_PRODUCT)) {
+      if (BORROWING_NOT_PRODUCT.has(m[1])) continue;
+      report(rel, `出现自曝借鉴来源的措辞「${m[0].trim()}」（公开仓库不该写明代码是从谁那儿拿的）`);
+    }
   }
 
   for (const m of text.matchAll(/https?:\/\/([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g)) {
+    if (DOMAIN_EXEMPT.has(rel)) break;
     const host = m[1].toLowerCase();
     if (ALLOWED_DOMAINS.has(host)) continue;
     if (!unknownDomains.has(host)) unknownDomains.set(host, new Set());
     unknownDomains.get(host).add(rel);
+  }
+
+  // 裸域名（没有协议）：注释里写「实测于 xxx.com」时最容易漏出去。
+  // 原来的检测只认 `https?://` 形式，裸域名整个漏掉 ——
+  // 而「别人家的站点地址」恰恰更常出现在注释里（解释某个结构的实测来源）。
+  if (!DOMAIN_EXEMPT.has(rel)) {
+    for (const m of text.matchAll(BARE_DOMAIN)) {
+      const host = m[0].toLowerCase();
+      // 属性访问误报：`console.info` / `this.site` / `r.top` 这类
+      if (JS_GLOBALS.has(m[1].toLowerCase())) continue;
+      // 单字符首段几乎不会是域名首段（`r.top` 是几何记号）
+      if (m[1].length < 2) continue;
+      if (ALLOWED_DOMAINS.has(host)) continue;
+      if (!unknownDomains.has(host)) unknownDomains.set(host, new Set());
+      unknownDomains.get(host).add(rel);
+    }
   }
 }
 

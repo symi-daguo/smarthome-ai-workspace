@@ -564,8 +564,8 @@ export function TokenCenter(): ReactNode {
               />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0 2px' }}>
                 <Space direction="vertical" size={0}>
-                  <Text style={{ fontSize: 13 }}>顶栏显示额度与开源说明</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>默认隐藏，开源免费使用下这两项没有实际意义</Text>
+                  <Text style={{ fontSize: 13 }}>界面显示额度与开源说明</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>默认隐藏。关掉后顶栏额度胶囊、侧栏底部的「额度」入口与顶栏「开源说明」一并隐藏</Text>
                 </Space>
                 <Switch checked={showBilling} onChange={(v) => { setShowBillingState(v); setShowBilling(v); }} />
               </div>

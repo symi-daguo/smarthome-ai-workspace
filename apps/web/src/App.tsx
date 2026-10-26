@@ -62,7 +62,6 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="lighting-diagnosis" element={<LightingDiagnosis />} />
             <Route path="feedback" element={<Feedback />} />
             <Route path="quota" element={<Quota />} />
-            <Route path="vip" element={<Navigate to="/quota" replace />} />
 
             <Route path="quote" element={<QuoteStudio />} />
             <Route path="products" element={<ProductCenter />} />

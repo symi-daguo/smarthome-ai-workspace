@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module.js';
+import { brandName } from './branding/branding.module.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -81,7 +82,7 @@ async function bootstrap(): Promise<void> {
   // Swagger 仅非生产暴露，避免云服务器上泄露 API 面
   if (!IS_PROD) {
     const config = new DocumentBuilder()
-      .setTitle('智能家居 AI 工作台 API')
+      .setTitle(`${brandName()} API`)
       .setVersion('0.1.0')
       .addBearerAuth()
       .build();

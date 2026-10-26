@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { planTheme, type PlanPage } from '../data/planThemes';
 import { PlanSlide } from '../components/PlanSlide';
 import { deliverPages, floorplanListPageNo, quoteListPageNo, type QuoteSummary } from '../lib/planPages';
+import { useBranding } from '../lib/branding';
 
 const { Text } = Typography;
 
@@ -34,6 +35,7 @@ interface SharePlan {
 
 /** 客户分享页：/share/plan/:token，无需登录微信直开；16:9 幻灯片画布逐页呈现（讲解稿不显示） */
 export function PlanShareView(): ReactNode {
+  const branding = useBranding();
   const { token } = useParams<{ token: string }>();
   const { token: tk } = theme.useToken();
   const [plan, setPlan] = useState<SharePlan | null>(null);
@@ -134,7 +136,7 @@ export function PlanShareView(): ReactNode {
         ))}
         <div style={{ textAlign: 'center', marginTop: 16 }}>
           <Text style={{ fontSize: 12, color: t.sub }}>
-            本方案由 {plan.store || '智能家居服务商'} 使用智居 AI 工作台生成 · 文案版本 {plan.versionNo} · 实际配置与报价以门店方案师现场确认为准
+            本方案由 {plan.store || '智能家居服务商'} 使用 {branding.name} 生成 · 文案版本 {plan.versionNo} · 实际配置与报价以门店方案师现场确认为准
           </Text>
         </div>
       </div>

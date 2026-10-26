@@ -30,6 +30,14 @@ export interface DesktopConfig {
    * 以前这个字段只写 false、从不变 true，导致「首次启动」弹窗每次启动都弹。
    */
   adminPasswordChanged: boolean;
+  /**
+   * 部署级品牌：产品名。留空则用内置默认（「智能家居 AI 工作台」）。
+   * 与后端的 `BRAND_NAME` 是同一件事的两种入口：这个文件是**桌面端**的入口，
+   * 环境变量是**容器/脚本部署**的入口。
+   */
+  brandName?: string;
+  /** 部署级品牌：图标地址（URL 或站内路径）。留空则用界面自带的标识 */
+  brandLogoUrl?: string;
 }
 
 const CONFIG_FILE = 'desktop-config.json';
@@ -68,6 +76,8 @@ export function loadConfig(): DesktopConfig {
           dbInitialized: raw.dbInitialized === true,
           migrated: raw.migrated === true,
           adminPasswordChanged: raw.adminPasswordChanged === true,
+          brandName: typeof raw.brandName === 'string' ? raw.brandName : '',
+          brandLogoUrl: typeof raw.brandLogoUrl === 'string' ? raw.brandLogoUrl : '',
         };
       }
     } catch {
@@ -82,6 +92,8 @@ export function loadConfig(): DesktopConfig {
     dbInitialized: false,
     migrated: false,
     adminPasswordChanged: false,
+    brandName: '',
+    brandLogoUrl: '',
   };
   saveConfig(fresh);
   return fresh;

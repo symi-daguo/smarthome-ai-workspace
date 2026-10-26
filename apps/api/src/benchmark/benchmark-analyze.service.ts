@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { LlmService } from '../llm/llm.service.js';
 import { KnowledgeDocService } from '../knowledge/knowledge-doc.service.js';
@@ -384,12 +384,4 @@ export function buildProjectionText(
     lines.push(analysis.summary);
   }
   return lines.join('\n');
-}
-
-/** 分析服务需要的账号类型 */
-export type BenchmarkAccountBrief = { id: string; accountName: string; platform: string; homeUrl: string };
-
-/** 供 controller 复用的未找到异常 */
-export function accountNotFound(): NotFoundException {
-  return new NotFoundException('BENCHMARK_ACCOUNT_NOT_FOUND');
 }

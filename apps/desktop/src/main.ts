@@ -165,6 +165,8 @@ async function bootstrap(): Promise<void> {
     adminPhone: DEFAULT_ADMIN_PHONE,
     adminPassword: DEFAULT_ADMIN_PASSWORD,
     uploadDir: paths.uploads,
+    brandName: cfg.brandName ?? '',
+    brandLogoUrl: cfg.brandLogoUrl ?? '',
     log,
   });
   log(`本地 API 已就绪（端口 ${apiPort}）`);

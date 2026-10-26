@@ -1,8 +1,8 @@
 /**
  * 权限 action 全集。
  *
- * 命名约定：`<资源>:<动词>`，动词只有 read / write 两档 —— 照搬 Appwrite 的
- * `resource.read` / `resource.write` 二元切分（BSD-3-Clause，许可证已核实）。
+ * 命名约定：`<资源>:<动词>`，动词只有 read / write 两档 ——
+ * `resource.read` / `resource.write` 二元切分是这类系统的通行做法（BSD-3-Clause，许可证已核实）。
  * 为什么不一律 `:manage`：manage 把「看」和「改」绑在一起，于是
  * 「财务要能看报价金额但不能改价」这种最常见的诉求根本无法表达 ——
  * 结果就是要么给全权（财务能乱改价），要么干脆不给（财务看不到账）。
@@ -78,28 +78,9 @@ export const WRITE_IMPLIES_READ: Record<string, string> = {
   'benchmark:write': 'benchmark:read',
 };
 
-/** 界面上权限 action 的人话说明与分组（按业务归类，不按技术前缀） */
-export const PERMISSION_CATALOG: { action: PermissionAction; label: string; group: string }[] = [
-  { action: 'quote:read', label: '查看报价与产品库', group: '报价' },
-  { action: 'quote:write', label: '做报价、改产品库', group: '报价' },
-  { action: 'order:read', label: '查看接单与客户跟进', group: '接单' },
-  { action: 'order:write', label: '建单、改状态、加跟进', group: '接单' },
-  { action: 'publish:read', label: '查看朋友圈/小红书素材', group: '内容' },
-  { action: 'publish:write', label: '生成并发布文案与图文', group: '内容' },
-  { action: 'content:read', label: '查看产物库与作品', group: '内容' },
-  { action: 'content:generate', label: '生成方案与出图、生视频', group: '内容' },
-  { action: 'content:extract', label: '内容提取与解析', group: '内容' },
-  { action: 'knowledge:read', label: '查阅知识库', group: '知识库' },
-  { action: 'knowledge:manage', label: '维护知识库', group: '知识库' },
-  { action: 'benchmark:read', label: '查看对标账号与情报', group: '对标情报' },
-  { action: 'benchmark:write', label: '配置对标账号、触发分析', group: '对标情报' },
-  { action: 'cs:read', label: '查看反馈与工单', group: '协作' },
-  { action: 'cs:write', label: '提交与处理反馈', group: '协作' },
-  { action: 'tenant:member:manage', label: '管理团队成员', group: '团队' },
-  { action: 'tenant:role:assign', label: '分配角色', group: '团队' },
-  { action: 'tenant:token:grant', label: '发放额度', group: '团队' },
-  { action: 'tenant:billing:view', label: '查看账单与额度', group: '团队' },
-  { action: 'platform:billing:manage', label: '模型配置与数据备份', group: '平台' },
-  { action: 'platform:audit:view', label: '查看操作审计', group: '平台' },
-  { action: 'platform:tenant:manage', label: '管理租户', group: '平台' },
-];
+/**
+ * 权限 action 的人话说明与分组（按业务归类，不按技术前缀）**放在前端**
+ * （apps/web/src/pages/TeamPage.tsx）—— 后端只管 action 本身与校验，
+ * 不再维护一份平行的中文名表：两份表并存时，漏改一处就会出现
+ * 「界面显示的权限名与实际生效的 action 对不上」，而两边都不报错。
+ */

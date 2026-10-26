@@ -6,7 +6,7 @@ import { PERMISSIONS } from '../rbac/permissions.js';
  *
  * `permissions` 是**白名单校验**而不是 z.enum：权限表是部署时可扩展的，
  * 用 enum 写死会让「以后加一个权限动作」必须同时改 schema、seed 与这里三处。
- * 参考 Appwrite 的做法：角色 = 一份扁平权限串清单，校验走白名单。
+ * 角色 = 一份扁平权限串清单，校验走白名单。
  */
 const permissionList = z
   .array(z.enum(PERMISSIONS))

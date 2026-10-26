@@ -4,6 +4,7 @@ import { catMeta, compositePoints, COMPOSITE_WIDTH } from './pointOverlay';
 import { customerText } from './planSanitize';
 import { floorplanListPageNo, quoteListPageNo, POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPages, deliverPointCount, type QuoteSummary } from './planPages';
 import { floorplanTemplate, markerTemplate, floorplanImages, floorplanPageCopy, COMPARE_LEFT_LABEL } from '../data/planTemplates';
+import { getBranding } from './branding';
 
 /**
  * 方案 PPT 生成器（16:9 原生可编辑幻灯片）。
@@ -182,7 +183,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
   pptx.defineLayout({ name: 'WIDE', width: W, height: H });
   pptx.layout = 'WIDE';
   pptx.title = plan.title;
-  pptx.author = plan.store || '智居 AI 工作台';
+  pptx.author = plan.store || getBranding().name;
 
   // 预取全部页型配图（去重），并按各页实际图框比例 canvas 预裁剪（pptxgenjs cover 失效的规避）
   const IMG_BOX: Partial<Record<PlanPage['type'], [number, number]>> = {

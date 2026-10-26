@@ -4,6 +4,7 @@ import type { AuthProfile } from '../auth/auth.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { TenantGuard } from '../tenants/tenant.guard.js';
 import { PermissionsGuard } from '../rbac/permissions.guard.js';
+import { brandName } from '../branding/branding.module.js';
 import { RequirePermissions } from '../rbac/require-permissions.decorator.js';
 import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { LlmService } from './llm.service.js';
@@ -183,7 +184,7 @@ export class ModelConfigController {
       this.modelConfig.videoConfig(),
     ]);
     const origin = this.configOrigin(host, forwardedProto);
-    const text = `# 智能家居 AI 工作台 · Agent 接入技能包（Skill Pack）
+    const text = `# ${brandName()} · Agent 接入技能包（Skill Pack）
 
 你可以通过 HTTP API 驱动本工作台的全部 AI 能力。以下协议对任意智能体（桌面助手、命令行工具、云端大模型平台、自建 Agent）通用。
 

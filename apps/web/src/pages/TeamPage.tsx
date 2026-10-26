@@ -78,13 +78,15 @@ const ROLE_TONE: Record<string, string> = {
 
 /** 权限 action 的人话说明与分组。
  *
- * 与后端 `rbac/permissions.ts` 的 PERMISSION_CATALOG 同源同口径（**22 项，一项都不能少**）：
- * 读/写二元切分（Appwrite 的 resource.read / resource.write 模式），
+ * action 集合以**后端 `rbac/permissions.ts` 的 `PERMISSIONS` 为准**，
+ * 本表只负责给每个 action 配一句人话与业务分组：
+ * 读/写二元切分（`resource.read` / `resource.write` 模式），
  * 且「写隐含读」由后端 AbilityFactory 统一处理，这里不重复表达。
  * 界面上必须显示人话而不是 `quote:write` 这种串 —— 店长看不懂串，但看得懂「做报价、改产品库」。
  *
  * 少一项的代价是实打实的：后端改角色是「先全删再全建」，
  * 前端少列一项就等于悄悄把这项权限从角色上抹掉，而且不报错。
+ * 因此两边必须逐项对齐 —— 由 smoke 的「权限表与后端 action 清单一致」断言守住。
  */
 const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
   { action: 'quote:read', label: '查看报价与产品库', group: '报价' },

@@ -24,6 +24,7 @@ import { Bubble, Sender, type BubbleItemType } from '@ant-design/x';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BrandMark } from '../components/BrandMark';
+import { useBranding } from '../lib/branding';
 import { useAuth } from '../store/AuthContext';
 import { useChatStore } from '../store/ChatStore';
 import { downloadMarkdown, downloadWord } from '../lib/mdExport';
@@ -172,6 +173,7 @@ function ChatActions({ content }: { content: string }): ReactNode | null {
 }
 
 export function Dashboard(): ReactNode {
+  const branding = useBranding();
   const { message } = AntApp.useApp();
   const { token } = useToken();
   const { user } = useAuth();
@@ -246,7 +248,7 @@ export function Dashboard(): ReactNode {
       },
       ai: {
         placement: 'start' as const,
-        avatar: <BrandMark size={32} />,
+        avatar: <BrandMark size={32} logoUrl={branding.logoUrl} />,
         style: {
           maxWidth: 'min(62%, 680px)',
           background: token.colorBgContainer,
@@ -394,7 +396,7 @@ export function Dashboard(): ReactNode {
               <div style={{ textAlign: 'center', marginBottom: 28 }}>
                 <Avatar
                   size={isWide ? 84 : 68}
-                  src={<BrandMark size={isWide ? 84 : 68} />}
+                  src={<BrandMark size={isWide ? 84 : 68} logoUrl={branding.logoUrl} />}
                   shape="circle"
                   style={{ marginBottom: 14, boxShadow: token.boxShadowSecondary }}
                 />

@@ -99,9 +99,16 @@ services:
       # 方案讲解音频：外部语音合成服务（可插拔）。
       # 留空 NARRATION_TTS_URL = 本部署不出讲解音频（交付包自动降级为三件套，功能不受影响）。
       # 容器内 127.0.0.1 指向 api 容器自身，本机服务必须走 host.docker.internal（已配 host-gateway）。
+      # 超时按讲稿长度给：实测约每千字 120 秒（839 字 105 秒、1421 字 173 秒），
+      # 60000 会在长讲稿上必然失败，故默认 300000。
       NARRATION_TTS_URL: ${NARRATION_TTS_URL:-}
       NARRATION_TTS_TOKEN: ${NARRATION_TTS_TOKEN:-}
-      NARRATION_TTS_TIMEOUT_MS: ${NARRATION_TTS_TIMEOUT_MS:-60000}
+      NARRATION_TTS_TIMEOUT_MS: ${NARRATION_TTS_TIMEOUT_MS:-300000}
+      # 部署级品牌：产品名与图标（白标）。留空 = 用内置默认，改完重启容器即生效，不必重建镜像。
+      # BRAND_NAME=我的智能家居工作台
+      # BRAND_LOGO_URL=/branding/logo.svg
+      BRAND_NAME: ${BRAND_NAME:-}
+      BRAND_LOGO_URL: ${BRAND_LOGO_URL:-}
       # 生成产物本地落盘目录（容器内路径，宿主机卷持久化）
       UPLOAD_DIR: /repo/uploads
       # 磁盘治理：产物配额（MB，个人中心可查看占用并一键清理过期未引用产物）+ 限流可配

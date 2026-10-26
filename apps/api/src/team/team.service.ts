@@ -8,26 +8,25 @@ import { AgentService } from '../agent/agent.service.js';
 /**
  * 团队成员与角色模板（0.1.54）
  *
- * 为什么要「模板」而不是让管理员逐项勾权限：本项目的权限 action 有 15 个
- * （platform:tenant:manage、quote:manage、content:generate……），
+ * 为什么要「模板」而不是让管理员逐项勾权限：本项目的权限 action 是二元切分的
+ * （`platform:tenant:manage`、`quote:read` / `quote:write`、`content:generate`……），
  * 让不懂技术的门店老板逐项勾，既容易配错也没人配得下去。
  * 所以界面只给**角色模板**（超级管理员 / 租户管理员 / 设计师 / 运营 / 只读成员），
  * 权限明细只作为模板的说明展示，不可逐项编辑 —— 这样权限模型有单一事实来源
  * （prisma/seed.ts 的 ROLE_DEFS），不会出现「界面上配出来一套、后端判的是另一套」。
  *
- * 范式参考（2026-10-14 联网查证，许可证逐个核实过）：
- *   - **Appwrite（BSD-3-Clause）** `app/config/roles.php`：固定档位角色模板 + 每档一个扁平权限串清单，
- *     角色继承用集合合并表达（`ROLE_OWNER = merge($member, $admins)`）而非重复枚举。
- *     本项目「新增权限只改 seed 一处」就是照这个思路。
- *   - **Casbin（Apache-2.0）** RBAC with domains：`g = _, _, _` 的第三位即租户，
- *     与我们 `Membership(userId, tenantId, roleId)` 复合唯一键等价。
- *   - **Appwrite 把非人类主体单列一个角色**（`Applications`），比我们在 User 表上挂
+ * 范式选择（2026-10-14 联网查证，许可证逐个核实过）：
+ *   - **固定档位角色模板 + 每档一个扁平权限串清单**，角色继承用集合合并表达
+ *     而非重复枚举。本项目「新增权限只改 seed 一处」就是这个思路。
+ *   - **RBAC with domains**：租户即 domain，本项目
+ *     `Membership(userId, tenantId, roleId)` 复合唯一键与之等价。
+ *   - 非人类主体（机器账号）是否单列一个角色，比在 User 表上挂
  *     `isServiceAccount` 布尔位更干净 —— 本轮暂不改数据模型，记在下方待办。
  *
  * **首期刻意不做自定义角色**：自定义角色要额外解决三件事 ——
  * 自定义角色被删时成员怎么办、租户管理员能否创建比自己权限更大的角色（提权）、
- * 模板升级时如何与用户自定义合并。这三件事在 Appwrite / Casdoor 里都需要额外代码，
- * 而 Appwrite 与 Cal.com 这类成熟项目**目前也都只提供固定档位**，说明这不是保守而是共识。
+ * 模板升级时如何与用户自定义合并。这三件事在成熟开源实现里都需要额外代码，
+ * 而这类项目**目前也都只提供固定档位**，说明这不是保守而是共识。
  *
  * **不能借鉴的项目**（许可证已逐个核实）：Zitadel、Plane、AppFlowy 是 AGPL-3.0；
  * Directus 已从 GPL 改为 MSCL-1.0-GPL；NocoDB、Outline、Twenty 为非 OSI 的 Sustainable Use License。

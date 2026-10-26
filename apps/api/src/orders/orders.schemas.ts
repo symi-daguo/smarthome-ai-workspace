@@ -13,15 +13,6 @@ import { z } from 'zod';
 export const RENO_STAGES = ['undecided', 'designing', 'waterBefore', 'waterDuring', 'roughDone', 'living'] as const;
 export type RenoStage = (typeof RENO_STAGES)[number];
 
-export const RENO_STAGE_LABELS: Record<RenoStage, string> = {
-  undecided: '尚未开始',
-  designing: '设计中',
-  waterBefore: '水电施工前',
-  waterDuring: '水电施工中',
-  roughDone: '硬装完成',
-  living: '已经入住',
-};
-
 /** 客户想体验的场景：10 个 */
 export const SCENE_KEYS = [
   'party', 'movie', 'home', 'away', 'sleep',
@@ -29,37 +20,12 @@ export const SCENE_KEYS = [
 ] as const;
 export type SceneKey = (typeof SCENE_KEYS)[number];
 
-export const SCENE_LABELS: Record<SceneKey, string> = {
-  party: '会客模式',
-  movie: '观影模式',
-  home: '回家模式',
-  away: '离家模式',
-  sleep: '睡眠模式',
-  nightUp: '夜起模式',
-  dinner: '就餐模式',
-  read: '阅读模式',
-  work: '办公模式',
-  morning: '晨起模式',
-};
-
 /** 系统范围：9 类系统 */
 export const SYSTEM_KEYS = [
   'lighting', 'switch', 'curtain', 'wifi', 'automation',
   'security', 'hvac', 'voice', 'media',
 ] as const;
 export type SystemKey = (typeof SYSTEM_KEYS)[number];
-
-export const SYSTEM_LABELS: Record<SystemKey, string> = {
-  lighting: '智能灯光',
-  switch: '智能开关',
-  curtain: '电动窗帘',
-  wifi: '全屋 WiFi',
-  automation: '感应自动化',
-  security: '家庭安防',
-  hvac: '空调与环境',
-  voice: '语音控制',
-  media: '影音娱乐',
-};
 
 /** 单个系统的三态：是否需要 / 应用区域 / 具体配置 */
 export const systemEntrySchema = z.object({

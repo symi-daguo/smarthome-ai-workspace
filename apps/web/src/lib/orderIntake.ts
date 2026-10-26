@@ -20,8 +20,7 @@ export const RENO_STAGES = [
   { value: 'living', label: '已经入住' },
 ] as const;
 
-export type RenoStageKey = (typeof RENO_STAGES)[number]['value'];
-
+/** 装修阶段的中文名表（后端只管 key 白名单，展示文案在前端） */
 export const RENO_STAGE_LABEL: Record<string, string> = Object.fromEntries(
   RENO_STAGES.map((s) => [s.value, s.label]),
 );
@@ -62,8 +61,6 @@ export interface SystemEntry {
 }
 
 export type SystemsMap = Partial<Record<SystemKey, SystemEntry>>;
-
-export const EMPTY_SYSTEM: SystemEntry = { need: 'maybe', area: '', detail: '' };
 
 /** 详情页把系统三态渲染成一行摘要（列表与只读 Descriptions 共用） */
 export function systemSummary(systems: unknown): { yes: string[]; maybe: string[] } {

@@ -5,6 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { HealthModule } from './health/health.module.js';
+import { BrandingModule } from './branding/branding.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { RbacModule } from './rbac/rbac.module.js';
 import { BillingModule } from './billing/billing.module.js';
@@ -38,6 +39,7 @@ import { AuditInterceptor } from './agent/audit.interceptor.js';
     PrismaModule,
     AdminModule,
     HealthModule,
+    BrandingModule,
     AuthModule,
     RbacModule,
     BillingModule,

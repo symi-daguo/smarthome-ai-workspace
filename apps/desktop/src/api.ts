@@ -22,6 +22,10 @@ export interface ApiOptions {
   adminPhone: string;
   adminPassword: string;
   uploadDir: string;
+  /** 部署级品牌：产品名（留空用内置默认） */
+  brandName?: string;
+  /** 部署级品牌：图标地址（留空用界面自带标识） */
+  brandLogoUrl?: string;
   log: (msg: string) => void;
 }
 
@@ -54,6 +58,9 @@ export async function startApi(opts: ApiOptions): Promise<ApiHandle> {
       LLM_BASE_URL: process.env.LLM_BASE_URL ?? '',
       LLM_API_KEY: process.env.LLM_API_KEY ?? '',
       IMAGE_PROVIDER: process.env.IMAGE_PROVIDER ?? 'minimax',
+      // 部署级品牌：配置文件的值优先，其次进程环境变量（脚本部署用），都没有就留空用内置默认
+      BRAND_NAME: opts.brandName ?? process.env.BRAND_NAME ?? '',
+      BRAND_LOGO_URL: opts.brandLogoUrl ?? process.env.BRAND_LOGO_URL ?? '',
       COMFYUI_BASE_URL: process.env.COMFYUI_BASE_URL ?? '',
       COMFYUI_API_KEY: process.env.COMFYUI_API_KEY ?? '',
     },

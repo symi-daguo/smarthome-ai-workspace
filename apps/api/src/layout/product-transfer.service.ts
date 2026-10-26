@@ -18,7 +18,6 @@
  */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.module.js';
-import type { Prisma } from '@prisma/client';
 
 /** 导入/导出的产品行（对外格式） */
 export interface ProductRow {
@@ -520,6 +519,3 @@ function csvCell(v: string | number | undefined): string {
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
-
-/** Prisma 类型（供外部引用） */
-export type ProductDb = Prisma.ProductGetPayload<Record<string, never>>;

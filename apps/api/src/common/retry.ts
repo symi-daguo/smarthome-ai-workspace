@@ -15,13 +15,6 @@
  * （那是异步出图队列的事，同步调用就该同步返回或明确失败）。
  */
 
-/** 一次尝试的结果包装：区分「可重试」与「立刻失败」 */
-export interface AttemptResult<T> {
-  ok: boolean;
-  value?: T;
-  error?: unknown;
-}
-
 export interface RetryOptions {
   /** 总尝试次数（含第一次）。默认 3：再多用户等不起 */
   attempts?: number;

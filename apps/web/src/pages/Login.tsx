@@ -23,10 +23,47 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/AuthContext';
 import { useTheme } from '../theme/ThemeProvider';
+import { useBranding } from '../lib/branding';
 
 const { Title, Text, Paragraph } = Typography;
 
 const BRAND_SOLID = '#5B5BF0';
+
+/**
+ * 登录页的品牌图标。
+ *
+ * 配了 `BRAND_LOGO_URL` 就用部署者自己的图标；没配则沿用自带的闪电标识。
+ * 图标是对方的，底色不该由本项目替他决定 —— 所以有图标时直接给原图，不套色块。
+ */
+function BrandIcon({ logoUrl, size = 40, onDark = false }: { logoUrl?: string; size?: number; onDark?: boolean }): ReactNode {
+  const { token } = theme.useToken();
+  if (logoUrl) {
+    return (
+      <img
+        src={logoUrl}
+        alt=""
+        width={size}
+        height={size}
+        style={{ borderRadius: token.borderRadius, display: 'block', flex: 'none', objectFit: 'contain' }}
+      />
+    );
+  }
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: token.borderRadius,
+        background: onDark ? 'rgba(255,255,255,0.16)' : token.colorPrimary,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <ThunderboltFilled style={{ color: '#fff', fontSize: size * 0.5 }} />
+    </div>
+  );
+}
 
 // 措辞跟着 README 的「开源定位」走：不做付费墙、不卖套餐。
 // 原来这里写的是订阅制套餐与统一 token 计费——那是订阅制口径，
@@ -72,6 +109,7 @@ export function Login(): ReactNode {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const { token } = theme.useToken();
+  const branding = useBranding();
   const [tab, setTab] = useState<'login' | 'register'>('login');
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,20 +183,8 @@ export function Login(): ReactNode {
           }}
         >
           <Space size={12} align="center">
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: token.borderRadius,
-                background: 'rgba(255,255,255,0.16)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <ThunderboltFilled style={{ color: '#fff', fontSize: 20 }} />
-            </div>
-            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>智能家居 AI 工作台</Text>
+            <BrandIcon logoUrl={branding.logoUrl} size={40} onDark />
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>{branding.name}</Text>
           </Space>
 
           <div>
@@ -178,7 +204,7 @@ export function Login(): ReactNode {
           </div>
 
           <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }}>
-            开源自部署 · 模型自选 · © 2026 智能家居 AI 工作台
+            开源自部署 · 模型自选 · © 2026 {branding.name}
           </Text>
         </section>
       ) : null}
@@ -188,20 +214,8 @@ export function Login(): ReactNode {
           {!showBrandPanel ? (
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
               <Space size={10} align="center">
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: token.borderRadius,
-                    background: token.colorPrimary,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <ThunderboltFilled style={{ color: '#fff', fontSize: 20 }} />
-                </div>
-                <Text strong style={{ fontSize: 18 }}>智能家居 AI 工作台</Text>
+                <BrandIcon logoUrl={branding.logoUrl} size={40} />
+                <Text strong style={{ fontSize: 18 }}>{branding.name}</Text>
               </Space>
             </div>
           ) : null}

@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.module.js';
+import { brandName } from '../branding/branding.module.js';
 import type { CreateFeedbackDto, UpdateFeedbackDto } from './feedback.schemas.js';
 
 /**
@@ -86,7 +87,7 @@ export class FeedbackService {
       t.detail && t.detail.length > 300 ? '\n\n（详情较长，此处为前 300 字；完整内容见系统内工单）' : '',
       '',
       '---',
-      '由「智能家居 AI 工作台」的「问题反馈」生成。',
+      `由「${brandName()}」的「问题反馈」生成。`,
     ].join('\n');
     const url = `https://github.com/${AUTHOR_REPO}/issues/new`
       + `?title=${encodeURIComponent(title)}`
