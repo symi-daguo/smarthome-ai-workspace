@@ -46,6 +46,12 @@ const ALLOWED_DOMAINS = new Set([
   'ghcr.io', 'quay.io',
   // Prisma 官方引擎二进制分发站（@prisma/fetch-engine 的默认下载源）
   'binaries.prisma.sh',
+  // Apple 公证链路（notarytool / stapler / 票据交付）的官方端点。
+  // 这些是**公证基础设施**，任何 macOS 开发者都要用，属于公开服务 ——
+  // 文档里要写清「哪些域名必须绕过代理」，不写就没法照着配。
+  // 注意：这是 Apple 的服务地址，不是「借鉴自谁」的痕迹。
+  'api.apple-cloudkit.com', 'appstoreconnect.apple.com', 'notarytool.apple.com',
+  'timestamp.apple.com', 'sequoia.apple.com', 'seed-sequoia.siri.apple.com',
   // 代码托管与官方文档
   'github.com', 'api.github.com', 'uploads.github.com', 'www.w3.org', 'json.schemastore.org', 'www.prisma.io', 'itunes.apple.com',
   // 本机开发与示例
