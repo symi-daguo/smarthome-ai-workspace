@@ -16,8 +16,9 @@ import {
 
 /**
  * 问题反馈：租户内的问题/需求工单。
- * 提交与查看用 cs:manage（seed 里所有角色都有：遇到问题的人恰恰可能是权限最低的人，
- * 反馈入口不能因为角色低而关闭）；状态推进与回复用 platform:billing:manage（管理员）；
+ * 读（列表/详情）用 cs:read，写（提交/删除）用 cs:write
+ * （seed 里所有角色都有 cs:write：遇到问题的人恰恰可能是权限最低的人，
+ *  反馈入口不能因为角色低而关闭）；状态推进与回复用 platform:billing:manage（管理员）；
  * 删除仅提交者本人。数据按租户隔离。
  */
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
@@ -31,7 +32,14 @@ export class FeedbackController {
     return this.feedback.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('cs:read')
+  /**
+   * 提交反馈是**写**动作，要 cs:write。
+   *
+   * 以前这里挂的是 cs:read —— 写动作挂在读权限上，等于「能看就能写」，
+   * cs:write 那个 action 全程没人校验，成了纯装饰。现在读写分开：
+   * 看（列表/详情）要 cs:read，提交与删除要 cs:write。
+   */
+  @RequirePermissions('cs:write')
   @Post()
   create(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -59,7 +67,8 @@ export class FeedbackController {
     return this.feedback.issueLink(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('cs:read')
+  /** 删反馈同样是写动作（且只允许提交者本人删） */
+  @RequirePermissions('cs:write')
   @Delete(':id')
   remove(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

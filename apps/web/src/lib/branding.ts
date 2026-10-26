@@ -19,11 +19,19 @@ export interface Branding {
   name: string;
   /** 图标地址（站内路径或完整 URL） */
   logoUrl: string;
+  /**
+   * 是不是桌面单机版。
+   *
+   * 前端据此决定**要不要显示「桌面端设置」入口**：
+   * 桌面端有配置文件可写（品牌、语音合成接入），公开部署没有 ——
+   * 那个入口在公开部署里必须完全看不到，而不是点了才报错。
+   */
+  desktop: boolean;
 }
 
 const DEFAULT_NAME = '智能家居 AI 工作台';
 
-let state: Branding = { name: DEFAULT_NAME, logoUrl: '' };
+let state: Branding = { name: DEFAULT_NAME, logoUrl: '', desktop: false };
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -49,6 +57,7 @@ export async function loadBranding(): Promise<void> {
     state = {
       name: res.name?.trim() || DEFAULT_NAME,
       logoUrl: res.logoUrl?.trim() || '',
+      desktop: res.desktop === true,
     };
     applyToDocument(state);
     emit();

@@ -37,7 +37,6 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
       'platform:audit:view',
       'quote:read', 'quote:write',
       'order:read', 'order:write',
-      'publish:read', 'publish:write',
       'content:read', 'content:generate', 'content:extract',
       'knowledge:read', 'knowledge:manage',
       'benchmark:read', 'benchmark:write',
@@ -65,7 +64,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     key: 'designer',
     name: '设计师',
     scope: 'TENANT',
-    permissions: ['content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'publish:read', 'publish:write', 'cs:write'],
+    permissions: ['content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'cs:write'],
     description: '做方案与出图、渲染户型图、维护知识库；不碰客户报价与接单',
   },
   {
@@ -94,7 +93,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     key: 'marketing',
     name: '市场运营',
     scope: 'TENANT',
-    permissions: ['publish:read', 'publish:write', 'content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'benchmark:read', 'benchmark:write', 'cs:write'],
+    permissions: ['content:read', 'content:generate', 'content:extract', 'knowledge:read', 'knowledge:manage', 'benchmark:read', 'benchmark:write', 'cs:write'],
     description: '发朋友圈/小红书、做短视频与海报；盯对标账号学内容；不碰客户报价与接单',
   },
   {
@@ -109,7 +108,7 @@ const ROLE_DEFS: { key: string; name: string; scope: 'PLATFORM' | 'TENANT'; perm
     name: '运营',
     scope: 'TENANT',
     // 与销售顾问同理：自称「接待、报价、发布三样都沾」，接待就包含出方案。
-    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'content:read', 'content:generate', 'content:extract', 'publish:read', 'publish:write', 'knowledge:read', 'cs:write'],
+    permissions: ['order:read', 'order:write', 'quote:read', 'quote:write', 'content:read', 'content:generate', 'content:extract', 'knowledge:read', 'cs:write'],
     description: '接待、报价、发布三样都沾的混合岗；职责单时装销售顾问或市场运营，权限更窄更安全',
   },
   // 只读成员也要能提反馈：遇到问题的人恰恰常常是权限最低的人，反馈入口不能因角色低而关闭
@@ -122,6 +121,30 @@ export async function main(deps: SeedDeps): Promise<void> {
   const { prisma, phone, password } = deps;
   for (const action of PERMISSIONS) {
     await prisma.permission.upsert({ where: { action }, update: {}, create: { action, description: action } });
+  }
+  /**
+   * 清理陈旧权限行。
+   *
+   * 为什么要清理：seed 以前只 upsert、从不删除，所以库里会一直躺着
+   * 「代码里已经不存在的 action」—— 被废弃的 publish:read / publish:write /
+   * platform:tenant:manage，以及更早一轮留下的笼统 :manage 变体
+   * （cs:manage / order:manage / publish:manage / quote:manage）。
+   * 这些行还被 RolePermission 指着，于是角色详情里会出现
+   * 「界面上根本没有的权限」—— 用户勾不到、也看不出它到底管什么。
+   *
+   * 顺序：先删指向它们的授权行，再删权限行。
+   * 外键 RolePermission.permissionId 本身是 onDelete: Cascade，
+   * 但显式先删一遍不依赖数据库的级联行为 —— 换一套部署环境也不会留下悬空授权行。
+   */
+  const stale = await prisma.permission.findMany({
+    where: { action: { notIn: [...PERMISSIONS] } },
+    select: { id: true, action: true },
+  });
+  if (stale.length > 0) {
+    const staleIds = stale.map((p) => p.id);
+    await prisma.rolePermission.deleteMany({ where: { permissionId: { in: staleIds } } });
+    await prisma.permission.deleteMany({ where: { id: { in: staleIds } } });
+    console.log(`seed: cleaned ${stale.length} stale permissions: ${stale.map((p) => p.action).join('、')}`);
   }
   const permissionMap = new Map(
     (await prisma.permission.findMany({ select: { id: true, action: true } })).map((p) => [p.action, p.id]),

@@ -104,6 +104,8 @@ export interface AssetReferenceRows {
   products: Array<{ imageUrl: string }>;
   lightingScenes: Array<{ sourceAssetId: string | null; videoAssetId: string | null }>;
   users: Array<{ avatarUrl: string }>;
+  /** 页型配图（方案页型的门店自定义图） */
+  pageImages?: Array<{ mediaAssetId: string }>;
 }
 
 export function collectReferencedAssetIds(rows: AssetReferenceRows): Set<string> {
@@ -125,6 +127,9 @@ export function collectReferencedAssetIds(rows: AssetReferenceRows): Set<string>
     add(s.videoAssetId);
   }
   for (const u of rows.users ?? []) add(extractAssetIdFromPath(u.avatarUrl));
+  // 页型配图引用的素材同样在用：漏收 = 清理工具把它当垃圾删掉，
+  // 门店配的页型图当场裂开（导出 PPT 时那页变成空白）。
+  for (const p of rows.pageImages ?? []) add(p.mediaAssetId);
   return out;
 }
 
@@ -251,7 +256,7 @@ export class MediaService {
    * 少收一个字段 = 删掉仍在用的图（方案户型图裂、交付包缺图、头像变空白）。
    */
   async referencedAssetIds(): Promise<Set<string>> {
-    const [plans, layouts, products, lightingScenes, users] = await Promise.all([
+    const [plans, layouts, products, lightingScenes, users, pageImages] = await Promise.all([
       this.prisma.planProject.findMany({
         select: {
           floorplanAssetId: true,
@@ -265,8 +270,9 @@ export class MediaService {
       this.prisma.product.findMany({ where: { active: true, imageUrl: { not: '' } }, select: { imageUrl: true } }),
       this.prisma.lightingScene.findMany({ select: { sourceAssetId: true, videoAssetId: true } }),
       this.prisma.user.findMany({ where: { avatarUrl: { not: '' } }, select: { avatarUrl: true } }),
+      this.prisma.planPageImage.findMany({ select: { mediaAssetId: true } }),
     ]);
-    return collectReferencedAssetIds({ plans, layouts, products, lightingScenes, users });
+    return collectReferencedAssetIds({ plans, layouts, products, lightingScenes, users, pageImages });
   }
 
   /**

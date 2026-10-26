@@ -167,6 +167,9 @@ async function bootstrap(): Promise<void> {
     uploadDir: paths.uploads,
     brandName: cfg.brandName ?? '',
     brandLogoUrl: cfg.brandLogoUrl ?? '',
+    narrationTtsUrl: cfg.narrationTtsUrl ?? '',
+    narrationTtsToken: cfg.narrationTtsToken ?? '',
+    configFile: paths.configFile,
     log,
   });
   log(`本地 API 已就绪（端口 ${apiPort}）`);

@@ -18,10 +18,19 @@
  *   content:extract     提取本身就是一次写操作，没有「只读地提取」
  *   knowledge:manage / knowledge:read
  *                        已经是二元，沿用既有命名不折腾
+ *
+ * **不列「没有对应动作」的权限**：
+ *   publish:read / publish:write
+ *                        「朋友圈/小红书」不是一个独立板块，只是预置 Agent 人设 + 生图工具入口，
+ *                        能力已被 content:read / content:generate 覆盖。留着一个勾了没用的权限项，
+ *                        比没有更误导用户（界面显示「可用」，实际什么都不影响）。
+ *   platform:tenant:manage
+ *                        后端零路由。开源自部署时它被降级成 tenant:member:manage
+ *                        （见 agent.controller.ts 的说明），留着就是个空壳。
+ * 这两条已从本清单、seed、前端名表与数据库里一并清掉。
  */
 export const PERMISSIONS = [
   // —— 平台级 ——
-  'platform:tenant:manage',
   'platform:billing:manage',
   'platform:audit:view',
 
@@ -38,10 +47,6 @@ export const PERMISSIONS = [
   // —— 接单 ——
   'order:read',
   'order:write',
-
-  // —— 内容发布 ——
-  'publish:read',
-  'publish:write',
 
   // —— AI 生成与产物库 ——
   'content:read',
@@ -72,7 +77,6 @@ export type PermissionAction = (typeof PERMISSIONS)[number];
 export const WRITE_IMPLIES_READ: Record<string, string> = {
   'quote:write': 'quote:read',
   'order:write': 'order:read',
-  'publish:write': 'publish:read',
   'content:generate': 'content:read',
   'cs:write': 'cs:read',
   'benchmark:write': 'benchmark:read',

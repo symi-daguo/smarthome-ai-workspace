@@ -31,7 +31,16 @@ export class TeamController {
   /**
    * 新建自定义角色（勾选权限组合）。
    * 防提权：只能授予自己已经拥有的权限，规则在 service 里，不靠前端拦。
+   *
+   * 为什么要额外要 tenant:role:assign：角色目录就是「谁能干什么」的那份清单，
+   * 它和「给成员分配角色」是同一件事的两半。以前整个控制器只有类级的
+   * tenant:member:manage，tenant:role:assign 只是个勾了没用的选项 ——
+   * 现在显式挂上，勾了它才真的有效果。
+   *
+   * 守卫是「全都要」的关系（PermissionsGuard 用 every 判定），
+   * 所以这里同时列出两项：既不放松原有的成员管理要求，又让角色分配权真的生效。
    */
+  @RequirePermissions('tenant:member:manage', 'tenant:role:assign')
   @Post('roles')
   createRole(
     @CurrentUser() user: AuthProfile,
@@ -44,6 +53,7 @@ export class TeamController {
     );
   }
 
+  @RequirePermissions('tenant:member:manage', 'tenant:role:assign')
   @Patch('roles/:id')
   updateRole(
     @CurrentUser() user: AuthProfile,
@@ -57,6 +67,7 @@ export class TeamController {
     );
   }
 
+  @RequirePermissions('tenant:member:manage', 'tenant:role:assign')
   @Delete('roles/:id')
   removeRole(@CurrentUser() user: AuthProfile, @Param('id') id: string): Promise<unknown> {
     return this.team.removeRole(user.activeTenantId as string, id);
@@ -80,6 +91,8 @@ export class TeamController {
     return this.team.createMember(user.activeTenantId as string, dto, user.id);
   }
 
+  /** 改成员的角色 —— 这就是「分配角色」动作本身，tenant:role:assign 在这里生效 */
+  @RequirePermissions('tenant:member:manage', 'tenant:role:assign')
   @Patch('members/:userId')
   updateMember(
     @CurrentUser() user: AuthProfile,

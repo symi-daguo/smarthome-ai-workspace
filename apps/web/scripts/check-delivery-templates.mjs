@@ -417,5 +417,51 @@ check('百宝箱工具入口数是 21（说明页会显示这个数）',
   `实测 ${toolEntryCount}`,
 );
 
+// —— 14. 页型配图覆盖表：没配过就等于「什么都没变」 ——
+// 门店可以为每个页型配自己的实景图（覆盖写死的 PAGE_IMAGE 常量）。
+// 这里锁死最要紧的那条：**覆盖表为空时，取图结果逐字等于原来的常量** ——
+// 没配过配图的部署必须与改动前完全一致，否则这次改动就是「让所有人丢图」。
+const { PAGE_IMAGE, resolvePageImage, setPageImageOverrides, clearPageImageOverrides } =
+  await import('../src/data/planThemes.ts');
+
+const pageTypes = Object.keys(PAGE_IMAGE);
+const pageOf = (type, extra = {}) => ({
+  type, heading: '', subtitle: '', body: '', bullets: [], narration: '', ...extra,
+});
+clearPageImageOverrides();
+// 场景页是例外：它原本就按副标题关键词细化配图（sceneImage），不是直接取 PAGE_IMAGE，
+// 所以「等于常量」这条只对其余页型成立；场景页单独一条断言（见下）。
+const constantTypes = pageTypes.filter((t) => t !== 'scene');
+const fallbackMismatch = constantTypes.filter(
+  (t) => resolvePageImage(pageOf(t)) !== PAGE_IMAGE[t],
+);
+check(
+  '未配置页型配图时，取图结果逐字等于 PAGE_IMAGE 常量（没配 = 行为不变）',
+  constantTypes.length > 0 && fallbackMismatch.length === 0,
+  fallbackMismatch.join(' / '),
+);
+// 场景页原本按副标题关键词细化配图，覆盖表为空时这条口径不能丢
+check(
+  '未配置时场景页仍按关键词细化配图（sceneImage 口径没丢）',
+  resolvePageImage(pageOf('scene', { subtitle: '主卧卧室起夜' })) === '/images/cases/c3.jpg'
+    && resolvePageImage(pageOf('scene', { subtitle: '客厅家庭影院' })) === '/images/cases/c2.jpg',
+);
+setPageImageOverrides({ floorplan: '/api/media/assets/xxx/file' });
+check(
+  '配置了页型配图后取图用配置值',
+  resolvePageImage(pageOf('floorplan')) === '/api/media/assets/xxx/file',
+  resolvePageImage(pageOf('floorplan')),
+);
+check(
+  '未配置的页型仍走常量（覆盖只影响配过的那个页型）',
+  resolvePageImage(pageOf('cover')) === PAGE_IMAGE.cover,
+);
+setPageImageOverrides({ notAPageType: '/api/media/assets/yyy/file' });
+check(
+  '覆盖表忽略不存在的页型（服务端可能留着历史页型）',
+  constantTypes.every((t) => resolvePageImage(pageOf(t)) === PAGE_IMAGE[t]),
+);
+clearPageImageOverrides();
+
 console.log(`\n小计: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

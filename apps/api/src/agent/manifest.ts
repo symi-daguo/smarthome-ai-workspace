@@ -66,20 +66,23 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'PATCH /api/auth/profile': [],
   'POST /api/auth/change-password': [],
   // 改自己账号的手机号：与改密同口径，不挂额外权限。
-  // 现有 22 个 action 全是租户业务资源（报价/接单/发布/内容/知识库/对标/客服/团队/平台），
+  // 现有 19 个 action 全是租户业务资源（报价/接单/内容/知识库/对标/客服/团队/平台），
   // 没有任何一个覆盖「本人账号设置」；硬套业务权限反而会让 viewer 改不了自己的号码。
   'POST /api/auth/change-phone': [],
 
   'GET /api/team/role-templates': ['tenant:member:manage'],
   'GET /api/team/members': ['tenant:member:manage'],
   'POST /api/team/members': ['tenant:member:manage'],
-  'PATCH /api/team/members/{userId}': ['tenant:member:manage'],
+  // 改成员角色 = 分配角色：成员管理权与角色分配权都要有（守卫是「全都要」的关系）
+  'PATCH /api/team/members/{userId}': ['tenant:member:manage', 'tenant:role:assign'],
   'DELETE /api/team/members/{userId}': ['tenant:member:manage'],
   'GET /api/team/service-accounts': ['tenant:member:manage'],
   'DELETE /api/team/service-accounts/{userId}': ['tenant:member:manage'],
-  'POST /api/team/roles': ['tenant:member:manage'],
-  'PATCH /api/team/roles/{id}': ['tenant:member:manage'],
-  'DELETE /api/team/roles/{id}': ['tenant:member:manage'],
+  // 角色目录（建/改/删自定义角色）决定「谁能干什么」这一份清单，
+  // 因此除成员管理权外还要显式要 tenant:role:assign —— 否则这个 action 只是个勾选项
+  'POST /api/team/roles': ['tenant:member:manage', 'tenant:role:assign'],
+  'PATCH /api/team/roles/{id}': ['tenant:member:manage', 'tenant:role:assign'],
+  'DELETE /api/team/roles/{id}': ['tenant:member:manage', 'tenant:role:assign'],
 
   'POST /api/agent/service-accounts': ['tenant:member:manage'],
   'GET /api/agent/service-accounts': ['tenant:member:manage'],
@@ -130,10 +133,17 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/plans/{id}/narration-audio': ['content:generate'],
   'GET /api/plans/{id}/narration-audio/file': ['content:read'],
   'DELETE /api/plans/{id}': ['content:generate'],
-  'GET /api/plans/{token}': [],
-  'GET /api/plans/{token}/floorplan': [],
-  'GET /api/plans/{token}/rendered-floorplan': [],
-  'GET /api/plans/{token}/video/{index}': [],
+  // 客户分享页：真实前缀是 /api/public/plans（PublicPlansController）。
+  // 写成 /api/plans 会被主控制器的 @Get(':id') 抢先匹配 → Agent 拿不到分享页内容。
+  'GET /api/public/plans/{token}': [],
+  'GET /api/public/plans/{token}/floorplan': [],
+  'GET /api/public/plans/{token}/rendered-floorplan': [],
+  'GET /api/public/plans/{token}/video/{index}': [],
+
+  // 页型配图（各页面的固定配图，导出交付件时用）
+  'GET /api/plans/page-images': ['content:read'],
+  'PUT /api/plans/page-images/{pageType}': ['content:generate'],
+  'DELETE /api/plans/page-images/{pageType}': ['content:generate'],
 
   'GET /api/layouts': ['content:read'],
   'POST /api/layouts': ['content:generate'],
@@ -211,18 +221,20 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'DELETE /api/content/extractions/documents/{id}': ['content:extract'],
 
   'GET /api/feedback': ['cs:read'],
-  'POST /api/feedback': ['cs:read'],
+  'POST /api/feedback': ['cs:write'],
   'GET /api/feedback/{id}': ['cs:read'],
   'GET /api/feedback/{id}/issue-link': ['cs:read'], // 生成「提交到作者仓库」的预填 issue 链接
   'PATCH /api/feedback/{id}': ['platform:billing:manage'], // 管理员回复，不是普通提反馈
-  'DELETE /api/feedback/{id}': ['cs:read'],
+  'DELETE /api/feedback/{id}': ['cs:write'],
 
   'POST /api/llm/chat': ['content:generate'],
 
   'GET /api/tenants/current': [],
   'PATCH /api/tenants/current': ['tenant:member:manage'], // 改工作台名称，显示在侧栏顶部
-  'GET /api/tenants/current/tokens': [],
-  'GET /api/tenants/current/tokens/ledger': [],
+  // 额度余额与流水是租户级财务数据：以前任何登录成员都能读全租户的账，
+  // 现在要 tenant:billing:view（财务与管理员角色自带）
+  'GET /api/tenants/current/tokens': ['tenant:billing:view'],
+  'GET /api/tenants/current/tokens/ledger': ['tenant:billing:view'],
   'POST /api/tenants/current/tokens/grant': ['tenant:token:grant'],
   'GET /api/tenants/mine': [],
 
@@ -244,12 +256,20 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/admin/model-config/test-comfy': ['platform:billing:manage'],
   'GET /api/admin/model-config/agent-skillpack': ['platform:billing:manage'],
   'DELETE /api/admin/model-config/{scope}': ['platform:billing:manage'],
+  'POST /api/admin/model-config/chat/models': ['platform:billing:manage'],
+  'GET /api/desktop/config': ['platform:billing:manage'],
+  'PUT /api/desktop/config': ['platform:billing:manage'],
 
   // 自身机器接入里无守卫的部分（快照与还原走成员身份，不额外要权限）
   'GET /api/agent/manifest': [],
   'POST /api/agent/snapshots': [],
   'GET /api/agent/snapshots': [],
   'POST /api/agent/snapshots/{id}/restore': [],
+
+  // 两个免鉴权的部署级只读端点：探活与品牌信息。
+  // 清单必须写出来 —— Agent 拿到的是「本系统能做什么」，这两个是它上手的第一步
+  'GET /api/health': [],
+  'GET /api/public/branding': [],
 };
 
 export interface ManifestOp {
@@ -290,6 +310,8 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'GET', p: '/api/agent/snapshots', d: '列快照（不拉数据体）', risk: R },
       { m: 'POST', p: '/api/agent/snapshots/{id}/restore', d: '还原到该快照。撤不回已花掉的额度与已生成的媒体', risk: D, q: { confirm: '必须是快照 id 前 8 位，防手滑', dropNewer: '默认 true，连快照后新增的数据一起删' } },
       { m: 'GET', p: '/api/agent/audit', d: '查审计。?actorKind=agent 只看机器操作', risk: R, q: { requestId: '精确追一次动作', limit: '默认 100' } },
+      { m: 'GET', p: '/api/health', d: '服务健康检查（免鉴权）。接入前先探活', risk: R },
+      { m: 'GET', p: '/api/public/branding', d: '部署级品牌信息（免鉴权）：产品名与图标地址。生成文案/方案落款用产品名', risk: R },
     ],
   },
   {
@@ -312,10 +334,10 @@ export const MANIFEST: ManifestGroup[] = [
     about: '额度账本。你在界面上看到的「¥xxx」就是这个余额。',
     ops: [
       { m: 'GET', p: '/api/tenants/current', d: '当前租户信息', risk: R },
-      { m: 'PATCH', p: '/api/tenants/current', d: '★ 改工作台名称，显示在侧栏顶部与分享页', risk: W, q: { name: '1-24 字' } },
+      { m: 'PATCH', p: '/api/tenants/current', d: '★ 改工作台名称与安装调试费率，显示在侧栏顶部与分享页', risk: W, q: { name: '1-24 字', installRate: '安装调试费率 0-100（百分比），按设备参考零售合计计取' } },
       { m: 'GET', p: '/api/tenants/mine', d: '我加入的所有租户', risk: R },
-      { m: 'GET', p: '/api/tenants/current/tokens', d: '额度余额', risk: R },
-      { m: 'GET', p: '/api/tenants/current/tokens/ledger', d: '额度流水（发放/消耗）', risk: R },
+      { m: 'GET', p: '/api/tenants/current/tokens', d: '额度余额（需 tenant:billing:view）', risk: R },
+      { m: 'GET', p: '/api/tenants/current/tokens/ledger', d: '额度流水（发放/消耗，需 tenant:billing:view）', risk: R },
       { m: 'POST', p: '/api/tenants/current/tokens/grant', d: '发放额度', risk: W },
     ],
   },
@@ -401,10 +423,13 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'GET', p: '/api/plans/{id}/narration-audio', d: '★ 讲解音频状态：有没有、地址在哪、多长（只读）。取到后可推给有喇叭的设备播报', risk: R },
       { m: 'POST', p: '/api/plans/{id}/narration-audio', d: '按讲稿文本合成讲解音频（同一版本重复调用复用已存的那份）', risk: W },
       { m: 'GET', p: '/api/plans/{id}/narration-audio/file', d: '讲解音频文件流（WAV）', risk: R },
-      { m: 'GET', p: '/api/plans/{token}/video/{index}', d: '分享页场景视频文件流（凭 shareToken 免鉴权）', risk: R },
-      { m: 'GET', p: '/api/plans/{token}', d: '★ 免鉴权：客户分享页读方案（微信直开用）', risk: R },
-      { m: 'GET', p: '/api/plans/{token}/floorplan', d: '★ 免鉴权：分享页的原始户型图', risk: R },
-      { m: 'GET', p: '/api/plans/{token}/rendered-floorplan', d: '★ 免鉴权：分享页的渲染后户型图', risk: R },
+      { m: 'GET', p: '/api/public/plans/{token}/video/{index}', d: '分享页场景视频文件流（凭 shareToken 免鉴权）', risk: R },
+      { m: 'GET', p: '/api/public/plans/{token}', d: '★ 免鉴权：客户分享页读方案（微信直开用）', risk: R },
+      { m: 'GET', p: '/api/public/plans/{token}/floorplan', d: '★ 免鉴权：分享页的原始户型图', risk: R },
+      { m: 'GET', p: '/api/public/plans/{token}/rendered-floorplan', d: '★ 免鉴权：分享页的渲染后户型图', risk: R },
+      { m: 'GET', p: '/api/plans/page-images', d: '本租户已配置的页型配图（没配过的页型不出现）', risk: R },
+      { m: 'PUT', p: '/api/plans/page-images/{pageType}', d: '设某页型的配图（传素材 id）', risk: W, q: { pageType: '页型标识', mediaAssetId: '素材 id' } },
+      { m: 'DELETE', p: '/api/plans/page-images/{pageType}', d: '清掉某页型的配图（回到兜底图）', risk: D },
     ],
   },
   {
@@ -589,6 +614,9 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'POST', p: '/api/admin/model-config/test-comfy', d: '测 ComfyUI 连通', risk: W },
       { m: 'GET', p: '/api/admin/model-config/agent-skillpack', d: '取给 Agent 用的技能包描述', risk: R },
       { m: 'DELETE', p: '/api/admin/model-config/{scope}', d: '清掉某类模型配置（会连同密钥）', risk: D },
+      { m: 'POST', p: '/api/admin/model-config/chat/models', d: '拉取对话服务商的可用模型清单（可带未保存的 baseUrl/apiKey 先试）', risk: R },
+      { m: 'GET', p: '/api/desktop/config', d: '读桌面端部署配置（品牌名/图标/语音服务地址与令牌，令牌只给「是否已配置」）', risk: R },
+      { m: 'PUT', p: '/api/desktop/config', d: '改桌面端部署配置（只改请求里出现的字段）', risk: W },
     ],
   },
   {

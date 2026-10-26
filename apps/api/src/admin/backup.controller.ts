@@ -44,6 +44,8 @@ const BACKUP_TABLES = [
   'idempotencyRecord',
   // 对标账号情报：账号清单/采集到的内容/分析结论，缺任一张都会丢掉整条情报链路
   'benchmarkAccount', 'benchmarkContent', 'benchmarkInsight',
+  // 方案页型配图：漏了它，恢复后门店的页型配图配置会凭空消失（回到写死的默认图）
+  'planPageImage',
 ] as const;
 
 /** 取主键：备份行里 id / key / *Id 里第一个存在的（各表主键名不统一） */

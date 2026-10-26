@@ -26,6 +26,18 @@ export interface ApiOptions {
   brandName?: string;
   /** 部署级品牌：图标地址（留空用界面自带标识） */
   brandLogoUrl?: string;
+  /** 语音合成服务地址（讲解音频）。留空 = 本部署不提供语音 */
+  narrationTtsUrl?: string;
+  /** 语音合成服务令牌（留空 = 不带令牌请求） */
+  narrationTtsToken?: string;
+  /**
+   * 桌面端配置文件（desktop-config.json）的绝对路径。
+   *
+   * 注入给 API 进程，是为了让它能读**同一个文件** ——
+   * 「桌面端设置」界面写的就是它，品牌名/图标改完能立即生效，
+   * 不必重启应用。
+   */
+  configFile?: string;
   log: (msg: string) => void;
 }
 
@@ -61,6 +73,11 @@ export async function startApi(opts: ApiOptions): Promise<ApiHandle> {
       // 部署级品牌：配置文件的值优先，其次进程环境变量（脚本部署用），都没有就留空用内置默认
       BRAND_NAME: opts.brandName ?? process.env.BRAND_NAME ?? '',
       BRAND_LOGO_URL: opts.brandLogoUrl ?? process.env.BRAND_LOGO_URL ?? '',
+      // 语音合成（讲解音频）：桌面端不依赖 .env，配置项存在用户目录的配置文件里
+      NARRATION_TTS_URL: opts.narrationTtsUrl ?? process.env.NARRATION_TTS_URL ?? '',
+      NARRATION_TTS_TOKEN: opts.narrationTtsToken ?? process.env.NARRATION_TTS_TOKEN ?? '',
+      // 配置文件路径：让 API 进程能读写同一个文件（桌面端设置界面就写它）
+      DESKTOP_CONFIG_PATH: opts.configFile ?? process.env.DESKTOP_CONFIG_PATH ?? '',
       COMFYUI_BASE_URL: process.env.COMFYUI_BASE_URL ?? '',
       COMFYUI_API_KEY: process.env.COMFYUI_API_KEY ?? '',
     },

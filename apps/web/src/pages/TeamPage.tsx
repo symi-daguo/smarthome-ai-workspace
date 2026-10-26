@@ -93,8 +93,6 @@ const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
   { action: 'quote:write', label: '做报价、改产品库', group: '报价' },
   { action: 'order:read', label: '查看接单与客户跟进', group: '接单' },
   { action: 'order:write', label: '建单、改状态、加跟进', group: '接单' },
-  { action: 'publish:read', label: '查看朋友圈/小红书素材', group: '内容' },
-  { action: 'publish:write', label: '生成并发布文案与图文', group: '内容' },
   { action: 'content:read', label: '查看产物库与作品', group: '内容' },
   { action: 'content:generate', label: '生成方案与出图、生视频', group: '内容' },
   { action: 'content:extract', label: '内容提取与解析', group: '内容' },
@@ -110,14 +108,12 @@ const PERMISSION_CATALOG: { action: string; label: string; group: string }[] = [
   { action: 'tenant:billing:view', label: '查看账单与额度', group: '团队' },
   { action: 'platform:billing:manage', label: '模型配置与数据备份', group: '平台' },
   { action: 'platform:audit:view', label: '查看操作审计', group: '平台' },
-  { action: 'platform:tenant:manage', label: '管理租户', group: '平台' },
 ];
 
 /** 写权限隐含读权限：勾了「写」不必再勾「读」，界面直接体现这条规则 */
 const WRITE_IMPLIES_READ: Record<string, string> = {
   'quote:write': 'quote:read',
   'order:write': 'order:read',
-  'publish:write': 'publish:read',
   'content:generate': 'content:read',
   'benchmark:write': 'benchmark:read',
   'cs:write': 'cs:read',

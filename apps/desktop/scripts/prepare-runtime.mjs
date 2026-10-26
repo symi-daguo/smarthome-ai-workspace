@@ -486,6 +486,11 @@ if (!NO_TRIM) {
   stripFiles(NM, (n) => n.endsWith('.map'), 'sourcemap');
   stripFiles(NM, (n) => n.endsWith('.d.ts') || n.endsWith('.d.mts'), 'TS 类型声明');
 
+  // 6.1.1 冒烟测试产物：`dist/test` 里是本仓库自己的冒烟脚本（约 285KB），
+  //     桌面端运行时永远不执行它，却会被 `pnpm deploy` 一起带进安装包。
+  //     判据是「运行时有没有消费者」—— 它没有。
+  drop(join(API_DIR, 'dist', 'test'), '冒烟测试产物，运行时不用');
+
   // 6.2 Prisma Client 运行时：每个方言都带两份 base64 版 query compiler
   //     （fast + small，各 .js/.mjs），5 个方言约 65MB。桌面端只用 postgresql。
   dropMatching(

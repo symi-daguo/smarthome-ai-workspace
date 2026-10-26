@@ -7,11 +7,12 @@ import { ChatController } from './llm.controller.js';
 import { ModelConfigController } from './model-config.controller.js';
 import { LlmService } from './llm.service.js';
 import { ModelConfigService } from './model-config.service.js';
+import { ModelCatalogService } from './model-catalog.service.js';
 
 @Module({
   imports: [ConfigModule, AuthModule, BillingModule, RbacModule],
   controllers: [ChatController, ModelConfigController],
-  providers: [LlmService, ModelConfigService],
-  exports: [LlmService, ModelConfigService],
+  providers: [LlmService, ModelConfigService, ModelCatalogService],
+  exports: [LlmService, ModelConfigService, ModelCatalogService],
 })
 export class LlmModule {}

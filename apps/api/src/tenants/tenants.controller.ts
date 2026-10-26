@@ -34,11 +34,22 @@ export class TenantsController {
     return settings ?? this.tenants.current(user);
   }
 
+  /**
+   * 额度余额与账本流水。
+   *
+   * 为什么以前没守卫：这两个端点建在 tenant:billing:view 之前，写的时候没有对应 action。
+   * 结果是**任何登录成员都能读全租户的余额与流水** —— 那是租户级财务数据，
+   * 不是个人数据，越权读实打实存在。现在补上守卫，让这个 action 真的生效。
+   */
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions('tenant:billing:view')
   @Get('current/tokens')
   tokenBalance(@CurrentUser() user: AuthProfile) {
     return this.tenants.tokenBalance(this.activeTenantId(user));
   }
 
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions('tenant:billing:view')
   @Get('current/tokens/ledger')
   tokenLedger(@CurrentUser() user: AuthProfile) {
     return this.tenants.tokenLedger(this.activeTenantId(user));

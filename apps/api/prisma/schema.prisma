@@ -519,6 +519,29 @@ model PlanProject {
   @@index([tenantId, createdAt])
 }
 
+// ---------- 方案页型配图（租户级：门店可换掉写死的本地实景图） ----------
+// 为什么单独一张表而不是塞进 ModelSetting：
+// 配图是**租户级**的 —— 每家门店自己的案例图不一样；
+// ModelSetting 是**部署级**的（模型地址、密钥），放进去等于所有门店共用一张图。
+// 为什么 pageType 是字符串而不是枚举：
+// 页型清单的唯一来源在前端 data/planThemes.ts 的 PAGE_IMAGE，
+// 后端再抄一份枚举必然与前端漂移（前端加页型后端就拒收）。
+// 这里只校验取值形态，页型合法性由前端保证。
+model PlanPageImage {
+  id       String @id @default(uuid())
+  tenantId String
+  // 页型标识（cover / brand / layout / needs / ecosystem / scene / budget / delivery / floorplan / quote）
+  pageType String
+  // 素材 id（MediaAsset.id）：文件流走 /api/media/assets/<id>/file
+  mediaAssetId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 一个租户一个页型只有一条：重复配置走 upsert，不留历史垃圾行
+  @@unique([tenantId, pageType])
+  @@index([tenantId])
+}
+
 // ---------- 账号级本地资料库（零配置 AI 资料召回） ----------
 // 定位：上传一次 → 所有 AI 对话按需召回参考。外部知识库引擎（WeKnora/Obsidian）
 // 走 knowledgeConfig 的 provider 配置，那条路召回更强但要用户自己部署；

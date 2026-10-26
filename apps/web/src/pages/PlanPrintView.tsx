@@ -2,6 +2,7 @@ import { Spin, Typography, theme } from 'antd';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fileUrl } from '../lib/api';
+import { refreshPageImageOverrides } from '../lib/pageImages';
 import { planTheme, type PlanPage } from '../data/planThemes';
 import { PlanSlide } from '../components/PlanSlide';
 import { deliverPages, floorplanListPageNo, quoteListPageNo, type QuoteSummary } from '../lib/planPages';
@@ -69,6 +70,17 @@ export function PlanPrintView(): ReactNode {
       .then(setPlan)
       .catch((e) => setError((e as Error).message || '方案不存在或已删除'));
   }, [id, share]);
+
+  /**
+   * 页型配图：门店配的图要出现在打印出的 PDF 里，与导出的 PPTX 同源。
+   *
+   * 分享态（`?share=`，客户未登录）拿不到这个接口（要鉴权），
+   * 此时保持默认实景图 —— 客户看到的是方案本身，不是门店的图库配置。
+   */
+  useEffect(() => {
+    if (share) return;
+    void refreshPageImageOverrides();
+  }, [share]);
 
   // style 缺省时回落到首个主题（planTheme 内部也找不到就取 PLAN_THEMES[0]）
   const t = planTheme(plan?.style ?? 'A');

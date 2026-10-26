@@ -31,6 +31,7 @@ import {
 import dayjs from 'dayjs';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, tokenStore } from '../lib/api';
+import { loadBranding, useBranding } from '../lib/branding';
 import { downloadBlob } from '../lib/download';
 import { tokenToYuan } from '../lib/money';
 import { PageHeader } from '../components/PageHeader';
@@ -86,6 +87,21 @@ interface StorageStat {
   tenantUsedBytes?: number;
 }
 
+/**
+ * 桌面端设置（仅桌面单机版存在）。
+ *
+ * **令牌绝不在响应里出现明文**：后端只给「是否已配置」这个布尔值，
+ * 与模型配置中心对 API Key 的处理一致。所以令牌输入框永远空着，
+ * 留空 = 不改动（用户没法区分「没改」和「想清除」，清除要走显式按钮）。
+ */
+interface DesktopConfigView {
+  brandName: string;
+  brandLogoUrl: string;
+  narrationTtsUrl: string;
+  narrationTtsTokenConfigured: boolean;
+  desktop: boolean;
+}
+
 const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
   { label: '跟随系统', value: 'auto' },
   { label: '浅色', value: 'light' },
@@ -126,12 +142,56 @@ export function TokenCenter(): ReactNode {
   const isAdmin = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
   /** 是不是租户/平台管理员（管理员账号本身要能改手机号，也才谈得上「换人管」） */
   const isTenantAdmin = user?.memberships.some((m) => m.roleKey === 'super_admin' || m.roleKey === 'tenant_admin') ?? false;
+  /** 部署级品牌（含 desktop 标记）：桌面端才显示「桌面端设置」入口 */
+  const branding = useBranding();
+  /** 桌面端设置的当前值（令牌只有「是否已配置」） */
+  const [desktopCfg, setDesktopCfg] = useState<DesktopConfigView | null>(null);
+  const [desktopSaving, setDesktopSaving] = useState(false);
+  /**
+   * 桌面端设置的表单值。
+   *
+   * 为什么用普通 state 而不是 antd 的 Form：这一张卡里有一个「令牌」输入框，
+   * 它要和旁边的「清除令牌」按钮并排，用 Form 的话值要绕一层 Form.Item 注入，
+   * 反而不如直接持有状态清楚。四个字段都是纯文本，直接受控最省事。
+   */
+  const [desktopForm, setDesktopForm] = useState({
+    brandName: '',
+    brandLogoUrl: '',
+    narrationTtsUrl: '',
+    narrationTtsToken: '',
+  });
 
   // 管理员进入页面即拉取产物占用（存储治理卡）
   useEffect(() => {
     if (isAdmin) void loadStorage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
+
+  /**
+   * 拉桌面端设置。
+   *
+   * 只在**桌面单机版 + 管理员**时拉：公开部署没有这个端点（后端返回 404），
+   * 去拉一次只是白报一个错。
+   */
+  useEffect(() => {
+    if (!branding.desktop || !isAdmin) return;
+    void (async () => {
+      try {
+        const cfg = await api<DesktopConfigView>('/api/desktop/config');
+        setDesktopCfg(cfg);
+        setDesktopForm({
+          brandName: cfg.brandName,
+          brandLogoUrl: cfg.brandLogoUrl,
+          narrationTtsUrl: cfg.narrationTtsUrl,
+          // 令牌永不留明文在表单里：后端也不回传
+          narrationTtsToken: '',
+        });
+      } catch (err: unknown) {
+        message.error(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branding.desktop, isAdmin]);
 
   useEffect(() => {
     Promise.all([
@@ -379,6 +439,65 @@ export function TokenCenter(): ReactNode {
     }
   };
 
+  // —— 桌面端设置（仅桌面单机版可见）——
+
+  /**
+   * 保存桌面端设置。
+   *
+   * **两类设置的生效时机不一样，必须说清楚**：
+   * - 品牌名 / 图标：后端每次请求现读配置文件，**保存后立即生效**（重新拉一次品牌即可）；
+   * - 语音合成服务：它是桌面端主进程**启动时注入**给 API 子进程的环境变量，
+   *   所以改完**必须重启桌面应用**才生效 —— 这里明确告诉用户，不假装已经生效。
+   */
+  const saveDesktopConfig = async (): Promise<void> => {
+    setDesktopSaving(true);
+    try {
+      const saved = await api<DesktopConfigView>('/api/desktop/config', {
+        method: 'PUT',
+        body: JSON.stringify({
+          brandName: desktopForm.brandName,
+          brandLogoUrl: desktopForm.brandLogoUrl,
+          narrationTtsUrl: desktopForm.narrationTtsUrl,
+          // 令牌留空 = 不改动（后端语义与模型配置中心的 apiKey 一致）
+          narrationTtsToken: desktopForm.narrationTtsToken,
+        }),
+      });
+      setDesktopCfg(saved);
+      // 令牌输入框立刻清空：明文不回显，也不该留在表单里
+      setDesktopForm((prev) => ({ ...prev, narrationTtsToken: '' }));
+      // 品牌立即生效：重新拉一次公开品牌端点，标题/侧栏/登录页一起更新
+      await loadBranding();
+      message.success('桌面端设置已保存。品牌名与图标立即生效；语音合成服务需重启桌面应用后才生效');
+    } catch (err: unknown) {
+      message.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDesktopSaving(false);
+    }
+  };
+
+  /**
+   * 清除已保存的令牌。
+   *
+   * 为什么要有这个显式动作：令牌不回显，输入框留空只能表示「不改动」，
+   * 用户没法表达「我要清掉」。这里发一个显式哨兵值给后端执行清除。
+   */
+  const clearDesktopToken = async (): Promise<void> => {
+    setDesktopSaving(true);
+    try {
+      const saved = await api<DesktopConfigView>('/api/desktop/config', {
+        method: 'PUT',
+        body: JSON.stringify({ narrationTtsToken: '__CLEAR__' }),
+      });
+      setDesktopCfg(saved);
+      setDesktopForm((prev) => ({ ...prev, narrationTtsToken: '' }));
+      message.success('已清除语音合成服务令牌，重启桌面应用后生效');
+    } catch (err: unknown) {
+      message.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDesktopSaving(false);
+    }
+  };
+
   return (
     <div style={pageContainerStyle}>
       <PageHeader
@@ -457,6 +576,88 @@ export function TokenCenter(): ReactNode {
           </Text>
         </Space>
       </Card>
+
+      {/*
+        桌面端设置：只在**桌面单机版**出现（公开部署里完全看不到这张卡）。
+        桌面端用户原先得手改 desktop-config.json（改错一个逗号就起不来），
+        这里把它变成四个输入框。
+      */}
+      {branding.desktop && isAdmin ? (
+        <Card
+          title="桌面端设置"
+          style={{ marginBottom: 16 }}
+          styles={{ body: { padding: 20 } }}
+          extra={
+            <Button
+              type="primary"
+              size="small"
+              loading={desktopSaving}
+              onClick={() => void saveDesktopConfig()}
+            >
+              {desktopSaving ? '保存中…' : '保存设置'}
+            </Button>
+          }
+        >
+          <Text type="secondary" style={{ fontSize: 12.5, display: 'block', marginBottom: 14 }}>
+            桌面单机版的部署配置。<Text strong>品牌名与图标保存后立即生效</Text>；
+            语音合成（讲解音频）服务是应用启动时注入的，
+            <Text strong>改完需要重启桌面应用</Text>才会生效。
+          </Text>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
+            <div>
+              <Text style={{ fontSize: 13 }}>品牌名（产品名）</Text>
+              <Input
+                value={desktopForm.brandName}
+                onChange={(e) => setDesktopForm((prev) => ({ ...prev, brandName: e.target.value }))}
+                placeholder="留空 = 使用默认名称「智能家居 AI 工作台」"
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <Text style={{ fontSize: 13 }}>品牌图标地址</Text>
+              <Input
+                value={desktopForm.brandLogoUrl}
+                onChange={(e) => setDesktopForm((prev) => ({ ...prev, brandLogoUrl: e.target.value }))}
+                placeholder="站内路径（如 /images/logo.png）或完整 URL；留空 = 沿用界面自带标识"
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <Text style={{ fontSize: 13 }}>语音合成服务地址</Text>
+              <Input
+                value={desktopForm.narrationTtsUrl}
+                onChange={(e) => setDesktopForm((prev) => ({ ...prev, narrationTtsUrl: e.target.value }))}
+                placeholder="留空 = 本部署不提供语音（方案照常产出，只是不带讲解音频）"
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <Text style={{ fontSize: 13 }}>语音合成服务令牌</Text>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <Input.Password
+                  value={desktopForm.narrationTtsToken}
+                  onChange={(e) => setDesktopForm((prev) => ({ ...prev, narrationTtsToken: e.target.value }))}
+                  placeholder={
+                    desktopCfg?.narrationTtsTokenConfigured
+                      ? '已配置（不回显明文）；留空 = 不改动'
+                      : '未配置；填入即保存'
+                  }
+                  autoComplete="new-password"
+                  style={{ flex: 1 }}
+                />
+                {desktopCfg?.narrationTtsTokenConfigured ? (
+                  <Button disabled={desktopSaving} onClick={() => void clearDesktopToken()}>
+                    清除令牌
+                  </Button>
+                ) : null}
+              </div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                令牌只写不回显：留空表示不改动；要点「清除令牌」才会真的删掉已保存的令牌。
+              </Text>
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       {/*
         侧栏功能显示设置。

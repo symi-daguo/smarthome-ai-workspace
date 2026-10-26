@@ -10,7 +10,8 @@ import { ZodValidationPipe } from '../common/zod.pipe.js';
 import { LlmService } from './llm.service.js';
 import { DEFAULT_CHAT_MODEL } from './llm.constants.js';
 import { ModelConfigService, type ConfigScope } from './model-config.service.js';
-import { chatConfigSchema, imageConfigSchema, videoConfigSchema, type ChatConfigDto, type ImageConfigDto, type VideoConfigDto } from './model-config.schemas.js';
+import { ModelCatalogService, type ModelListResult } from './model-catalog.service.js';
+import { chatConfigSchema, imageConfigSchema, videoConfigSchema, modelListSchema, type ChatConfigDto, type ImageConfigDto, type VideoConfigDto, type ModelListDto } from './model-config.schemas.js';
 import { describeUpstreamError } from '../common/upstream-timeout.js';
 
 /**
@@ -58,6 +59,7 @@ export class ModelConfigController {
   constructor(
     private readonly llm: LlmService,
     private readonly modelConfig: ModelConfigService,
+    private readonly catalog: ModelCatalogService,
   ) {}
 
   @RequirePermissions('platform:billing:manage')
@@ -112,6 +114,23 @@ export class ModelConfigController {
   async saveChat(@CurrentUser() user: AuthProfile, @Body(new ZodValidationPipe(chatConfigSchema)) dto: ChatConfigDto): Promise<{ ok: true }> {
     await this.modelConfig.save('chat', dto as Record<string, string>, user.id);
     return { ok: true };
+  }
+
+  /**
+   * 拉取对话服务商的可用模型清单（给「模型」下拉框供选）。
+   *
+   * body 里可以带**尚未保存**的 baseUrl / apiKey：管理员填完地址就想先看看有哪些模型，
+   * 不必先点保存。不带就用服务端已保存的配置 —— 密钥只从服务端取，
+   * 任何响应（含错误响应）都不含密钥明文。
+   *
+   * 拉不到不算保存失败：本端点是辅助能力，失败时返回明确错误码
+   * （LLM_MODELS_UNSUPPORTED / LLM_MODELS_AUTH_FAILED / LLM_MODELS_FETCH_FAILED 等），
+   * 前端据此提示"可手动填写"，保存配置的流程照走。
+   */
+  @RequirePermissions('platform:billing:manage')
+  @Post('chat/models')
+  async chatModels(@Body(new ZodValidationPipe(modelListSchema)) dto: ModelListDto): Promise<ModelListResult> {
+    return this.catalog.listModels('chat', dto);
   }
 
   @RequirePermissions('platform:billing:manage')

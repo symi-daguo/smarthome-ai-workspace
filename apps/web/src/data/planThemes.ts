@@ -92,6 +92,56 @@ export function sceneImage(subtitle: string): string {
   return '/images/cases/c1.jpg';
 }
 
+/**
+ * 页型配图覆盖表（运行时可写）。
+ *
+ * 背景：PPT 每一页的配图原本是**按页型写死的本地图片**（PAGE_IMAGE），
+ * 门店换不了自己的案例图 —— 导出的方案里永远是那几张通用实景图。
+ * 现在门店可以上传自己的图并指定给某个页型，导出时优先用门店的。
+ *
+ * 为什么用覆盖表而不是直接改 PAGE_IMAGE 常量：
+ * PAGE_IMAGE 是模块级常量，改它等于把**全局状态**变成租户配置 ——
+ * A 门店配完图后切到 B 门店，A 的图还留在内存里，导出时串图。
+ * 覆盖表只存「当前租户配过的页型」，登录切换后重新拉一次就覆盖掉了。
+ *
+ * 为什么查不到就回落常量：
+ * 没配过配图的部署必须与改动前**完全一致** —— 覆盖表为空时，
+ * 取图结果逐字等于 PAGE_IMAGE（这是「没配 = 行为不变」的保证）。
+ */
+const pageImageOverrides = new Map<PlanPage['type'], string>();
+
+/**
+ * 写入覆盖表（整表替换）。
+ *
+ * 只接受 PAGE_IMAGE 里存在的页型：服务端可能留着历史页型（或手写的脏数据），
+ * 那些键不该进覆盖表 —— 否则前端会拿着一个不认识的页型去查图。
+ */
+export function setPageImageOverrides(map: Record<string, string | undefined>): void {
+  pageImageOverrides.clear();
+  for (const [pageType, url] of Object.entries(map ?? {})) {
+    if (!url) continue;
+    if (!Object.prototype.hasOwnProperty.call(PAGE_IMAGE, pageType)) continue;
+    pageImageOverrides.set(pageType as PlanPage['type'], url);
+  }
+}
+
+/** 清空覆盖表（全部页型回到兜底图） */
+export function clearPageImageOverrides(): void {
+  pageImageOverrides.clear();
+}
+
+/**
+ * 取某一页的配图：先查覆盖表，查不到再回落写死的常量。
+ *
+ * 场景页原本按副标题关键词细化配图（sceneImage）；
+ * 门店给「场景拆解」页配了图就一律用门店自己的，不再按关键词挑。
+ */
+export function resolvePageImage(page: PlanPage): string {
+  const override = pageImageOverrides.get(page.type);
+  if (override) return override;
+  return page.type === 'scene' ? sceneImage(page.subtitle + page.heading) : PAGE_IMAGE[page.type];
+}
+
 /** 卡片阴影（预览端 CSS；PPTX 端用 pptxgenjs shadow 对象） */
 export const CARD_SHADOW = '0 6px 18px rgba(30, 22, 14, 0.10), 0 1px 3px rgba(30, 22, 14, 0.06)';
 export const CARD_SHADOW_SOFT = '0 3px 10px rgba(30, 22, 14, 0.07)';

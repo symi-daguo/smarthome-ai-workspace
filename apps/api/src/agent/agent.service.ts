@@ -45,6 +45,9 @@ export const SNAPSHOT_TABLES: SnapshotTable[] = [
   { table: 'mediaAsset', scope: 'direct' },
   { table: 'product', scope: 'direct' },
   { table: 'planProject', scope: 'direct' },
+  // 知识库资料：Agent 能删资料（DELETE /api/knowledge/docs/{id}），
+  // 删了却没进快照就还原不回来 —— 本表有 tenantId，符合 direct 条件
+  { table: 'knowledgeDoc', scope: 'direct' },
   { table: 'floorplanLayout', scope: 'direct' },
   { table: 'lightingScene', scope: 'direct' },
   { table: 'feedbackTicket', scope: 'direct' },

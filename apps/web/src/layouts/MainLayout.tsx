@@ -283,6 +283,8 @@ export function MainLayout(): ReactNode {
       label: SIDEBAR_GROUP_LABELS.design,
       children: [
         { key: '/floorplan', icon: <BorderOutlined />, label: '平面图与点位' },
+        // 页型配图与平面图同属「设计交付」：都是方案交付件的视觉素材，门店自己配
+        { key: '/page-images', icon: <PictureOutlined />, label: '页型配图' },
       ].filter((i) => visible(i.key)),
     };
     const toolbox: NonNullable<MenuProps['items']>[number] = {
@@ -334,7 +336,7 @@ export function MainLayout(): ReactNode {
     // 平面图板块有两条路径：/floorplan（专门板块）与 /device-layout（旧书签与百宝箱入口），
     // 两者是同一个编辑器，选中态要统一指向板块入口。
     if (p.startsWith('/floorplan') || p.startsWith('/device-layout')) return '/floorplan';
-    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/treasure', '/products', '/knowledge', '/works', '/benchmark', '/content', '/team', '/tokens', '/model-config', '/lighting', '/lighting-diagnosis', '/feedback', '/quota']) {
+    for (const k of ['/agents', '/canvas', '/image', '/video', '/plan', '/order', '/biography', '/treasure', '/products', '/knowledge', '/works', '/benchmark', '/content', '/team', '/tokens', '/model-config', '/lighting', '/lighting-diagnosis', '/feedback', '/quota', '/page-images']) {
       if (p.startsWith(k)) return k;
     }
     return '/';

@@ -57,6 +57,7 @@ export const SIDEBAR_ENTRIES: SidebarEntry[] = [
   { key: '/video', label: 'AI 生视频', desc: '演示短视频生成', group: 'AI 超能力' },
   { key: '/plan', label: '智能方案', desc: '方案文案、点位与 PPT 交付', group: 'AI 超能力' },
   { key: '/floorplan', label: '平面图与点位', desc: '户型图布点与点位反复修改', group: '设计交付' },
+  { key: '/page-images', label: '页型配图', desc: '给 PPT 方案每个页型配自己的实景图', group: '设计交付' },
   { key: '/treasure', label: '智能百宝箱', desc: '各类小工具集合', group: '工具与内容' },
   { key: '/knowledge', label: '我的知识库', desc: '品牌与项目素材沉淀', group: '工具与内容' },
   { key: '/works', label: '我的作品', desc: '生成过的图片与视频', group: '工具与内容' },

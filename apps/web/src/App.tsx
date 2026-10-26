@@ -16,6 +16,7 @@ import { AgentMarket } from './pages/AgentMarket';
 import { ImageStudio } from './pages/ImageStudio';
 import { VideoStudio } from './pages/VideoStudio';
 import { PlanStudio } from './pages/PlanStudio';
+import { PageImages } from './pages/PageImages';
 import { PlanPrintView } from './pages/PlanPrintView';
 import { TreasureBox } from './pages/TreasureBox';
 import { DeviceLayout } from './pages/DeviceLayout';
@@ -58,6 +59,8 @@ function ProtectedRoutes(): React.ReactNode {
             <Route path="device-layout" element={<DeviceLayout />} />
             {/* 平面图与点位：专门板块入口。点位要反复改，改完能被方案与 PPT 拉取 */}
             <Route path="floorplan" element={<FloorplanStudio />} />
+            {/* 页型配图：门店给 PPT 方案每个页型配自己的实景图（租户级配置） */}
+            <Route path="page-images" element={<PageImages />} />
             <Route path="lighting" element={<LightingStudio />} />
             <Route path="lighting-diagnosis" element={<LightingDiagnosis />} />
             <Route path="feedback" element={<Feedback />} />

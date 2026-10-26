@@ -1,5 +1,5 @@
 import PptxGenJS from 'pptxgenjs';
-import { planTheme, PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, type PlanPage } from '../data/planThemes';
+import { planTheme, PAGE_TYPE_LABEL, resolvePageImage, type PlanPage } from '../data/planThemes';
 import { catMeta, compositePoints, COMPOSITE_WIDTH } from './pointOverlay';
 import { customerText } from './planSanitize';
 import { floorplanListPageNo, quoteListPageNo, POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPages, deliverPointCount, type QuoteSummary } from './planPages';
@@ -172,7 +172,9 @@ function fmt(n: number): string {
 }
 
 function pageImageType(page: PlanPage): string {
-  return page.type === 'scene' ? sceneImage(page.subtitle + page.heading) : PAGE_IMAGE[page.type];
+  // 走统一取图口径：门店配了页型图就用门店的，没配就用写死的兜底常量。
+  // 口径收敛在 planThemes.resolvePageImage 一处，预览（PlanSlide）与导出（这里）不会跑偏。
+  return resolvePageImage(page);
 }
 
 type Theme = ReturnType<typeof planTheme>;

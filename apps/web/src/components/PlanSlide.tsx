@@ -1,5 +1,5 @@
 import { catMeta } from '../lib/pointOverlay';
-import { PAGE_TYPE_LABEL, PAGE_IMAGE, sceneImage, imgFilter, imgPosition, imgSize, CARD_SHADOW, CARD_SHADOW_SOFT, type PlanPage, type PlanTheme } from '../data/planThemes';
+import { PAGE_TYPE_LABEL, resolvePageImage, imgFilter, imgPosition, imgSize, CARD_SHADOW, CARD_SHADOW_SOFT, type PlanPage, type PlanTheme } from '../data/planThemes';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { compositePoints, COMPOSITE_WIDTH, type PointLike } from '../lib/pointOverlay';
@@ -87,9 +87,10 @@ function fmt(n: number): string {
   return n >= 10000 ? `${(n / 10000).toFixed(n % 10000 === 0 ? 0 : 1)}万` : `${n}`;
 }
 
-/** 页型→配图（场景页按副标题细化） */
+/** 页型→配图（门店配了页型图就用门店的，没配则用写死的兜底图/场景图） */
 function pageImage(page: PlanPage): string {
-  return page.type === 'scene' ? sceneImage(page.subtitle + page.heading) : PAGE_IMAGE[page.type];
+  // 与 PPTX 导出共用 resolvePageImage 一处口径 —— 预览看到什么，导出的就是什么
+  return resolvePageImage(page);
 }
 
 /**

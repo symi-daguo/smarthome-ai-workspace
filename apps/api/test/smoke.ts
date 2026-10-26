@@ -27,9 +27,76 @@ import { assignByRoom, normalizeRooms, placeByRoom, roomTypeOf } from '../src/la
 import { computeHotScore } from '../src/benchmark/benchmark.service.js';
 import { buildProjectionText, normalizeAnalysis } from '../src/benchmark/benchmark-analyze.service.js';
 import { isWavBuffer, wavDurationSeconds, NarrationAudioService } from '../src/plans/narration-audio.service.js';
+import { assertModelCatalogAssertions } from './model-catalog.assertions.js';
+import { assertDesktopConfigAssertions } from './desktop-config.assertions.js';
+import { assertPlanPageImagesAssertions } from './plan-page-images.assertions.js';
 import { ConfigService } from '@nestjs/config';
 
 const MANIFEST_KEYS = MANIFEST.flatMap((g) => g.ops.map((o) => `${o.m} ${o.p}`));
+
+/**
+ * 控制器分块：一个 @Controller 装饰器 + 它管辖的那一段源码。
+ *
+ * 为什么必须分块，而不是「取文件里第一个 @Controller」：
+ * plans.controller.ts 里有 **4 个** @Controller（主控制器 / 讲解音频文件流 /
+ * 交付包下载 / 客户分享只读），media.controller.ts 里有 2 个。
+ * 旧实现只认第一个，于是把 `public/plans` 的四个端点记成了 `/api/plans/...` ——
+ * 能力清单照着这个错值写，漂移门禁又拿这份错值当「真实路由」来自证，
+ * **门禁在给自己的错误作证**：清单里的幽灵路径永远被判定为「一致」。
+ * 现在逐块扫，路径前缀与类级守卫都按块取。
+ *
+ * `@Controller()`（无参）也是合法写法：路径写在方法上（见 layout.controller.ts），
+ * 前缀为空串。
+ */
+interface ControllerBlock {
+  /** 路径前缀（'' = @Controller() 无参） */
+  base: string;
+  /** 类级守卫：@Controller 之前几行内的 @RequirePermissions */
+  classPerm: string[];
+  /** 块内源码行（从 @Controller 那行起，到下一个 @Controller 之前） */
+  body: string[];
+}
+
+/** 从 `@RequirePermissions('a', 'b')` 的参数串里取出全部 action（一个路由可以同时要多项） */
+function parsePermActions(args: string): string[] {
+  return [...args.matchAll(/'([a-z:]+)'/g)].map((m) => m[1]);
+}
+
+/**
+ * 控制器文件清单。
+ *
+ * 除 `*.controller.ts` 外，**`*.module.ts` 里也可能内联控制器**：
+ * branding 与 health 两个端点就写在模块文件里（部署级只读，不需要单独建目录）。
+ * 只扫 `*.controller.ts` 的话，这两个端点永远不在漂移检查的视野内 ——
+ * 清单漏了它们，门禁也发现不了。
+ */
+const CONTROLLER_FILE = /\.(controller|module)\.ts$/;
+
+/** 把一个控制器文件按 @Controller 切块 */
+function splitControllerBlocks(src: string): ControllerBlock[] {
+  const lines = src.split('\n');
+  const blocks: ControllerBlock[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const cm = lines[i].match(/@Controller\(\s*(?:'([^']*)')?\s*\)/);
+    if (!cm) continue;
+    const base = (cm[1] ?? '').replace(/^\//, '').replace(/\/$/, '');
+    // 类级守卫：@RequirePermissions 出现在 @Controller 之前的几行内（最近的一个优先）
+    let classPerm: string[] = [];
+    for (let j = i - 1; j >= Math.max(0, i - 4); j -= 1) {
+      if (lines[j].trim() === '') break;
+      const pm = lines[j].match(/@RequirePermissions\(([^)]*)\)/);
+      if (pm) { classPerm = parsePermActions(pm[1]); break; }
+    }
+    // 块体：到下一个 @Controller 之前为止
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (lines[j].includes('@Controller(')) { end = j; break; }
+    }
+    blocks.push({ base, classPerm, body: lines.slice(i, end) });
+    i = end - 1;
+  }
+  return blocks;
+}
 
 /**
  * 从控制器源码静态抽取「每个端点真实的 @RequirePermissions」。
@@ -46,31 +113,24 @@ function extractGuards(root: string): Map<string, string[]> {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
-      if (!e.name.endsWith('.controller.ts')) continue;
+      if (!CONTROLLER_FILE.test(e.name)) continue;
       const src = readFileSync(p, 'utf8');
-      const base = (src.match(/@Controller\(\s*'([^']*)'/)?.[1] ?? '').replace(/^\//, '').replace(/\/$/, '');
-      const lines = src.split('\n');
-      // 类级守卫：@RequirePermissions 出现在 @Controller 之前的几行内
-      let classPerm: string[] = [];
-      const cIdx = lines.findIndex((l) => l.includes('@Controller('));
-      for (let i = Math.max(0, cIdx - 4); i < cIdx; i += 1) {
-        const m = lines[i].match(/@RequirePermissions\('([a-z:]+)'\)/);
-        if (m) classPerm = [m[1]];
-      }
-      for (let i = 0; i < lines.length; i += 1) {
-        const mm = lines[i].match(/^\s*@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)')?\s*\)/);
-        if (!mm) continue;
-        let perm = classPerm;
-        // 向上找方法级守卫，但**遇到空行必须停**：装饰器总是紧贴 handler，
-        // 不设边界的话会把上一个端点的守卫当成这一个的（曾经因此误判一个扣费端点）
-        for (let j = i - 1; j >= 0; j -= 1) {
-          if (lines[j].trim() === '') break;
-          const pm = lines[j].match(/@RequirePermissions\('([a-z:]+)'\)/);
-          if (pm) { perm = [pm[1]]; break; }
+      for (const block of splitControllerBlocks(src)) {
+        for (let i = 0; i < block.body.length; i += 1) {
+          const mm = block.body[i].match(/^\s*@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)')?\s*\)/);
+          if (!mm) continue;
+          let perm = block.classPerm;
+          // 向上找方法级守卫，但**遇到空行必须停**：装饰器总是紧贴 handler，
+          // 不设边界的话会把上一个端点的守卫当成这一个的（曾经因此误判一个扣费端点）
+          for (let j = i - 1; j >= 0; j -= 1) {
+            if (block.body[j].trim() === '') break;
+            const pm = block.body[j].match(/@RequirePermissions\(([^)]*)\)/);
+            if (pm) { perm = parsePermActions(pm[1]); break; }
+          }
+          const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
+          const full = ('/api/' + block.base + (sub ? '/' + sub : '')).replace(/\/\/+/g, '/');
+          out.set(`${mm[1].toUpperCase()} ${full}`, perm);
         }
-        const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
-        const full = ('/api/' + base + (sub ? '/' + sub : '')).replace(/\/\/+/g, '/');
-        out.set(`${mm[1].toUpperCase()} ${full}`, perm);
       }
     }
   };
@@ -92,12 +152,15 @@ function extractRealRoutes(root: string): Set<string> {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
-      if (!e.name.endsWith('.controller.ts')) continue;
+      if (!CONTROLLER_FILE.test(e.name)) continue;
       const src = readFileSync(p, 'utf8');
-      const base = (src.match(/@Controller\(\s*'([^']*)'/)?.[1] ?? '').replace(/^\//, '').replace(/\/$/, '');
-      for (const mm of src.matchAll(/@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)'|\s*\))/g)) {
-        const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
-        out.add(`${mm[1].toUpperCase()} /api/${base}${sub ? `/${sub}` : ''}`.replace(/\/\/+/g, '/'));
+      for (const block of splitControllerBlocks(src)) {
+        for (let i = 0; i < block.body.length; i += 1) {
+          const mm = block.body[i].match(/^\s*@(Get|Post|Patch|Delete|Put)\(\s*(?:'([^']*)')?\s*\)/);
+          if (!mm) continue;
+          const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
+          out.add(`${mm[1].toUpperCase()} /api/${block.base}${sub ? `/${sub}` : ''}`.replace(/\/\/+/g, '/'));
+        }
       }
     }
   };
@@ -1331,6 +1394,15 @@ async function main(): Promise<void> {
     'apiKey 留空保持原值、model 空串清除回退',
     putAgain.status === 200 && cfgAfter2.body.chat.keyMasked === '••••1234' && cfgAfter2.body.chat.model.startsWith('（跟随'),
   );
+
+  // 拉取模型清单（独立断言文件，详见其内注释）
+  await assertModelCatalogAssertions({ check, request, base, auth: authA });
+
+  // 桌面端配置读写（独立断言文件）
+  await assertDesktopConfigAssertions({ check, request, base, auth: authA });
+
+  // 方案页型配图（独立断言文件；需要两个租户的鉴权以验跨租户隔离）
+  await assertPlanPageImagesAssertions({ check, request, base, authA, authB });
 
   // ---------- 出图通道的测试夹具：临时写入一个假 Key ----------
   // 出图校验链的顺序是「Key → 幂等 → 参数完整性 → 通道能力 → 扣额度」。
@@ -4355,9 +4427,10 @@ async function main(): Promise<void> {
 
   // ---------- 自定义角色：能勾权限，但不能靠建角色提权 ----------
   {
+    const made2Phone = randomPhone();
     const made2 = await request<{ id: string; roleKey: string }>(base, '/api/team/members', {
       method: 'POST', ...authA,
-      body: JSON.stringify({ phone: randomPhone(), displayName: '自定义角色验证', roleKey: 'viewer', password: 'Smoke12345' }),
+      body: JSON.stringify({ phone: made2Phone, displayName: '自定义角色验证', roleKey: 'viewer', password: 'Smoke12345' }),
     });
     // viewer 登录回来，用它建角色 —— 必然越权
     const viewerPhone = randomPhone();
@@ -4382,11 +4455,27 @@ async function main(): Promise<void> {
       noRight.status === 403 && /PERMISSION_DENIED/.test(noRight.body.message ?? ''),
     );
 
-    // 真正的提权场景：租户管理员**有**建角色资格，但他手上只有 14 项权限（缺 platform:tenant:manage），
-    // 想造一个含这项的角色塞给自己 —— 必须被 service 层的防提权守卫挡住
-    const escalate = await request<{ message?: string }>(base, '/api/team/roles', {
+    // 真正的提权场景：**有**建角色资格的角色，想造一个含自己没有的权限的角色塞给自己 ——
+    // 必须被 service 层的防提权守卫挡住。
+    //
+    // 为什么主角不是租户管理员了：platform:tenant:manage 已从 action 清单里删除
+    // （后端零路由，留着只是个空壳），租户管理员现在持有**全部** action，
+    // 手上没有任何「自己没有」的权限可试 —— 用他当主角，这条断言就测不到防提权了。
+    // 所以改成造一个「权限不全但有建角色资格」的角色来当主角。
+    const limitedRole = await request<{ id: string }>(base, '/api/team/roles', {
       method: 'POST', ...authA,
-      body: JSON.stringify({ name: '越权角色', permissions: ['platform:tenant:manage', 'quote:write'] }),
+      body: JSON.stringify({ name: '冒烟有限权限岗', permissions: ['tenant:member:manage', 'tenant:role:assign'] }),
+    });
+    await request(base, `/api/team/members/${made2.body.id}`, {
+      method: 'PATCH', ...authA, body: JSON.stringify({ roleKey: limitedRole.body.id }),
+    });
+    const limitedLogin = await request<{ token: string }>(base, '/api/auth/login', {
+      method: 'POST', body: JSON.stringify({ phone: made2Phone, password: 'Smoke12345' }),
+    });
+    const limitedAuth = { headers: { Authorization: `Bearer ${limitedLogin.body.token}` } };
+    const escalate = await request<{ message?: string }>(base, '/api/team/roles', {
+      method: 'POST', ...limitedAuth,
+      body: JSON.stringify({ name: '越权角色', permissions: ['tenant:role:assign', 'benchmark:write'] }),
     });
     check(
       '有建角色资格也不能授予自己没有的权限（防提权）',
@@ -4432,6 +4521,9 @@ async function main(): Promise<void> {
     await request(base, `/api/team/members/${made2.body.id}`, { method: 'PATCH', ...authA, body: JSON.stringify({ roleKey: 'viewer' }) });
     const delFree = await request(base, `/api/team/roles/${custom.body.id}`, { method: 'DELETE', ...authA });
     check('没人用的自定义角色可以删', delFree.status === 200);
+
+    // 提权验证用的那个「有限权限岗」也要清掉，别把测试角色留在库里
+    await request(base, `/api/team/roles/${limitedRole.body.id}`, { method: 'DELETE', ...authA });
 
     // 空权限被拒
     const empty = await request(base, '/api/team/roles', {

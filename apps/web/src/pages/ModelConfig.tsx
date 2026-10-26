@@ -24,6 +24,7 @@ import {
   Input,
   Radio,
   Row,
+  Select,
   Space,
   Spin,
   Table,
@@ -31,7 +32,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../store/AuthContext';
 import { PageHeader } from '../components/PageHeader';
@@ -106,6 +107,13 @@ interface VideoForm {
   model: string;
 }
 
+/** 拉模型清单端点的返回：只有模型 id 列表，没有任何密钥 */
+interface ModelListResult {
+  models: string[];
+  source: 'live' | 'cache';
+  baseUrl: string;
+}
+
 /** 云端 OpenAI 兼容对话 provider 目录（点「选用」一键填入对话表单） */
 const CLOUD_PROVIDERS = [
   { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', keyUrl: 'https://platform.deepseek.com/api_keys' },
@@ -170,6 +178,11 @@ export function ModelConfig(): ReactNode {
   const [profileName, setProfileName] = useState('');
   const [profileBusy, setProfileBusy] = useState(false);
   const [skillBusy, setSkillBusy] = useState(false);
+  // —— 对话模型清单：从服务商那边拉回来的可用模型名 ——
+  const [chatModels, setChatModels] = useState<string[]>([]);
+  const [chatModelsLoading, setChatModelsLoading] = useState(false);
+  const [chatModelsError, setChatModelsError] = useState<string | null>(null);
+  const [chatModelSearch, setChatModelSearch] = useState('');
 
   const [chatForm] = Form.useForm<ChatForm>();
   const [imageForm] = Form.useForm<ImageForm>();
@@ -204,13 +217,42 @@ export function ModelConfig(): ReactNode {
     });
   }, [chatForm, imageForm, comfyForm, videoForm]);
 
+  /**
+   * 拉取服务商可用模型清单。
+   *
+   * 不传参数就用服务端已保存的配置（页面打开时自动拉这一次）；
+   * 传了就用表单里刚填的地址/密钥 —— 用户填完还没保存就想先看看有哪些模型。
+   *
+   * 拉不到**不是致命错误**：不少服务商与本地模型服务并不提供 /models，
+   * 这时只提示一句，模型名照样能手填，不能把用户堵死。
+   */
+  const loadChatModels = useCallback(async (query?: { baseUrl?: string; apiKey?: string; refresh?: boolean }): Promise<void> => {
+    setChatModelsLoading(true);
+    try {
+      const r = await api<ModelListResult>('/api/admin/model-config/chat/models', {
+        method: 'POST',
+        body: JSON.stringify(query ?? {}),
+      });
+      setChatModels(r.models ?? []);
+      setChatModelsError(null);
+    } catch (e) {
+      setChatModels([]);
+      setChatModelsError((e as Error).message);
+    } finally {
+      setChatModelsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!canManageModels) return;
     load()
+      // 打开页面就自动拉一次模型清单（用服务端已保存的配置）：
+      // 让管理员一进页面就能看到「这个 Key 到底能用哪些模型」，不用先猜模型名。
+      .then(() => loadChatModels())
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false));
     void loadProfiles();
-  }, [canManageModels, load, message]);
+  }, [canManageModels, load, loadChatModels, message]);
 
   const loadProfiles = async (): Promise<void> => {
     try {
@@ -349,8 +391,43 @@ export function ModelConfig(): ReactNode {
     message.success('已填入对话配置表单，补上 API Key 后点「保存配置」');
   };
 
+  /**
+   * 手动刷新模型清单。
+   *
+   * 带上表单里刚填的地址与密钥：用户填完还没点保存，也能先看看这个 Key 能用哪些模型
+   * （没填密钥就用服务端已存的那把，密钥明文不出服务端）。
+   * refresh=true 跳过服务端那 5 分钟缓存，否则点「刷新」拿到的还是旧清单。
+   */
+  const refreshChatModels = async (): Promise<void> => {
+    const v = (chatForm.getFieldsValue() ?? {}) as ChatForm;
+    await loadChatModels({
+      baseUrl: (v.baseUrl ?? '').trim() || undefined,
+      apiKey: (v.apiKey ?? '').trim() || undefined,
+      refresh: true,
+    });
+  };
+
   const imageProvider = Form.useWatch('provider', imageForm);
   const videoProvider = Form.useWatch('provider', videoForm);
+  const chatModelValue = Form.useWatch('model', chatForm);
+
+  /**
+   * 下拉选项 = 服务商拉回来的模型 + 当前已填的模型名。
+   *
+   * 带上「当前已填的」是因为：清单是刚拉的，而配置可能是上次填的，
+   * 那个模型名未必还在现在的清单里 —— 但它是当前生效的值，必须能选中、不能凭空消失。
+   */
+  const chatModelOptions = useMemo(() => {
+    const names = new Set(chatModels);
+    const current = typeof chatModelValue === 'string' ? chatModelValue.trim() : '';
+    if (current) names.add(current);
+    const list = [...names].sort().map((m) => ({ value: m, label: m }));
+    // 手填兜底：搜出来的名字不在清单里时，给一条「使用「xxx」」，
+    // 否则用户敲完名字按回车没反应，只能干瞪眼。
+    const s = chatModelSearch.trim();
+    if (s && !names.has(s)) return [{ value: s, label: `使用「${s}」` }, ...list];
+    return list;
+  }, [chatModels, chatModelSearch, chatModelValue]);
 
   const actionButtons = (opts: { saveScope: 'chat' | 'image' | 'comfy' | 'video'; testScope: 'chat' | 'image' | 'comfy' | 'video'; resetScope?: 'chat' | 'image' | 'video'; resetLabel: string; showReset: boolean }): ReactNode => (
     <Space wrap style={{ marginTop: 4 }}>
@@ -461,11 +538,60 @@ export function ModelConfig(): ReactNode {
               <Form.Item name="apiKey" label="API Key" extra={status.chat.keyConfigured ? `已保存（${status.chat.keyMasked}），留空则保持不变` : '本地 Ollama / LM Studio 填任意占位串即可'}>
                 <Input.Password placeholder="sk-…" autoComplete="off" allowClear />
               </Form.Item>
-              <Form.Item name="model" label="模型" extra={`可选：锁定全局模型；留空则跟随各功能默认（对话默认 ${DEFAULT_CHAT_MODEL}）`}>
-                <Input placeholder="deepseek-chat / qwen-plus / qwen3 …" allowClear />
+              <Form.Item
+                name="model"
+                label="模型"
+                // Select 清空时给的是 undefined，规整成空串：
+                // 否则「清空」这个动作在提交时会被 JSON.stringify 丢掉，等于清不掉。
+                normalize={(v) => (typeof v === 'string' ? v : '')}
+                extra={
+                  chatModelsError
+                    ? `拉取模型清单失败：${chatModelsError}。不影响保存，可直接手动输入模型名。`
+                    : `可选：锁定全局模型；留空则跟随各功能默认（对话默认 ${DEFAULT_CHAT_MODEL}）`
+                }
+              >
+                <Select
+                  showSearch
+                  allowClear
+                  loading={chatModelsLoading}
+                  style={{ width: '100%' }}
+                  placeholder="选择或搜索模型名（也可直接输入后回车）"
+                  options={chatModelOptions}
+                  onSearch={setChatModelSearch}
+                  onChange={() => setChatModelSearch('')}
+                  notFoundContent={chatModelsLoading ? '正在拉取模型清单…' : '未拉取到清单，可直接输入模型名后回车'}
+                />
               </Form.Item>
             </Form>
+            <Space size={8} wrap style={{ marginTop: -4 }}>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={chatModelsLoading}
+                onClick={() => void refreshChatModels()}
+              >
+                刷新模型清单
+              </Button>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {chatModelsLoading
+                  ? '正在从服务商拉取可用模型…'
+                  : chatModelsError
+                    ? '拉取失败，可手动输入模型名后保存'
+                    : chatModels.length > 0
+                      ? `已拉取 ${chatModels.length} 个可用模型`
+                      : '尚未拉取到模型清单，可手动输入模型名'}
+              </Text>
+            </Space>
             {actionButtons({ saveScope: 'chat', testScope: 'chat', resetScope: 'chat', resetLabel: '对话', showReset: status.chat.source === 'db' })}
+            {chatModelsError ? (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginTop: 12 }}
+                message="未能从服务商拉取模型清单"
+                description={`${chatModelsError}。这不影响保存配置：直接在上面的「模型」框里手动输入模型名即可。`}
+              />
+            ) : null}
             <TestAlert result={results.chat} />
           </Card>
 

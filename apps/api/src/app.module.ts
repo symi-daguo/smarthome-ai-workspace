@@ -24,6 +24,7 @@ import { CanvasModule } from './canvas/canvas.module.js';
 import { AgentModule } from './agent/agent.module.js';
 import { TeamModule } from './team/team.module.js';
 import { BenchmarkModule } from './benchmark/benchmark.module.js';
+import { DesktopModule } from './desktop/desktop.module.js';
 import { AuditInterceptor } from './agent/audit.interceptor.js';
 
 @Module({
@@ -61,6 +62,8 @@ import { AuditInterceptor } from './agent/audit.interceptor.js';
     TeamModule,
     // 对标账号情报：配置对标账号 → 采集热门内容元数据 → AI 映射学习比对
     BenchmarkModule,
+    // 桌面端设置：仅桌面单机版可用（非桌面端部署端点直接 404）
+    DesktopModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -39,6 +39,7 @@ import {
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText, type PlanForExport } from '../lib/planPptx';
+import { refreshPageImageOverrides } from '../lib/pageImages';
 import { PlanSlide, PAGE_BULLET_LIMIT } from '../components/PlanSlide';
 
 const { Text, Title } = Typography;
@@ -858,6 +859,9 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     setExporting(true);
     try {
+      // 导出前拉一次本租户的页型配图：门店配了图就用门店的，没配就用默认实景图。
+      // 读取失败不阻断导出（内部已降级），见 lib/pageImages.ts 的说明。
+      await refreshPageImageOverrides();
       const { blob, fileName } = await exportPlanPptx(exportPayload(plan, quoteSummary));
       downloadBlob(blob, fileName);
       message.success('PPTX 已下载（16:9 原生幻灯片，可直接编辑）');
@@ -902,6 +906,8 @@ const [editing, setEditing] = useState<{
     if (!plan) return;
     setPackaging(true);
     try {
+      // 打包走的是同一套 PPTX 生成逻辑，所以页型配图也要在生成前刷新一次
+      await refreshPageImageOverrides();
       const payload = exportPayload(plan, quoteSummary);
       const { blob } = await exportPlanPptx(payload);
       const fd = new FormData();

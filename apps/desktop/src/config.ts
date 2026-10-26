@@ -8,7 +8,7 @@
  */
 import { app } from 'electron';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
@@ -38,6 +38,16 @@ export interface DesktopConfig {
   brandName?: string;
   /** 部署级品牌：图标地址（URL 或站内路径）。留空则用界面自带的标识 */
   brandLogoUrl?: string;
+  /**
+   * 语音合成服务地址（讲解音频）。留空 = 本部署不提供语音。
+   *
+   * 为什么放在这里而不是只放环境变量：桌面端不依赖任何 .env 文件，
+   * 用户要接入采集服务时只能改这个配置文件 —— 而配置文件原本要手改，
+   * 现在由「桌面端设置」界面来写（后端读同一个文件）。
+   */
+  narrationTtsUrl?: string;
+  /** 语音合成服务令牌。留空 = 不带令牌请求。 */
+  narrationTtsToken?: string;
 }
 
 const CONFIG_FILE = 'desktop-config.json';
@@ -78,6 +88,8 @@ export function loadConfig(): DesktopConfig {
           adminPasswordChanged: raw.adminPasswordChanged === true,
           brandName: typeof raw.brandName === 'string' ? raw.brandName : '',
           brandLogoUrl: typeof raw.brandLogoUrl === 'string' ? raw.brandLogoUrl : '',
+          narrationTtsUrl: typeof raw.narrationTtsUrl === 'string' ? raw.narrationTtsUrl : '',
+          narrationTtsToken: typeof raw.narrationTtsToken === 'string' ? raw.narrationTtsToken : '',
         };
       }
     } catch {
@@ -94,6 +106,8 @@ export function loadConfig(): DesktopConfig {
     adminPasswordChanged: false,
     brandName: '',
     brandLogoUrl: '',
+    narrationTtsUrl: '',
+    narrationTtsToken: '',
   };
   saveConfig(fresh);
   return fresh;
@@ -102,7 +116,15 @@ export function loadConfig(): DesktopConfig {
 export function saveConfig(cfg: DesktopConfig): void {
   const p = dataPaths();
   ensureDirs();
-  writeFileSync(p.configFile, JSON.stringify(cfg, null, 2), 'utf8');
+  // 原子写：先写同目录临时文件再 rename。
+  //
+  // 为什么必须原子：桌面端设置界面（后端进程）与主进程都写这一个文件。
+  // 直接 writeFileSync 会在写一半时被打断，文件就成了一段坏 JSON ——
+  // 而下次启动读不到 jwtSecret/dbPort 时会把配置当首次启动重建，
+  // 旧登录态与端口配置一起丢。
+  const tmp = `${p.configFile}.tmp`;
+  writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8');
+  renameSync(tmp, p.configFile);
 }
 
 /** 找一段当前空闲的 TCP 端口（只绑 127.0.0.1，拿到后立刻释放） */

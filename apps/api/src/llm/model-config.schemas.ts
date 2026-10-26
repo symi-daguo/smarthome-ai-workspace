@@ -38,3 +38,17 @@ export const videoConfigSchema = z.object({
   model: model.optional(),
 });
 export type VideoConfigDto = z.infer<typeof videoConfigSchema>;
+
+/**
+ * 拉取模型清单的请求体。
+ *
+ * baseUrl / apiKey 可以传**尚未保存**的值：管理员填完地址就想先看有哪些模型，
+ * 不必先点保存。留空则由服务端用已保存的配置（密钥只从服务端取）。
+ * refresh=true 时跳过 5 分钟缓存强制重拉（对应界面上的「刷新」按钮）。
+ */
+export const modelListSchema = z.object({
+  baseUrl: baseUrl.optional(),
+  apiKey: apiKey.optional(),
+  refresh: z.boolean().optional(),
+});
+export type ModelListDto = z.infer<typeof modelListSchema>;
