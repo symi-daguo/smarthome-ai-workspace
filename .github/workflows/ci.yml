@@ -267,26 +267,47 @@ jobs:
       - name: 推送到 Release（同名资产已存在则跳过）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ -z "$RELEASE_TAG" ]; then
             echo "未设置 RELEASE_TAG 仓库变量，本次不发布"
             exit 0
           fi
-          # Release 不存在就跳过：打 tag 与写说明是发布流程的事，CI 不替它做决定
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG 不存在，跳过"
+          # 不用 gh 命令：它靠 git remote 推断仓库，在 CI 里会踩坑
+          # （实测报「Release 不存在」，而同一个 Release 本机查得到）。
+          # curl + 显式路径最稳，少一层猜。
+          api="https://api.github.com/repos/$GH_REPO"
+          auth="Authorization: Bearer $GH_TOKEN"
+          if ! curl -sf -H "$auth" -H "Accept: application/vnd.github+json" \
+               "$api/releases/tags/$RELEASE_TAG" -o /tmp/release.json; then
+            echo "查不到 Release $RELEASE_TAG，跳过。原始响应："
+            curl -s -H "$auth" -H "Accept: application/vnd.github+json" \
+              "$api/releases/tags/$RELEASE_TAG" | head -5
             exit 0
           fi
+          rid=$(jq -r '.id' /tmp/release.json)
+          existing=$(jq -r '.assets[].name' /tmp/release.json)
           for f in release-assets/*.exe release-assets/*.zip; do
             [ -e "$f" ] || continue
             name=$(basename "$f")
-            # 幂等：同名资产已存在就跳过。--clobber 会删掉旧资产重传，
-            # 而重新推一个已经发出去的资产等于换掉了客户已经下载过的文件。
-            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+            # 幂等：同名资产已存在就跳过。重新推一个已发出去的资产，
+            # 等于换掉客户已经下载过的文件。
+            if printf '%s\n' "$existing" | grep -Fxq "$name"; then
               echo "$name 已存在，跳过"
               continue
             fi
             echo "上传 $name（$(stat -c%s "$f") 字节）"
-            gh release upload "$RELEASE_TAG" "$f" --clobber
+            # uploads.github.com 是**一步到位**的端点：
+            # 直接 POST 二进制即完成，不必先建 asset 条目。
+            code=$(curl -s -o /tmp/asset.json -w '%{http_code}' -X POST \
+              -H "$auth" -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" \
+              "https://uploads.github.com/repos/$GH_REPO/releases/$rid/assets?name=$name")
+            if [ "$code" != "201" ] && [ "$code" != "200" ]; then
+              echo "上传失败 HTTP $code："
+              head -5 /tmp/asset.json
+              exit 1
+            fi
+            echo "  -> state=$(jq -r '.state' /tmp/asset.json) size=$(jq -r '.size' /tmp/asset.json)"
           done
