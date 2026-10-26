@@ -2760,6 +2760,30 @@ async function main(): Promise<void> {
     return null;
   };
 
+  /**
+   * 等轮次自己落终态。
+   *
+   * **为什么不能只等作业**：作业（GenerationJob）与轮次（ImageTurn）是
+   * **两次独立的落库** —— canvas.service 先写作业，再写轮次。
+   * `waitCanvasJob` 一看到作业终态就返回，那一刻轮次**可能还没同步**。
+   * 本地快、CI 慢，于是「作业 failed + error 非空」过了，
+   * 「轮次同步 failed 且原因一致」偶发红（2026-10-26 实测 CI 639/640，
+   * 本地连跑全绿 —— 典型的「本地全绿、CI 全红」）。
+   *
+   * 所以断言要等**两侧**都落定再比对，而不是只等一半。
+   * 顺带：这两条断言原来不带 detail，红了只看到一句「FAIL xxx」，
+   * 根本看不出是作业没过还是轮次没同步 —— 现在把实际值打出来。
+   */
+  const waitCanvasTurn = async (convId: string, turnId: string): Promise<CanvasTurnRow | null> => {
+    for (let i = 0; i < 25; i += 1) {
+      const detail = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
+      const turn = detail.body.turns.find((t) => t.id === turnId);
+      if (turn && turn.status !== 'pending') return turn;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return null;
+  };
+
   // 对话线：新建 / 缺省标题 / 空详情 / 列表
   const canvasConv = await request<{ id: string; title: string }>(base, '/api/canvas/conversations', { ...authA, method: 'POST', body: JSON.stringify({ title: '冒烟对话线' }) });
   check('画布新建对话线 201 且 title 生效', canvasConv.status === 201 && canvasConv.body.title === '冒烟对话线');
@@ -2847,13 +2871,14 @@ async function main(): Promise<void> {
   check('画布作业不存在返回 404', canvasJobMissing.status === 404);
 
   const canvasJobDone = await waitCanvasJob(canvasTurn.body.jobId);
-  const canvasDetail2 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
-  const canvasAsstDone = canvasDetail2.body.turns.find((t) => t.id === canvasTurn.body.turnId);
-  check('出图成功路径：作业 done + resultUrl 非空', canvasJobDone?.status === 'done' && Boolean(canvasJobDone?.resultUrl));
+  const canvasAsstDone = await waitCanvasTurn(convId, canvasTurn.body.turnId);
+  check('出图成功路径：作业 done + resultUrl 非空', canvasJobDone?.status === 'done' && Boolean(canvasJobDone?.resultUrl),
+    `作业=${canvasJobDone?.status ?? '(无)'} resultUrl=${canvasJobDone?.resultUrl ?? '(空)'}`);
   check(
     '出图成功路径：轮次转 ready 且结果 URL 追加为第 1 个变体',
     canvasAsstDone?.status === 'ready' && canvasAsstDone?.variants.length === 1
       && canvasAsstDone?.variants[0]?.url === canvasJobDone?.resultUrl && canvasAsstDone?.variants[0]?.label === '变体 1' && Boolean(canvasAsstDone?.variants[0]?.createdAt),
+    `轮次=${canvasAsstDone?.status ?? '(无)'} 变体数=${canvasAsstDone?.variants.length ?? '(无)'} 首变体=${canvasAsstDone?.variants[0]?.url ?? '(空)'}`,
   );
   check(
     'ComfyUI 三步（/prompt、/history、/view）全部带 Bearer 头，云端实例可用',
@@ -2863,9 +2888,9 @@ async function main(): Promise<void> {
   // 幂等：已终态作业重复触发不重复出图、不重复追加变体
   await request(base, `/api/canvas/jobs/${canvasTurn.body.jobId}/run`, { ...authA, method: 'POST' });
   const canvasJobRerun = await request<CanvasJobRow>(base, `/api/canvas/jobs/${canvasTurn.body.jobId}`, authA);
-  const canvasDetail3 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
-  const canvasAsstRerun = canvasDetail3.body.turns.find((t) => t.id === canvasTurn.body.turnId);
-  check('已终态作业重复触发幂等（状态不变、变体不重复追加）', canvasJobRerun.body.status === 'done' && canvasAsstRerun?.variants.length === 1);
+  const canvasAsstRerun = await waitCanvasTurn(convId, canvasTurn.body.turnId);
+  check('已终态作业重复触发幂等（状态不变、变体不重复追加）', canvasJobRerun.body.status === 'done' && canvasAsstRerun?.variants.length === 1,
+    `作业=${canvasJobRerun.body.status} 变体数=${canvasAsstRerun?.variants.length ?? '(无)'}`);
 
   // 变体去重：同 URL 不重复计数；新 URL 追加且已有项编号不重排
   await canvasService.appendVariant(canvasTurn.body.turnId, canvasJobDone?.resultUrl ?? '');
@@ -2895,11 +2920,11 @@ async function main(): Promise<void> {
     ...authA, method: 'POST', body: JSON.stringify({ prompt: '未配生图 Key 时的失败路径' }),
   });
   const canvasJobFail = await waitCanvasJob(canvasFailTurn.body.jobId);
-  const canvasDetail7 = await request<{ turns: CanvasTurnRow[] }>(base, `/api/canvas/conversations/${convId}`, authA);
-  const canvasAsstFail = canvasDetail7.body.turns.find((t) => t.id === canvasFailTurn.body.turnId);
+  const canvasAsstFail = await waitCanvasTurn(convId, canvasFailTurn.body.turnId);
   check(
     '出图失败路径：作业 failed + error 非空，轮次同步 failed 且原因一致',
     canvasJobFail?.status === 'failed' && Boolean(canvasJobFail?.error) && canvasAsstFail?.status === 'failed' && canvasAsstFail?.error === canvasJobFail?.error,
+    `作业=${canvasJobFail?.status ?? '(无)'} error=${canvasJobFail?.error ?? '(空)'} 轮次=${canvasAsstFail?.status ?? '(无)'} error=${canvasAsstFail?.error ?? '(空)'}`,
   );
 
   // PATCH：改标题与改轮次提示词
