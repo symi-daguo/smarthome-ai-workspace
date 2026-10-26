@@ -192,6 +192,35 @@ function submissionExists(id) {
 }
 
 /**
+ * 读一次提交历史（**只读探测，失败不打断流程**）。
+ *
+ * **为什么必须容错**（2026-10-26 实测踩到）：
+ * history 走的是 `appstoreconnect.apple.com` —— 与上传同一个端点，也走同一条代理。
+ * 代理链路抖一下就是 `NSURLErrorDomain Code=-1200`（TLS 断），
+ * 一次**与公证内容无关**的抖动会让整个脚本在这里抛异常崩掉：
+ * dmg 上传断流后，脚本在轮询历史时撞上 TLS 错误直接抛出，
+ * 前面已经 Accepted 的 app 票据、「dmg 内的 app 自带票据」这些成果全留在半路，
+ * 还得从头再跑一遍（225MB 再传一次）。
+ *
+ * 所以这里重试若干次；仍失败就返回空列表（当作「暂时查不到」）。
+ * 调用方会走「还没 Accepted」的分支 —— 那是**安全**的：
+ * 最坏是多传一轮，而不是把整个流程打断。
+ */
+function readHistoryJson(attempts = 4) {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const out = run('xcrun', notaryArgs(['history', '--keychain-profile', PROFILE, '--output-format', 'json']));
+      return JSON.parse(out);
+    } catch (e) {
+      log(`  提交历史读取失败（第 ${i + 1}/${attempts} 次）：${lastMeaningfulLine(e?.message ?? '')}`);
+      if (i < attempts - 1) spawnSync('sleep', ['4']);
+    }
+  }
+  log('  提交历史连续读取失败，本轮按「查不到」处理（不打断流程）');
+  return { history: [] };
+}
+
+/**
  * 从提交历史里找某个文件名的**全部**提交（按时间倒序）。
  *
  * 排序显式做，不依赖 Apple 返回的顺序：
@@ -200,8 +229,7 @@ function submissionExists(id) {
  * 哪天 Apple 改了排序就会取错 —— 取错的后果是白等一小时或白传 245MB。
  */
 function submissionsFor(fileName) {
-  const out = run('xcrun', notaryArgs(['history', '--keychain-profile', PROFILE, '--output-format', 'json']));
-  const parsed = JSON.parse(out);
+  const parsed = readHistoryJson();
   return (parsed.history ?? [])
     .filter((h) => h.name === fileName)
     .sort((a, b) => String(b.createdDate ?? '').localeCompare(String(a.createdDate ?? '')));
