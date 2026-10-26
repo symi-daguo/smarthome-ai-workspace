@@ -493,6 +493,36 @@ source ~/.symi/notary.env && npm run notarize   # 公证 + 装订
     文件内容上（`stapler validate`），不能落在「跑过一次没报错」上；
     而**任何要写 bundle 的操作，动之前先确认 bundle 没被冻结**。
 
+26. **闸门会自我印证：校验清单的那道闸门，抽出来的路由本身就是错的。**
+    `apps/api/test/smoke.ts` 里有一道「能力清单与真实路由逐条比对」的闸门。
+    它的路由抽取器按文件扫 `@Controller`，**一个文件只取第一个**。
+    而 `plans.controller.ts` 里放了 **4 个** `@Controller` —— 后 3 个压根没进抽取结果。
+    于是「真实路径 `/api/public/plans/:token`」被抽成了 `/api/plans/:token`，
+    清单照抄这个错值，闸门比对「一致」→ **放行**。
+    4 条幽灵路径（清单与实现不符）能长期存在，根因就在这里。
+    - 修法：抽取器改为按 `@Controller` **逐个分块扫描**（`matchAll`），
+      并纳入 `*.module.ts` 里内联的 controller。
+    - **只改清单不改抽取器，门禁仍然是绿的假象** —— 这两件事必须同批做。
+      改完清单跑一遍闸门看到「全绿」就以为修好了，而那道绿灯来自同一个 bug。
+    - 通用教训：任何「用 X 校验 Y」的闸门，**X 的抽取逻辑本身就是被校验对象的一部分**。
+      改了 Y 必须回头看 X 的抽取口径，否则闸门只是在证明「Y 和 X 一致」，
+      而 X 本身可能是错的。
+    - 同源教训：见第 24 条 —— 「只判断 `res.ok`、从不解析响应体」的调用
+      是连通性探测，不是「拿到清单」；两者不能混为一谈。
+
+27. **electron-builder 用 `got` 发请求，不读 macOS 系统代理。**
+    它只认 `ELECTRON_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` **环境变量**，
+    读不到「系统设置 → 网络 → 代理」里的配置。
+    - 表现：`downloaded label=electron progress=100%`（electron 本身下载完了），
+      紧接着 build 阶段报 `AggregateError / internalConnectMultiple`。
+      看起来像「网络不通」，实际是**代理没传进子进程**。
+    - 解法：打包命令必须自带 `ELECTRON_PROXY`/`HTTPS_PROXY`/`HTTP_PROXY`。
+    - 判别：electron 都下完了，说明链路通、不是完全没网 —— 优先查代理传参，
+      别急着怀疑网络或重试。
+    - 同源教训：见第 15 条 —— 「走不走代理」在这台机器上是**每个工具各一套规则**
+      （curl 读系统代理、`got` 只读环境变量、`stapler`/`notarytool` 各有端点约束），
+      换工具就要重新核对，不能照抄上一次的结论。
+
 ### CI（GitHub Actions）
 
 `.github/workflows/ci.yml`，三个 job：
