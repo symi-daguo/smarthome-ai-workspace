@@ -28,10 +28,17 @@ const report = (file, msg) => {
   console.log(`FAIL ${file}: ${msg}`);
 };
 
-/** 取 git 已跟踪的 md 文件（与 CI / 干净克隆看到的内容一致） */
+/**
+ * 要扫的 md 文件清单。
+ *
+ * `--cached`（已跟踪）+ `--others --exclude-standard`（未跟踪且未被 .gitignore 排除）
+ * = 「将要进入交付物的 md」。只扫 `--cached` 的话，**本次新写的 md 在提交前逃过检查**，
+ * 于是本地全绿、CI 全红 —— 提交前的检查结论必须等于 CI 的结论。
+ * 被 .gitignore 排除的（本地材料）仍然不扫。
+ */
 function trackedMarkdowns() {
   try {
-    const out = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files', '*.md'], {
+    const out = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files', '--cached', '--others', '--exclude-standard', '*.md'], {
       cwd: ROOT,
       encoding: 'utf8',
     });
