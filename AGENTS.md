@@ -9,8 +9,17 @@
 ## 提交前检查
 
 ```bash
-pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs && pnpm check:brand
+pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs && pnpm check:brand \
+  && pnpm check:templates && pnpm check:pptx
 ```
+
+**这道清单必须与 CI 的 gate job 完全一致** —— 少一道就会变成
+「本地全绿、CI 全红」，而 CI 是唯一能证明仓库真的能构建的地方。
+CI 的 gate job 跑的是：typecheck → check:docs → check:brand →
+**check:templates && check:pptx** → build → smoke。
+2026-10-26 本地清单少了 `check:templates` / `check:pptx` 两道，
+删掉 `/vip` 路由后那条「关键入口都在生效代码里」的断言失效，
+本地没报错、CI 直接把 job 打红 —— 提交前检查漏一道，等于没检查。
 
 **不要把这些命令接 `| tail -N`**：管道会缓冲输出并吃掉 pnpm 的退出码，
 上次就是这样把「编译失败」读成了「通过」。要收尾输出就重定向到文件再看。
@@ -36,13 +45,19 @@ pnpm typecheck && pnpm build && pnpm smoke && pnpm check:docs && pnpm check:bran
 白名单只放公开服务（模型厂商 API / 包镜像 / 官方文档），第三方商业平台域名一律不进。
 背景与完整证据见 [COMPLIANCE.md](./COMPLIANCE.md)。
 
-**前端另外两条**（改 PPTX 相关代码时必跑）：
+**前端另外两条**（提交前必跑；改 PPTX 相关代码时再加跑第三条）：
 
 ```bash
 pnpm check:templates        # 交付模板纯逻辑回归（零新增依赖，Node 24 原生类型剥离）
 pnpm check:pptx            # 阴影参数的 XML 层检查
 pnpm --filter @app/web check:pptx-render   # 前两页的**本机真实渲染**自证
 ```
+
+`check:templates` 的触发范围**不止 PPTX**：它还断言「关键入口都在生效代码里」
+（扫 `apps/web/src` 全目录）。所以**删改任何关键入口都要跑它** ——
+删了入口却没同步删掉 `apps/web/scripts/check-delivery-templates.mjs` 里
+`REQUIRED_ENTRIES` 的对应行，那条断言会一直要求已废弃的功能存在，
+CI 直接把 job 打红（2026-10-26 删 `/vip` 就踩到了）。
 
 `check:pptx-render` 用**生产代码**（`exportPlanPptx`）生成前两页，
 再用本机真实渲染器（LibreOffice → PDF → PNG）出图，
