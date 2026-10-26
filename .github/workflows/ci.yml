@@ -236,3 +236,57 @@ jobs:
             apps/desktop/release/*.zip
           if-no-files-found: error
           retention-days: 14
+
+  # 把 Windows 产物直接推到 Release。
+  #
+  # 为什么不让本机下载再上传：600MB 走本机代理实测只有 60~250KB/s，
+  # 单连接要 1 小时、并发分片也快不了多少（代理链路本身是瓶颈，
+  # 多次实测中途断流要重下）。CI runner 在 GitHub 内网，直传是秒级。
+  # 同样的道理，macOS 产物留在本机上传 —— 签名与公证只能用本机证书做。
+  release-windows:
+    name: 上传 Windows 产物到 Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: desktop-windows
+    # 往 Release 推资产要写权限（仓库默认已设为 write，这里显式声明一次，
+    # 免得以后有人把仓库设置改回只读时 job 静默失败）
+    permissions:
+      contents: write
+    # 打包失败就别发空资产给客户
+    if: needs.desktop-windows.result == 'success'
+    env:
+      # 版本号放在仓库变量里，不写死在 workflow 里 —— 发新版只改变量
+      RELEASE_TAG: ${{ vars.RELEASE_TAG }}
+    steps:
+      - name: 取回 Windows 安装包
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows
+          path: release-assets
+
+      - name: 推送到 Release（同名资产已存在则跳过）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "未设置 RELEASE_TAG 仓库变量，本次不发布"
+            exit 0
+          fi
+          # Release 不存在就跳过：打 tag 与写说明是发布流程的事，CI 不替它做决定
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG 不存在，跳过"
+            exit 0
+          fi
+          for f in release-assets/*.exe release-assets/*.zip; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            # 幂等：同名资产已存在就跳过。--clobber 会删掉旧资产重传，
+            # 而重新推一个已经发出去的资产等于换掉了客户已经下载过的文件。
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              echo "$name 已存在，跳过"
+              continue
+            fi
+            echo "上传 $name（$(stat -c%s "$f") 字节）"
+            gh release upload "$RELEASE_TAG" "$f" --clobber
+          done
