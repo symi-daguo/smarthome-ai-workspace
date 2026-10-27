@@ -11,7 +11,7 @@ import { createSceneSchema, updateSceneSchema, diagnoseSchema, type CreateSceneD
 
 /**
  * 智能灯光场景：灯具编排 + 时间轴的 CRUD，出片后回填 videoAssetId。
- * 权限 content:generate（所有登录成员的基础能力），数据按租户隔离。
+ * 权限按读写切分：看 content:read，建/改/删 content:generate，数据按租户隔离。
  */
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('lighting')
@@ -44,7 +44,8 @@ export class LightingController {
     return this.lighting.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('content:read')
+  /** 建场景：写操作（落 LightingScene 行），要 content:generate */
+  @RequirePermissions('content:generate')
   @Post()
   create(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -59,7 +60,8 @@ export class LightingController {
     return this.lighting.detail(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('content:read')
+  /** 改场景：写操作，要 content:generate（同模块 DELETE 的口径） */
+  @RequirePermissions('content:generate')
   @Patch(':id')
   update(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

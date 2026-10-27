@@ -13,8 +13,11 @@ import { TeamService } from './team.service.js';
 /**
  * 团队成员与角色模板（0.1.54）
  *
- * 全部走 `tenant:member:manage`（租户管理员自带），与「发 API Key」同一档权限 ——
+ * 基线门槛是 `tenant:member:manage`（租户管理员自带），与「发 API Key」同一档 ——
  * 能给人开账号的人，也就能给人开机器账号，这两件事的风险级别本来就一样。
+ *
+ * 涉及**角色分配**的端点（建成员指定角色、改成员角色、建/改/删自定义角色）
+ * 额外要 `tenant:role:assign`：守卫是「全都要」的关系，所以两项并列写。
  */
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @RequirePermissions('tenant:member:manage')
@@ -83,6 +86,16 @@ export class TeamController {
     return this.team.members(user.activeTenantId as string);
   }
 
+  /**
+   * 新建成员。
+   *
+   * 为什么要额外要 tenant:role:assign：建成员时可以指定角色模板，
+   * 这本身就是「分配角色」动作 —— 与下面 PATCH /members/:userId 是同一件事。
+   * 以前这里只有类级的 tenant:member:manage，于是持成员管理权的角色
+   * 能直接建出一个 super_admin 成员（提权），而改角色那条却要 tenant:role:assign，
+   * 同一件事两套门槛。现在两条对齐。
+   */
+  @RequirePermissions('tenant:member:manage', 'tenant:role:assign')
   @Post('members')
   createMember(
     @CurrentUser() user: AuthProfile,

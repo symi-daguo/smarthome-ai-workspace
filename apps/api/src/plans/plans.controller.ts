@@ -103,6 +103,8 @@ export class PlansController {
       serviceContact: dto.serviceContact ?? '',
       budgetItems: dto.budgetItems ?? '',
       budgetSource: dto.budgetSource ?? '',
+      // 预算分配建议（万元，键为生态中文名）：门店在建议条上确认的金额
+      budgetSplit: dto.budgetSplit ?? {},
       style: dto.style,
       edition: dto.edition,
       floorplanTemplate: dto.floorplanTemplate,

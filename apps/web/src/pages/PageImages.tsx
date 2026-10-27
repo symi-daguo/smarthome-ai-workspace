@@ -102,6 +102,12 @@ export function PageImages(): ReactNode {
         <Text type="secondary">
           给 PPT 方案的每个页型配自己的实景图。没配置的页型仍用系统默认图 —— 导出行为与以前完全一致。
         </Text>
+        <div style={{ marginTop: 6 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            列表里没有「户型与设备点位」：那一页的主体图就是客户自己的户型图，门店配的图没有落位
+            （勾了也不会显示出来）。这一页要展示的实景，由门店上传的户型图与素材本身承担。
+          </Text>
+        </div>
       </div>
 
       {loading ? (

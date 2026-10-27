@@ -31,7 +31,10 @@ export function withFloorplanPage(
   const ok = hasFloorplan && !pages.some((p) => p.type === 'floorplan');
   if (!ok) return { pages, syntheticAt: -1, virtualAt: [] };
   const at = pages.findIndex((p) => p.type === 'layout');
-  const idx = at < 0 ? 3 : at + 1;
+  // 没有 layout 页时按实际插入点算，不要写死再让 splice 钳位：
+  // 写死 3 在页数不足 3 时会被 splice 悄悄挪到末尾，而调用方拿到的
+  // syntheticAt 却是 3 —— 索引与实际位置对不上。
+  const idx = at < 0 ? Math.min(3, pages.length) : at + 1;
   const next = [...pages];
   next.splice(idx, 0, { type: 'floorplan', ...floorplanPageCopy(tpl), bullets: [] });
   return { pages: next, syntheticAt: idx, virtualAt: [idx] };
@@ -190,7 +193,10 @@ export function withQuotePages(
   const need = quotePageCount(summary?.items.length ?? 0);
   if (!need) return { pages, insertedAt: [] };
   // 已有报价页够数就不再插 —— 否则把已算好的页序再喂回来会多出报价页。
-  const have = pages.reduce((n, p) => (n + p.type === 'quote' ? 1 : n), 0);
+  // 计数写法与 withPointListPages 保持一致：`n + (p.type === 'quote' ? 1 : n)`。
+  // 写成 `n + p.type === 'quote'` 是数字加字符串，恒不等于 'quote'，
+  // 计数永远为 0 —— 这条护栏等于没有，页数就会多插一张。
+  const have = pages.reduce((n, p) => (n + (p.type === 'quote' ? 1 : n)), 0);
   if (have >= need) return { pages, insertedAt: [] };
   // 插在预算页之前；没有预算页（少见）就放末尾
   const budgetAt = pages.findIndex((p) => p.type === 'budget');
@@ -272,8 +278,23 @@ export function deliverPages(plan: DeliveryPlanLike): { pages: PlanPage[]; virtu
   if (fpIndex < 0) return { pages: fp.pages, virtualAt: [] };
   const list = withPointListPages(fp.pages, fpIndex, deliverPointCount(plan));
   const quote = withQuotePages(list.pages, plan.quoteSummary);
+  const finalPages = quote.pages;
   return {
-    pages: quote.pages,
-    virtualAt: [...fp.virtualAt, ...list.insertedAt, ...quote.insertedAt].sort((a, b) => a - b),
+    pages: finalPages,
+    /**
+     * 虚拟页下标按**最终页序**重算，不能把三段快照的下标拼起来。
+     *
+     * 为什么拼不起来：三段快照是「插户型页之后」「插清单续页之后」「插报价页之后」
+     * 三个不同数组的下标。报价页是插在预算页**之前**的，插完之后户型页与续页
+     * 的下标全部后移，但它们记的还是插入当时的旧值 —— 快照里混进幻值，
+     * 同时漏掉真实位置。后果是编辑预览里点「逐页审稿」的卡片会 PATCH 到
+     * 别的真实页（实测：2 页方案点「预算规划」改的是封面）。
+     *
+     * 重算是安全的，因为**真实页类型永远不含 floorplan/quote**
+     * （后端 PlanPage['type'] 只有 8 种），所以页型就是精确判据。
+     */
+    virtualAt: finalPages
+      .map((p, i) => (p.type === 'floorplan' || p.type === 'quote' ? i : -1))
+      .filter((i) => i >= 0),
   };
 }

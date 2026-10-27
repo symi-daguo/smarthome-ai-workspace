@@ -639,6 +639,9 @@ export function Dashboard(): ReactNode {
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
                   gap: 14,
+                  // 两组卡片之间必须有外间距：网格内部的 gap 只管同一网格内的卡片，
+                  // 跨网格的空白得靠 margin 给，否则两排卡片会边贴边看起来重叠。
+                  marginBottom: 24,
                 }}
               >
                 {QUICK_CARDS.map((card) => (

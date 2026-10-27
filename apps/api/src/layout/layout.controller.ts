@@ -70,8 +70,8 @@ export class LayoutController {
     return this.layout.categories(user.activeTenantId);
   }
 
-  /** 新增自定义品类（同名幂等） */
-  @RequirePermissions('quote:read')
+  /** 新增自定义品类（同名幂等）：写操作，要 quote:write（同模块 DELETE 的口径） */
+  @RequirePermissions('quote:write')
   @Post('categories/mine')
   createCategory(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },
@@ -251,7 +251,8 @@ export class LayoutController {
     return this.floorplanDetect.detect(user.activeTenantId as string, user.id, dto.floorplanAssetId);
   }
 
-  @RequirePermissions('content:read')
+  /** 改布局（点位/标题）：写操作，要 content:generate（同模块 POST/DELETE 的口径） */
+  @RequirePermissions('content:generate')
   @Patch('layouts/:id')
   update(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

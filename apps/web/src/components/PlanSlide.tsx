@@ -6,6 +6,7 @@ import { compositePoints, COMPOSITE_WIDTH, type PointLike } from '../lib/pointOv
 import { customerText } from '../lib/planSanitize';
 import { floorplanTemplate, markerTemplate, floorplanImages, floorplanPageCopy, COMPARE_LEFT_LABEL } from '../data/planTemplates';
 import { POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPointCount, type QuoteSummary } from '../lib/planPages';
+import { parseBudget, parseStages, fmt } from '../lib/planText';
 
 interface SlidePlan {
   store: string;
@@ -30,12 +31,6 @@ interface SlidePlan {
  */
 const containerStyle: CSSProperties = { containerType: 'inline-size' };
 
-interface BudgetItem {
-  name: string;
-  min: number;
-  max: number;
-}
-
 /**
  * 各页型实际渲染的要点条数（与下面各 Slide 组件里的 slice 上限一一对应）。
  *
@@ -57,39 +52,11 @@ export const PAGE_BULLET_LIMIT: Record<PlanPage['type'], number> = {
   delivery: 5,
 };
 
-/** 解析预算页要点"分项名：下限-上限"为图表数据；无法解析的退回普通要点 */
-function parseBudget(bullets: string[]): BudgetItem[] | null {
-  const items: BudgetItem[] = [];
-  for (const b of bullets) {
-    const m = b.match(/^(.+?)\s*[：:]\s*([\d,]+)\s*[-–~]\s*([\d,]+)/);
-    if (!m) return null;
-    const min = Number(m[2].replace(/,/g, ''));
-    const max = Number(m[3].replace(/,/g, ''));
-    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= 0) return null;
-    items.push({ name: m[1].trim(), min, max });
-  }
-  return items.length >= 2 ? items : null;
-}
-
-/** 解析交付页要点为流程步骤：去前导编号，首段为名称，其余（含子标题）归入说明 */
-function parseStages(bullets: string[]): { name: string; desc: string }[] | null {
-  const stages = bullets.map((b) => {
-    const cleaned = b.replace(/^\s*0?\d{1,2}\s*[.、::｜|]?\s*/, '');
-    const idx = cleaned.search(/[｜|：:]/);
-    if (idx < 0) return { name: cleaned.trim(), desc: '' };
-    return { name: cleaned.slice(0, idx).trim(), desc: cleaned.slice(idx + 1).replace(/[｜|]/g, ' ').trim() };
-  });
-  const ok = stages.filter((s) => s.name && s.desc);
-  return ok.length >= 3 ? ok.slice(0, 6) : null;
-}
-
-function fmt(n: number): string {
-  return n >= 10000 ? `${(n / 10000).toFixed(n % 10000 === 0 ? 0 : 1)}万` : `${n}`;
-}
-
 /** 页型→配图（门店配了页型图就用门店的，没配则用写死的兜底图/场景图） */
 function pageImage(page: PlanPage): string {
   // 与 PPTX 导出共用 resolvePageImage 一处口径 —— 预览看到什么，导出的就是什么
+  // floorplan 不在 PAGE_IMAGE 里（户型页主体图就是客户自己的户型图），
+  // resolvePageImage 对它返回空串 —— 那是正常情况，不是异常。
   return resolvePageImage(page);
 }
 
@@ -178,6 +145,74 @@ export function PlanSlide({ page: raw, index, plan, t, listNo = 0, quoteNo = 0 }
 
 /* ---------- primitives ---------- */
 
+/**
+ * 配图：**真正的 `<img>` 元素**，不是 CSS 背景图。
+ *
+ * 为什么不用背景图：背景图不在 `document.images` 里 —— 打印视图的
+ * 「等图加载完再打印」拿到的是空数组，`Promise.all([])` 立刻 resolve，
+ * 于是网络慢或图大的方案导出的 PDF 里配图位置是空白（代码注释自己写了
+ * 「提前 print 会打出半张空页」，但那段逻辑恰好什么都没等）。
+ * 改成 `<img>` 后 `document.images` 自然收得到，`onload` 也会触发。
+ *
+ * 视觉与原来的 background 写法一一对应：
+ * - `background: url(x) center/cover` → `object-fit: cover` + `object-position: center`
+ * - `background: url(x) <pos>/cover`  → `object-fit: cover` + `object-position: <pos>`
+ * - `background-size: auto 170%`     → `zoom`（图高 170%、宽按比例、右下锚定）
+ */
+function SlideImg({ src, fit = 'cover', position = 'center', filter, zoom }: { src: string; fit?: 'cover' | 'contain'; position?: string; filter?: string; zoom?: string }): ReactNode {
+  // 图没取到时不画（不是错误：floorplan 页没有配图落位）
+  if (!src) return null;
+  if (zoom) {
+    // 原来的 background-size: auto 170%：图比容器高 170%、右下角锚定。
+    // 背景图不画到盒子外，所以这里用一个 overflow:hidden 的壳把它裁住。
+    return (
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+        <img src={src} alt="" style={{ position: 'absolute', right: 0, bottom: 0, width: 'auto', height: zoom, display: 'block', filter }} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit, objectPosition: position, display: 'block', filter }}
+    />
+  );
+}
+
+/**
+ * 页眉区横幅（预算页 / 报价页）。
+ *
+ * 几何与 PPTX 侧对齐（planPptx.ts 的 `BANNER_Y=0.5` / `BANNER_H=1.0` / `BANNER_W=12.013` 英寸）。
+ *
+ * **cqw 的基准分两种，用错一处版式就会随窗口宽度漂**：
+ *   - Frame **内部**元素的 cqw 相对 Frame 的版心宽（= 幻灯片宽的 90%）→ 1cqw = 0.12 英寸；
+ *   - Frame **自己**的 padding 不能用 cqw（容器不能引用自己，会退回视口宽），
+ *     所以幻灯片的外边距一律用**百分比**（相对幻灯片宽）。
+ *
+ * 取值（浏览器实测：起点 0.50in / 高 1.00in / 宽 12.00in，与 PPTX 一致）：
+ *   Frame padding-top 3.75% → 0.50 英寸（PPTX BANNER_Y = 0.5）
+ *   横幅高          8.33cqw → 1.00 英寸（PPTX BANNER_H = 1.0）
+ *   横幅下间距      1.00cqw → 0.12 英寸（PPTX CONTENT_TOP − BANNER_Y − BANNER_H = 0.12）
+ *   横幅宽          100%    → 12.00 英寸（PPTX BANNER_W = 12.013，版心宽一致）
+ *
+ * 图没取到时**只留版位不画图**：版式不随「图取到了没有」变化，
+ * 同一份方案预览两次与导出两次必须长得一样。
+ */
+function Banner({ src, t, label }: { src: string; t: PlanTheme; label?: string }): ReactNode {
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '8.33cqw', flex: 'none', marginBottom: '1cqw', borderRadius: '1.2cqw', overflow: 'hidden', boxShadow: CARD_SHADOW, background: t.surface }}>
+      <SlideImg src={src} fit="cover" position="center" />
+      {src && label ? (
+        <div style={{ position: 'absolute', right: 0, bottom: 0, padding: '0.5cqw 1.2cqw', background: 'linear-gradient(transparent, rgba(15,10,5,.62))' }}>
+          <span style={{ fontSize: 'clamp(5px,1.1cqw,9.5px)', fontWeight: 800, color: '#fff', letterSpacing: '0.05em' }}>{label}</span>
+        </div>
+      ) : null}
+      <div style={{ position: 'absolute', inset: 0, border: `1px solid ${t.accent}33`, borderRadius: '1.2cqw' }} />
+    </div>
+  );
+}
+
 function Frame({ t, children, style }: { t: PlanTheme; children: ReactNode; style?: CSSProperties }): ReactNode {
   return (
     <div style={{ ...containerStyle, width: '100%', aspectRatio: '16 / 9', background: t.bg, borderRadius: 10, overflow: 'hidden', position: 'relative', ...style }}>
@@ -235,7 +270,7 @@ function PointCard({ n, text, t, strong = true }: { n: number; text: string; t: 
 function ImagePanel({ src, t, caption, style, label, overlay, fit }: { src: string; t: PlanTheme; caption?: string; style?: CSSProperties; label?: string; overlay?: ReactNode; fit?: 'cover' | 'contain' }): ReactNode {
   return (
     <div style={{ position: 'relative', borderRadius: '1.6cqw', overflow: 'hidden', boxShadow: CARD_SHADOW, background: fit === 'contain' ? '#fff' : undefined, ...style }}>
-      <div style={{ position: 'absolute', inset: 0, background: `url(${src}) center/${fit === 'contain' ? 'contain' : 'cover'} no-repeat` }} />
+      <SlideImg src={src} fit={fit === 'contain' ? 'contain' : 'cover'} position="center" />
       {overlay}
       {label ? (
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '2.2cqw 2cqw 1.4cqw', background: 'linear-gradient(transparent, rgba(15,10,5,.72))' }}>
@@ -279,7 +314,7 @@ function CoverSlide({ page, plan, t }: { page: PlanPage; plan: SlidePlan; t: Pla
   return (
     <Frame t={t}>
       <div style={{ position: 'absolute', right: 0, top: 0, width: '44%', height: '100%' }}>
-        <div style={{ position: 'absolute', inset: 0, background: `url(${pageImage(page)}) center/cover` }} />
+        <SlideImg src={pageImage(page)} fit="cover" position="center" />
         <div style={{ position: 'absolute', inset: 0, background: t.dark ? 'linear-gradient(90deg, rgba(16,12,8,.55), transparent 45%)' : 'linear-gradient(90deg, rgba(255,255,255,.9), rgba(255,255,255,.25) 30%, transparent 60%)' }} />
       </div>
       <div style={{ position: 'absolute', left: 0, top: 0, width: '60%', height: '100%', padding: '7% 0 6% 6%', display: 'flex', flexDirection: 'column' }}>
@@ -378,7 +413,7 @@ function NeedsSlide({ page, index, plan, t }: { page: PlanPage; index: number; p
   return (
     <Frame t={t}>
       <div style={{ position: 'relative', height: '36%' }}>
-        <div style={{ position: 'absolute', inset: 0, background: `url(${pageImage(page)}) ${imgPosition(pageImage(page))}/cover`, filter: imgFilter(pageImage(page)) }} />
+        <SlideImg src={pageImage(page)} fit="cover" position={imgPosition(pageImage(page))} filter={imgFilter(pageImage(page))} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(15,10,5,.1), rgba(15,10,5,.5))' }} />
         <div style={{ position: 'absolute', left: '5%', bottom: '12%', right: '5%' }}>
           <div style={{ fontSize: 'clamp(6px,1.25cqw,11px)', fontWeight: 700, color: '#ffffffb0', letterSpacing: '0.15em' }}>{page.subtitle || PAGE_TYPE_LABEL[page.type]}</div>
@@ -434,10 +469,17 @@ function EcosystemSlide({ page, index, plan, t }: { page: PlanPage; index: numbe
 
 /** 场景拆解：左满高沉浸图+场景标签，右要点卡列 */
 function SceneSlide({ page, index, plan, t }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme }): ReactNode {
+  const src = pageImage(page);
+  /**
+   * c4 是夜间极暗图，竖幅面板里按原来的 `background-size: auto 170%` 放大取右下灯光区。
+   * 换成 `<img>` 后用 zoom 复刻（右下锚定 + 高度 170%），背景图写法画不出这个裁切。
+   */
+  const size = imgSize(src, true);
+  const zoom = size === 'cover' ? undefined : size.replace('auto ', '');
   return (
     <Frame t={t}>
       <div style={{ position: 'absolute', left: 0, top: 0, width: '36%', height: '100%' }}>
-        <div style={{ position: 'absolute', inset: 0, background: `url(${pageImage(page)}) ${imgPosition(pageImage(page))}/${imgSize(pageImage(page), true)}`, filter: imgFilter(pageImage(page)) }} />
+        <SlideImg src={src} fit="cover" position={imgPosition(src)} filter={imgFilter(src)} zoom={zoom} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, rgba(15,10,5,.15), rgba(15,10,5,.62))' }} />
         <div style={{ position: 'absolute', left: '11%', bottom: '9%', right: '8%' }}>
           <div style={{ display: 'inline-block', background: t.accent, color: '#fff', borderRadius: 999, padding: '0.7cqw 2cqw', fontSize: 'clamp(5px,1.15cqw,10px)', fontWeight: 700, letterSpacing: '0.1em', boxShadow: `0 3px 8px ${t.accent}66` }}>
@@ -475,45 +517,72 @@ function QuoteSlide({ page, index, plan, t, quoteNo }: { page: PlanPage; index: 
   const cols = ['5%', '44%', '12%', '9%', '15%', '15%'];
   const heads = ['序号', '设备名称', '品类', '数量', '参考单价', '小计'];
   return (
-    <Frame t={t} style={{ padding: '4.5% 5% 5%' }}>
+    <Frame t={t} style={{ padding: '3.75% 5% 2.25%' }}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* 页眉区横幅：与 PPTX 侧 bannerPanel 同一位置语义（0.5→1.5 英寸）。图取不到时只留版位，版式不变。 */}
+        <Banner src={pageImage(page)} t={t} label="门店实景" />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ width: '62%' }}>
             <Folio page={page} index={index} t={t} />
             <Claim page={page} t={t} />
-            <div style={{ fontSize: 'clamp(6px,1.2cqw,10.5px)', color: t.sub, lineHeight: 1.6, marginTop: '1cqw' }}>{page.body}</div>
+            <div style={{ fontSize: 'clamp(6px,1.2cqw,10.5px)', color: t.sub, lineHeight: 1.6, marginTop: '1cqw', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{page.body}</div>
           </div>
-          <div style={{ width: '30%', background: t.surface, borderRadius: '1.4cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a`, padding: '1.6cqw 2cqw' }}>
-            <div style={{ fontSize: 'clamp(6px,1.15cqw,10px)', fontWeight: 800, color: t.sub }}>整包合计（含安装调试）</div>
-            <div style={{ fontSize: 'clamp(16px,3.4cqw,30px)', fontWeight: 800, color: t.accent, lineHeight: 1.2, marginTop: '0.5cqw' }}>
+          <div style={{ width: '30%', height: '12.5cqw', background: t.surface, borderRadius: '1.4cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a`, padding: '1.6cqw 2cqw', overflow: 'hidden' }}>
+            {/*
+             * 合计卡按 PPTX 的比例做，**不设 px 下限**（PPTX 卡片高 1.5 英寸）。
+             * 之前用 clamp(16px,…) 时，缩略图里这张卡被撑到 1.98 英寸 ——
+             * 挤掉的是下方报价表的空间，合计行会压到「说明」那行上。
+             * 比例化之后卡片占位与 PPTX 一致，表格也放得下。
+             */}
+            <div style={{ fontSize: '1.1cqw', lineHeight: 1.2, fontWeight: 800, color: t.sub }}>整包合计（含安装调试）</div>
+            <div style={{ fontSize: '3.13cqw', lineHeight: 1.2, fontWeight: 800, color: t.accent, marginTop: '0.5cqw' }}>
               {sum ? `¥${sum.grandTotal.toLocaleString('zh-CN')}` : '—'}
             </div>
-            <div style={{ fontSize: 'clamp(5px,1.05cqw,9px)', color: t.sub, marginTop: '0.4cqw' }}>
+            <div style={{ fontSize: '0.98cqw', lineHeight: 1.3, color: t.sub, marginTop: '0.4cqw' }}>
               {sum ? `设备 ¥${sum.total.toLocaleString('zh-CN')} · 安装调试 ${sum.installRate}% ¥${sum.installFee.toLocaleString('zh-CN')}` : ''}
             </div>
-            <div style={{ fontSize: 'clamp(5px,1.05cqw,9px)', color: t.sub, marginTop: '0.2cqw' }}>
+            <div style={{ fontSize: '0.98cqw', lineHeight: 1.3, color: t.sub, marginTop: '0.2cqw' }}>
               {sum ? `共 ${sum.kindCount} 种设备 · ${sum.deviceCount} 台` : ''}
             </div>
           </div>
         </div>
 
         <div style={{ flex: 1, marginTop: '1.6cqw', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ display: 'flex', background: t.accent, color: '#FFFFFF', borderRadius: '0.6cqw 0.6cqw 0 0', padding: '0.7cqw 0' }}>
+          {/*
+           * 表头与数据行的高度、字号**都用比例单位（cqw），不设 px 下限**。
+           *
+           * 为什么不能留 px 下限：行高有下限、字号没有下限时，
+           * 行数一多 flex 就会把行**压扁**（实测缩略图里 12 行被压到 1.3px，
+           * 文字互相叠在一起，看着像坏了）。
+           * 行高与字号同比例缩放，才与 PPTX 一致（PPTX rowH 0.17in / 字号 9.5pt）。
+           *
+           * 取值换算（内容宽 = 幻灯片宽的 90%）：
+           *   行高 1.42cqw → 0.17 英寸（PPTX rowH）
+           *   表头 2.5cqw → 0.30 英寸（PPTX headH）
+           *   字号 1.1cqw  → 9.5pt  （PPTX 数据行字号）
+           * 打印视图（幻灯片 766px 宽）下行高约 9.8px，与改动前的 9.6px 几乎一样。
+           */}
+          <div style={{ display: 'flex', flex: 'none', alignItems: 'center', height: '2.5cqw', background: t.accent, color: '#FFFFFF', borderRadius: '0.6cqw 0.6cqw 0 0' }}>
             {heads.map((h, i) => (
-              <div key={h} style={{ width: cols[i], fontSize: 'clamp(6px,1.15cqw,10px)', fontWeight: 800, textAlign: i >= 3 ? 'right' : 'left', paddingRight: i >= 3 ? '1cqw' : 0, paddingLeft: i < 3 ? '0.9cqw' : 0 }}>{h}</div>
+              <div key={h} style={{ width: cols[i], fontSize: '1.1cqw', lineHeight: 1, fontWeight: 800, textAlign: i >= 3 ? 'right' : 'left', paddingRight: i >= 3 ? '1cqw' : 0, paddingLeft: i < 3 ? '0.9cqw' : 0 }}>{h}</div>
             ))}
           </div>
+          {/*
+           * 行高随行数自适应：报价页最多 14 行（QUOTE_ROWS_PER_PAGE），
+           * 页眉加横幅后仍不能溢出画布。
+           * **绝不裁掉行**（报价单少列几项，客户会以为那几项不用买）。
+           */}
           {rows.map((it, ri) => (
-            <div key={it.name} style={{ display: 'flex', alignItems: 'center', padding: '0.42cqw 0', background: ri % 2 ? `${t.surface}` : 'transparent', borderBottom: `1px solid ${t.accent}18` }}>
-              <div style={{ width: cols[0], fontSize: 'clamp(6px,1.1cqw,9.5px)', fontWeight: 800, color: t.accent, paddingLeft: '0.9cqw' }}>{quoteNo * QUOTE_ROWS_PER_PAGE + ri + 1}</div>
-              <div style={{ width: cols[1], fontSize: 'clamp(6px,1.15cqw,10px)', fontWeight: 700, color: t.text, paddingLeft: '0.9cqw', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
-              <div style={{ width: cols[2], fontSize: 'clamp(6px,1.05cqw,9px)', color: t.sub, paddingLeft: '0.9cqw' }}>{catMeta(it.category).label}</div>
-              <div style={{ width: cols[3], fontSize: 'clamp(6px,1.1cqw,9.5px)', color: t.text, textAlign: 'right', paddingRight: '1cqw' }}>{it.qty}</div>
-              <div style={{ width: cols[4], fontSize: 'clamp(6px,1.1cqw,9.5px)', color: t.sub, textAlign: 'right', paddingRight: '1cqw' }}>¥{it.unitPrice.toLocaleString('zh-CN')}</div>
-              <div style={{ width: cols[5], fontSize: 'clamp(6px,1.1cqw,9.5px)', fontWeight: 700, color: t.text, textAlign: 'right', paddingRight: '1cqw' }}>¥{it.subtotal.toLocaleString('zh-CN')}</div>
+            <div key={it.name} style={{ display: 'flex', alignItems: 'center', flex: 'none', height: '1.42cqw', overflow: 'hidden', background: ri % 2 ? `${t.surface}` : 'transparent', borderBottom: `1px solid ${t.accent}18` }}>
+              <div style={{ width: cols[0], fontSize: '1.1cqw', lineHeight: 1, fontWeight: 800, color: t.accent, paddingLeft: '0.9cqw' }}>{quoteNo * QUOTE_ROWS_PER_PAGE + ri + 1}</div>
+              <div style={{ width: cols[1], fontSize: '1.1cqw', lineHeight: 1, fontWeight: 700, color: t.text, paddingLeft: '0.9cqw', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+              <div style={{ width: cols[2], fontSize: '1.1cqw', lineHeight: 1, color: t.sub, paddingLeft: '0.9cqw' }}>{catMeta(it.category).label}</div>
+              <div style={{ width: cols[3], fontSize: '1.1cqw', lineHeight: 1, color: t.text, textAlign: 'right', paddingRight: '1cqw' }}>{it.qty}</div>
+              <div style={{ width: cols[4], fontSize: '1.1cqw', lineHeight: 1, color: t.sub, textAlign: 'right', paddingRight: '1cqw' }}>¥{it.unitPrice.toLocaleString('zh-CN')}</div>
+              <div style={{ width: cols[5], fontSize: '1.1cqw', lineHeight: 1, fontWeight: 700, color: t.text, textAlign: 'right', paddingRight: '1cqw' }}>¥{it.subtotal.toLocaleString('zh-CN')}</div>
             </div>
           ))}
-          <div style={{ display: 'flex', alignItems: 'center', paddingTop: '0.8cqw' }}>
+          <div style={{ display: 'flex', flex: 'none', alignItems: 'center', paddingTop: '0.6cqw' }}>
             <div style={{ flex: 1 }} />
             {isLast ? (
               <div style={{ display: 'flex', alignItems: 'baseline', gap: '1cqw' }}>
@@ -549,43 +618,47 @@ function BudgetSlide({ page, index, plan, t }: { page: PlanPage; index: number; 
   const items = parseBudget(page.bullets)?.slice(0, 6);
   const maxVal = items ? Math.max(...items.map((it) => it.max)) : 0;
   return (
-    <Frame t={t} style={{ padding: '4.5% 5% 5.5%' }}>
-      <div style={{ display: 'flex', gap: '4%', height: '100%' }}>
-        <div style={{ width: '32%', display: 'flex', flexDirection: 'column' }}>
-          <Folio page={page} index={index} t={t} />
-          <Claim page={page} t={t} />
-          <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw' }}>{page.body}</div>
-          <div style={{ marginTop: 'auto' }}>
-            <QuoteBar quote={page.quote} t={t} />
-            <div style={{ marginTop: '1.6cqw' }}><Footer plan={plan} t={t} /></div>
-          </div>
-        </div>
-        <div style={{ flex: 1, background: t.surface, borderRadius: '1.8cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a`, padding: '2.6cqw 3cqw', display: 'flex', flexDirection: 'column' }}>
-          {items ? (
-            <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.8cqw' }}>
-                <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 800, color: t.text }}>分项预算区间（元）</span>
-                <span style={{ fontSize: 'clamp(5px,1.05cqw,9px)', color: t.sub }}>实际报价以现场确认为准</span>
-              </div>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', gap: '1cqw' }}>
-                {items.map((it, i) => (
-                  <div key={i}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'clamp(6px,1.35cqw,11.5px)', color: t.text, marginBottom: '0.6cqw' }}>
-                      <span style={{ fontWeight: 600 }}>{it.name}</span>
-                      <span style={{ color: t.accent, fontWeight: 800 }}>{fmt(it.min)}–{fmt(it.max)}</span>
-                    </div>
-                    <div style={{ height: '1.7cqw', minHeight: 5, background: `${t.accent}14`, borderRadius: '1cqw', overflow: 'hidden' }}>
-                      <div style={{ width: `${(it.max / maxVal) * 100}%`, height: '100%', background: `linear-gradient(90deg, ${t.accent}bb, ${t.accent})`, borderRadius: '1cqw', boxShadow: `0 1px 3px ${t.accent}55` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw', justifyContent: 'center' }}>
-              {page.bullets.slice(0, 6).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
+    <Frame t={t} style={{ padding: '3.75% 5% 5.5%' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* 页眉区横幅：与 PPTX 侧 bannerPanel 同一位置语义（0.5→1.5 英寸）。图取不到时只留版位，版式不变。 */}
+        <Banner src={pageImage(page)} t={t} label="门店实景" />
+        <div style={{ display: 'flex', gap: '4%', flex: 1, minHeight: 0 }}>
+          <div style={{ width: '32%', display: 'flex', flexDirection: 'column' }}>
+            <Folio page={page} index={index} t={t} />
+            <Claim page={page} t={t} />
+            <div style={{ fontSize: 'clamp(6px,1.3cqw,11px)', color: t.sub, lineHeight: 1.75, marginTop: '1.4cqw' }}>{page.body}</div>
+            <div style={{ marginTop: 'auto' }}>
+              <QuoteBar quote={page.quote} t={t} />
+              <div style={{ marginTop: '1.6cqw' }}><Footer plan={plan} t={t} /></div>
             </div>
-          )}
+          </div>
+          <div style={{ flex: 1, background: t.surface, borderRadius: '1.8cqw', boxShadow: CARD_SHADOW, border: `1px solid ${t.accent}1a`, padding: '2.6cqw 3cqw', display: 'flex', flexDirection: 'column' }}>
+            {items ? (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.8cqw' }}>
+                  <span style={{ fontSize: 'clamp(6px,1.3cqw,11px)', fontWeight: 800, color: t.text }}>分项预算区间（元）</span>
+                  <span style={{ fontSize: 'clamp(5px,1.05cqw,9px)', color: t.sub }}>实际报价以现场确认为准</span>
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', gap: '1cqw' }}>
+                  {items.map((it, i) => (
+                    <div key={i}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'clamp(6px,1.35cqw,11.5px)', color: t.text, marginBottom: '0.6cqw' }}>
+                        <span style={{ fontWeight: 600 }}>{it.name}</span>
+                        <span style={{ color: t.accent, fontWeight: 800 }}>{fmt(it.min)}–{fmt(it.max)}</span>
+                      </div>
+                      <div style={{ height: '1.7cqw', minHeight: 5, background: `${t.accent}14`, borderRadius: '1cqw', overflow: 'hidden' }}>
+                        <div style={{ width: `${(it.max / maxVal) * 100}%`, height: '100%', background: `linear-gradient(90deg, ${t.accent}bb, ${t.accent})`, borderRadius: '1cqw', boxShadow: `0 1px 3px ${t.accent}55` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25cqw', justifyContent: 'center' }}>
+                {page.bullets.slice(0, 6).map((b, i) => <PointCard key={i} n={i + 1} text={b} t={t} />)}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </Frame>
@@ -647,7 +720,14 @@ function DeliverySlide({ page, index, plan, t }: { page: PlanPage; index: number
 function FloorplanSlide({ page, index, plan, t, listNo = 0 }: { page: PlanPage; index: number; plan: SlidePlan; t: PlanTheme; listNo?: number }): ReactNode {
   const images = floorplanImages(plan);
   const { src: visual, label, fit } = useFloorplanVisual(plan);
-  const src = visual || plan.floorplanUrl || pageImage(page);
+  /**
+   * 主体图只认「客户自己的户型图 / AI 精修图 / 方案上传的户型图」。
+   *
+   * 为什么不再兜底 pageImage(page)：户型页没有配图落点 ——
+   * 门店配的页型图画上去也是错的图（页面里根本不是那个场景），
+   * 而 resolvePageImage 对 floorplan 本来就返回空串，兜底等于兜了个空。
+   */
+  const src = visual || plan.floorplanUrl || '';
   const points = plan.layoutPoints ?? [];
   const fpTpl = floorplanTemplate(plan.floorplanTemplate);
   /**

@@ -403,7 +403,9 @@ export function TeamPage(): ReactNode {
     try {
       const r = await api<{ token: string; name: string }>('/api/agent/keys', {
         method: 'POST',
-        body: JSON.stringify({ name: `Key-${new Date().toISOString().slice(0, 10)}`, ttlDays: 90, serviceAccountId }),
+        // 密钥名用**本地日期**：`toISOString()` 取的是 UTC 日期，东八区每天 00:00~07:59
+        // 会把今天的密钥写成昨天。`toLocaleDateString('sv')` 就是 YYYY-MM-DD。
+        body: JSON.stringify({ name: `Key-${new Date().toLocaleDateString('sv')}`, ttlDays: 90, serviceAccountId }),
       });
       setIssued(r);
     } catch (e) {

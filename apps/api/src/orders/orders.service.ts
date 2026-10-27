@@ -239,9 +239,15 @@ need 取 yes/no/maybe，只列客户明确提到的系统 key（${SYSTEM_KEYS.jo
     const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
     // 产品匹配：按建议品类从产品库取候选（真实数据，非 LLM 幻觉）
+    // 租户隔离：只取公共库（tenantId=null）+ 本租户的产品 ——
+    // 不带这个条件会把**别的租户**的产品库也拉进来（客户能看见别家的产品与价格）
     const cats = text(parsed.categories, 300).split(',').map((c) => c.trim()).filter(Boolean);
     const products = cats.length
-      ? await this.prisma.product.findMany({ where: { category: { in: cats }, active: true }, orderBy: { sortOrder: 'asc' }, take: 12 })
+      ? await this.prisma.product.findMany({
+          where: { category: { in: cats }, active: true, OR: [{ tenantId: null }, { tenantId }] },
+          orderBy: { sortOrder: 'asc' },
+          take: 12,
+        })
       : [];
 
     // 与方案生成一致：解析成功才扣额（LLM 失败异常上抛，不白扣）

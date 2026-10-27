@@ -53,6 +53,39 @@ function loadList<T>(key: string): T[] {
   }
 }
 
+/** 落盘时保留的最近条数（会话 / 任务各一份） */
+const MAX_PERSIST_ITEMS = 20;
+
+/**
+ * 落盘一份列表：**只写最近 N 条**，写入撞上配额时再砍一半重试一次。
+ *
+ * 为什么必须裁：
+ * - 会话正文越存越大，而 localStorage 只有 5MB 上限；
+ * - 全量写一旦撞上配额，`setItem` 直接抛 QuotaExceededError ——
+ *   那一次之后**整份历史都存不下去**（不是只丢最新的一条，是从此再也写不进去），
+ *   页面却看不出哪里出了问题。
+ *
+ * 为什么失败不抛：内存里的数据还在，只是这一次没落盘。
+ * 抛出去会把「写本地存储失败」变成一次白屏级异常，比少几条历史糟得多。
+ */
+function persistList<T>(key: string, list: T[]): void {
+  // 列表是**新的在前**（setConversations / setTasks 都是 [new, ...prev]），
+  // 所以取头部就是最近的那些。
+  const trimmed = list.length > MAX_PERSIST_ITEMS ? list.slice(0, MAX_PERSIST_ITEMS) : list;
+  try {
+    localStorage.setItem(key, JSON.stringify(trimmed));
+  } catch (err) {
+    // 配额异常：砍掉最旧的一半（旧的在尾部）再试一次
+    console.warn('[ChatStore] 本地存储写入失败，裁剪后重试', err);
+    const half = trimmed.slice(0, Math.ceil(trimmed.length / 2));
+    try {
+      localStorage.setItem(key, JSON.stringify(half));
+    } catch (err2) {
+      console.warn('[ChatStore] 裁剪后仍无法写入本地存储，本次不落盘', err2);
+    }
+  }
+}
+
 /** 后端 LLM 不可用时的兜底回复（key 未配置或上游异常） */
 function offlineReply(prompt: string): string {
   return '模型服务暂时不可用（API Key 未配置或上游异常），已记录你的需求：「' + prompt.slice(0, 30) + '」。请在「系统管理 - 模型配置」检查 provider 与 Key 后重试。';
@@ -116,11 +149,11 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
   const { config } = useActiveConfig();
 
   useEffect(() => {
-    localStorage.setItem(CONV_STORAGE_KEY, JSON.stringify(conversations));
+    persistList(CONV_STORAGE_KEY, conversations);
   }, [conversations]);
 
   useEffect(() => {
-    localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks));
+    persistList(TASK_STORAGE_KEY, tasks);
   }, [tasks]);
 
   const activeConversation = conversations.find((c) => c.key === activeKey) ?? null;
@@ -223,7 +256,12 @@ export function ChatStoreProvider({ children }: { children: ReactNode }): ReactN
   const markTasksRead = useCallback(() => {
     const now = Date.now();
     setReadAt(now);
-    localStorage.setItem('ai_task_read_at', String(now));
+    try {
+      localStorage.setItem('ai_task_read_at', String(now));
+    } catch (err) {
+      // 配额满时「标记已读」不该把整个回调炸掉：内存里的已读状态已经生效
+      console.warn('[ChatStore] 已读标记写入失败', err);
+    }
   }, []);
 
   const unreadDone = useMemo(

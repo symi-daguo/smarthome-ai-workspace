@@ -45,11 +45,20 @@ export function startServer(opts: ServerOptions): Promise<{ port: number; close:
   const webRoot = resolve(opts.webDir);
 
   const server = createServer((req, res) => {
-    if (req.url?.startsWith('/api')) {
-      proxy(req, res, opts.apiPort);
-      return;
+    try {
+      if (req.url?.startsWith('/api')) {
+        proxy(req, res, opts.apiPort);
+        return;
+      }
+      serveStatic(req, res, webRoot);
+    } catch (e) {
+      // 这个服务跑在 Electron **主进程**里：回调里抛出去就是整个桌面端退出，
+      // 而不是回一个 404。畸形 URL（/%E0%A4%A）会让 decodeURIComponent 抛 URIError，
+      // 文件在 existsSync 与 statSync 之间被删会抛 ENOENT —— 都该回 400，不能崩应用。
+      console.error(`[静态服务] 处理失败：${(e as Error).message}`);
+      if (!res.headersSent) res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('请求路径非法');
     }
-    serveStatic(req, res, webRoot);
   });
 
   return new Promise((resolvePromise) => {
@@ -111,5 +120,13 @@ function serveStatic(req: IncomingMessage, res: ServerResponse, webRoot: string)
     // index.html 不缓存（发版后别加载到失效 chunk）；带 hash 的静态资源长期缓存
     'Cache-Control': isIndex ? 'no-cache' : 'public, max-age=31536000, immutable',
   });
-  createReadStream(file).pipe(res);
+  // 流读失败（文件被删、权限不足）会抛未处理的 error 事件 —— 同样会炸掉主进程，
+  // 所以必须挂 error 监听。
+  const stream = createReadStream(file);
+  stream.on('error', () => {
+    console.error('[静态服务] 文件读取失败');
+    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('读取文件失败');
+  });
+  stream.pipe(res);
 }

@@ -24,7 +24,9 @@ const searchSchema = z.object({ query: z.string().min(1).max(500) });
 export class KnowledgeController {
   constructor(private readonly knowledge: KnowledgeService) {}
 
-  @RequirePermissions('knowledge:manage')
+  // 读接口用读权限：以前这里要 knowledge:manage，
+  // 于是「只能查资料库、不能改」的角色（finance）根本打不开资料库列表。
+  @RequirePermissions('knowledge:read')
   @Get()
   status() {
     return this.knowledge.status();

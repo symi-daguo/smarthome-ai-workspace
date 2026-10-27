@@ -39,6 +39,7 @@ import {
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 import { PLAN_THEMES, PAGE_TYPE_LABEL, planTheme, type PlanPage, type PlanTheme } from '../data/planThemes';
 import { exportPlanPptx, buildNarrationText, type PlanForExport } from '../lib/planPptx';
+import { ECOSYSTEM_SPLIT, buildBudgetSplit, splitRows as computeSplitRows } from '../lib/budgetSplit';
 import { refreshPageImageOverrides } from '../lib/pageImages';
 import { PlanSlide, PAGE_BULLET_LIMIT } from '../components/PlanSlide';
 
@@ -79,16 +80,6 @@ const BUDGET_TIERS = [
   { key: 'premium', name: '豪华', unit: 1600, desc: '影音 + 遮阳 + 暖通联动' },
   { key: 'custom', name: '定制', unit: 2600, desc: '全屋定制与深化设计' },
 ] as const;
-
-/** 生态建议占比（合计 100%），用于预算分配建议条 */
-const ECOSYSTEM_SPLIT = [
-  { key: 'security', name: '安防', percent: 22, color: '#4A90D9' },
-  { key: 'lighting', name: '灯光', percent: 24, color: '#E8A33D' },
-  { key: 'shading', name: '遮阳', percent: 10, color: '#7C9E6B' },
-  { key: 'media', name: '影音', percent: 18, color: '#9A6BC9' },
-  { key: 'hvac', name: '暖通', percent: 14, color: '#4FB0A5' },
-  { key: 'network', name: '网络', percent: 12, color: '#C96B6B' },
-];
 
 /** 未填面积时的参考建面，用于档位估算（页面会明说这是参考值） */
 const REF_AREA = 120;
@@ -183,6 +174,8 @@ interface PlanDetail {
   renderedFloorplanAssetId?: string | null;
   /** 设备清单与报价（服务端按「真实点位 + 产品库参考零售价」算好，三处同源） */
   quoteSummary?: QuoteSummary | null;
+  /** 预算分配建议（万元，键为生态中文名）：门店确认过的金额 */
+  budgetSplit?: Record<string, number>;
   layoutPoints?: { name: string; category: string; room?: string; x: number; y: number }[] | null;
   /** 服务端判定：当前这版文案已逐页校对过（reviewedRevision === versionNo） */
   reviewed?: boolean;
@@ -362,6 +355,12 @@ const [editing, setEditing] = useState<{
       };
     }));
     setBoundVideos(detail.videoAssetIds ?? []);
+    // 预算分配：方案里存的是「门店确认过的金额」（键为生态中文名）。
+    // 回填成覆盖值，建议条上显示的就是当初确认的那份，而不是按当前预算重算。
+    const saved = detail.budgetSplit ?? {};
+    setSplitOverride(Object.fromEntries(
+      ECOSYSTEM_SPLIT.map((r) => [r.key, saved[r.name] ?? null]),
+    ));
   }, []);
 
   const reloadPlan = useCallback(async (id: string, silent = false): Promise<void> => {
@@ -592,6 +591,9 @@ const [editing, setEditing] = useState<{
           customer: values.customer ?? '',
           area: values.area ?? '',
           budget: values.budget ?? '',
+          // 预算分配建议（万元，键为生态中文名）：随方案落库，并作为生成提示词的硬约束。
+          // 键用中文名而不是内部 key：这份数据要直接进提示词、也要让 Agent 读得懂。
+          budgetSplit: buildBudgetSplit(splitOverride, budgetTotal),
           ecosystem: values.ecosystem ?? '',
           store: values.store ?? '',
           highlights: values.highlights ?? '',
@@ -641,9 +643,18 @@ const [editing, setEditing] = useState<{
 
   /** 打开某页的编辑弹窗。三个入口（卡片点击 / 回车 / 修改当前页）共用一份字段映射 */
   const startEdit = (index: number, p: PlanPage): void => {
-    // 户型与点位页由已上传的户型图推导出来，没有可改的文案
+    // 户型与点位页、设备清单与报价页都是**虚拟页**：由素材与产品库推导出来，
+    // 没有对应的真实页可改（后端页型枚举里压根没有这两个类型）。
+    //
+    // 以前只挡了 floorplan：点报价页时 realIndexOf 算出的是**越界下标**，
+    // 弹窗标题那句 `plan?.pages[editing.index].type` 的可选链只护住了 plan、
+    // 没护住数组下标 → 读 undefined 的 .type 直接抛 TypeError → 整个工作台白屏。
     if (p.type === 'floorplan') {
       message.info('「户型与设备点位」由已上传的户型图自动生成，改图即可，不用改文案');
+      return;
+    }
+    if (p.type === 'quote') {
+      message.info('「设备清单与报价」由产品库与实际点位自动算出，改点位与产品即可，不用改文案');
       return;
     }
     setEditing({
@@ -1039,11 +1050,7 @@ const [editing, setEditing] = useState<{
     viewIndex - view.virtualAt.filter((v) => v <= viewIndex).length;
   const active = view.pages[activePage];
   // 分配建议：预算有效时按占比给出建议金额，用户改过的分类用覆盖值（清空即恢复跟随建议）
-  const splitRows = ECOSYSTEM_SPLIT.map((row) => {
-    const override = splitOverride[row.key];
-    const suggested = budgetTotal === null ? 0 : Math.round(budgetTotal * row.percent * 10) / 10;
-    return { ...row, value: override === null || override === undefined ? suggested : override };
-  });
+  const splitRows = computeSplitRows(splitOverride, budgetTotal);
   const splitSum = Math.round(splitRows.reduce((sum, row) => sum + row.value, 0) * 10) / 10;
   const budgetGap = budgetTotal === null ? 0 : Math.round((splitSum - budgetTotal) * 10) / 10;
   const overBudget = budgetTotal !== null && budgetGap > BUDGET_EPS;
@@ -1153,7 +1160,7 @@ const [editing, setEditing] = useState<{
             >
               <Text strong style={{ fontSize: 12.5 }}>预算分配建议</Text>
               <Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 2 }}>
-                按生态给出建议占比与金额，金额可改；合计超出预算只提示，不阻断生成
+                按生态给出建议占比与金额，金额可改并随方案保存；合计超出预算只提示，不阻断生成
               </Text>
               {budgetTotal !== null ? (
                 <div style={{ marginTop: 10 }}>
@@ -1942,7 +1949,7 @@ const [editing, setEditing] = useState<{
       {/* 逐页编辑弹窗 */}
       <Modal
         open={editing !== null}
-        title={`编辑 ${editing !== null ? PAGE_TYPE_LABEL[plan?.pages[editing.index].type ?? 'scene'] : ''} ${String((editing?.index ?? 0) + 1).padStart(2, '0')}`}
+        title={`编辑 ${editing !== null ? PAGE_TYPE_LABEL[plan?.pages[editing.index]?.type ?? 'scene'] : ''} ${String((editing?.index ?? 0) + 1).padStart(2, '0')}`}
         onCancel={() => setEditing(null)}
         onOk={savePage}
         okText="保存本页"
@@ -1952,7 +1959,7 @@ const [editing, setEditing] = useState<{
         {editing ? (
           (() => {
             // 条数上限取自渲染侧的同一张表，超出的不会显示——当场说明比存完再让用户纳闷好
-            const limit = PAGE_BULLET_LIMIT[plan?.pages[editing.index].type ?? 'scene'] ?? 5;
+            const limit = PAGE_BULLET_LIMIT[plan?.pages[editing.index]?.type ?? 'scene'] ?? 5;
             const lines = editing.bullets.split(/\r?\n/).filter((l) => l.trim());
             const over = lines.length - limit;
             return (

@@ -335,8 +335,10 @@ export function TokenCenter(): ReactNode {
       if (!res.ok) throw new Error(`备份失败 ${res.status}`);
       const blob = await res.blob();
       // 走共用的 downloadBlob：立即 revoke 会让下载还没开始就失效，点了没反应
-      downloadBlob(blob, `backup-${new Date().toISOString().slice(0, 10)}.json`);
-      message.success('全库 JSON 已导出（产物文件在 uploads 卷，迁移时一并备份）');
+      // 文件名用**本地日期**：`toISOString()` 取的是 UTC 日期，东八区每天 00:00~07:59
+      // 会把今天的备份写成昨天。`toLocaleDateString('sv')` 就是 YYYY-MM-DD。
+      downloadBlob(blob, `backup-${new Date().toLocaleDateString('sv')}.json`);
+      message.success('本租户数据 JSON 已导出（产物文件在 uploads 卷，迁移时一并备份）');
     } catch (err: unknown) {
       message.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -369,7 +371,7 @@ export function TokenCenter(): ReactNode {
             <div>将按「{restoreMode === 'replace' ? '覆盖' : '合并'}」模式写入
               <Text strong>{Object.keys(payload.tables).length}</Text> 张表。</div>
             {restoreMode === 'replace'
-              ? <Text type="danger">覆盖模式会先清空目标表再写入，可能覆盖当前数据。</Text>
+              ? <Text type="danger">覆盖模式会先清空本租户在目标表里的行再写入，可能覆盖当前数据。</Text>
               : <Text type="secondary">合并模式按主键更新，不会删除本库里多出来的数据。</Text>}
           </div>
         ),

@@ -11,7 +11,7 @@ import { createAgentSchema, updateAgentSchema, type CreateAgentDto, type UpdateA
 
 /**
  * 定制智能体：租户内的人设/系统提示词 CRUD。
- * 权限 content:generate（所有登录成员的基础能力），数据按租户隔离。
+ * 权限按读写切分：看 content:read，建/改/删 content:generate，数据按租户隔离。
  */
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('agents')
@@ -24,7 +24,8 @@ export class AgentsController {
     return this.agents.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('content:read')
+  /** 建智能体：写操作（落 CustomAgent 行），要 content:generate（同模块 PATCH/DELETE 的口径） */
+  @RequirePermissions('content:generate')
   @Post()
   create(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

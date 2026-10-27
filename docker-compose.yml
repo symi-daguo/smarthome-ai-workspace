@@ -24,10 +24,19 @@ services:
     image: pgvector/pgvector:pg18
     environment:
       POSTGRES_USER: smarthome
-      POSTGRES_PASSWORD: smarthome
+      # 口令必须外部注入：写死在仓库里等于「所有自部署用户的数据库口令都一样」，
+      # 而这套 compose 的部署目标是「自己的服务器 + 你的域名」——那是**有公网 IP 的机器**。
+      # 生成用 `openssl rand -hex 24`：hex 只含 0-9a-f，放进 DATABASE_URL 不需要转义
+      #（base64 的 `+` `/` `=` 放进 URL 要转义，容易踩坑）。
+      # 注意：官方镜像只在**首次初始化**时用这个口令；已建好的库要改口令得执行
+      # `ALTER USER smarthome PASSWORD '<新口令>';`，光改 .env 不会生效。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?生产必须设置 POSTGRES_PASSWORD（openssl rand -hex 24）}
       POSTGRES_DB: smarthome
     ports:
-      - '5432:5432'
+      # 只绑回环：api 容器走内部网络 db:5432，这个端口对 api 毫无必要，
+      # 绑到 0.0.0.0 等于把数据库直接开到公网上。留端口只是为了让宿主能连上去
+      # 跑迁移、用 psql 排查问题。
+      - '127.0.0.1:5432:5432'
     volumes:
       # PG18 官方镜像要求挂载到 /var/lib/postgresql（数据存放于其下按版本命名的子目录）
       - pgdata:/var/lib/postgresql
@@ -57,7 +66,7 @@ services:
       # 本地开发走 vite dev 直连 3080，不经过本 compose。
       NODE_ENV: production
       PORT: '3080'
-      DATABASE_URL: postgresql://smarthome:smarthome@db:5432/smarthome?schema=public
+      DATABASE_URL: postgresql://smarthome:${POSTGRES_PASSWORD}@db:5432/smarthome?schema=public
       JWT_SECRET: ${JWT_SECRET:?生产必须设置 JWT_SECRET（openssl rand -hex 32）}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
@@ -123,7 +132,9 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     ports:
-      - '3080:3080'
+      # 只绑回环：前端容器走内部网络反代 /api，这个端口对部署毫无必要。
+      # 绑到 0.0.0.0 等于绕过前端的 nginx（限流与日志都挂在那一层）。
+      - '127.0.0.1:3080:3080'
     logging: *log-rotate
     depends_on:
       db:

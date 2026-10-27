@@ -30,7 +30,9 @@ const toggleSchema = z.object({ enabled: z.boolean() });
 export class KnowledgeDocController {
   constructor(private readonly docs: KnowledgeDocService) {}
 
-  @RequirePermissions('knowledge:manage')
+  // 读接口用读权限：以前这里要 knowledge:manage，
+  // 于是「只能查资料库、不能改」的角色（finance）根本打不开资料库列表。
+  @RequirePermissions('knowledge:read')
   @Get('docs')
   list(@CurrentUser() user: AuthProfile & { activeTenantId?: string }) {
     return this.docs.list(user.activeTenantId as string);

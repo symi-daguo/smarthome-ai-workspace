@@ -145,6 +145,87 @@ export class TeamService {
     }
   }
 
+  /**
+   * 角色实际拥有的权限 action。
+   *
+   * 分配角色时要比的是**角色带出来的权限**，不是角色名 ——
+   * 「能不能给 super_admin」这件事由权限集合说了算，不由 key 说了算。
+   */
+  private async rolePermissions(roleId: string): Promise<string[]> {
+    const rows = await this.prisma.rolePermission.findMany({
+      where: { roleId },
+      include: { permission: { select: { action: true } } },
+    });
+    return rows.map((r) => r.permission.action);
+  }
+
+  /**
+   * 调用者在租户的角色上下文：权限集合 + 是否持平台级角色。
+   *
+   * 权限两个来源取**并集**：
+   *   - 库里查：该成员在本租户的角色 → 角色 → 权限（当前真源；角色权限改完立刻生效）
+   *   - 调用方传进来的：控制器从登录态取的权限集合（与端点守卫用的是同一份）
+   *
+   * 传不传都能工作：不传就只按库里算 —— 控制器不改也拦得住提权；
+   * 传了就多覆盖一层「按登录态」的口径。
+   *
+   * 为什么还要看 scope（平台级/本租户）：种子里 super_admin 与 tenant_admin
+   * 的**权限 action 集合完全相同**，只比 action 的话「把 super_admin 发下去」拦不住 ——
+   * 两者的真正差别在作用域（平台级可跨租户），所以这条要单独判。
+   */
+  private async actorContext(
+    tenantId: string,
+    userId: string,
+    passed?: string[],
+  ): Promise<{ permissions: string[]; platformScope: boolean }> {
+    const own = new Set<string>(passed ?? []);
+    let platformScope = false;
+    const memberships = await this.prisma.membership.findMany({
+      where: { tenantId, userId },
+      include: { role: { include: { rolePermissions: { include: { permission: { select: { action: true } } } } } } },
+    });
+    for (const m of memberships) {
+      if (m.role.scope === 'PLATFORM') platformScope = true;
+      for (const rp of m.role.rolePermissions) own.add(rp.permission.action);
+    }
+    return { permissions: [...own], platformScope };
+  }
+
+  /**
+   * 防提权闸门：分配角色时**只能给出自己已经拥有的权限**。
+   *
+   * 与 createRole / updateRole 用的是同一把尺子（assertNoEscalation），
+   * 只是比的东西从「一组权限」换成了「一个角色带出来的权限集合」，
+   * 外加一条作用域规则：平台级角色只能由平台级角色来发。
+   *
+   * 为什么必须有：角色的 key 是公开可枚举的（super_admin / tenant_admin / …），
+   * 没有这道闸门，任意「能管成员」的角色都能给自己造一个 super_admin 成员，
+   * 权限体系当场被击穿。
+   */
+  private async assertRoleAssignable(
+    tenantId: string,
+    operatorId: string,
+    roleId: string,
+    operatorPermissions?: string[],
+  ): Promise<void> {
+    const actor = await this.actorContext(tenantId, operatorId, operatorPermissions);
+    if (actor.permissions.length === 0) {
+      throw new ForbiddenException(
+        'PRIVILEGE_ESCALATION: 你在本租户没有任何权限，无法给他人分配角色',
+      );
+    }
+    const target = await this.prisma.role.findUnique({ where: { id: roleId }, select: { scope: true, key: true } });
+    // 平台级角色（super_admin）：只能由平台级角色来发。
+    // 它的 action 集合与 tenant_admin 相同，光比 action 拦不住，scope 才是分界线。
+    if (target?.scope === 'PLATFORM' && !actor.platformScope) {
+      throw new ForbiddenException(
+        `PRIVILEGE_ESCALATION: 平台级角色（${target.key}）只能由平台级管理员分配`,
+      );
+    }
+    const targetPermissions = await this.rolePermissions(roleId);
+    this.assertNoEscalation(actor.permissions, targetPermissions);
+  }
+
   /** 本租户成员列表（含角色与权限，便于界面直接显示「他能做什么」） */
   async members(tenantId: string): Promise<{
     id: string; phone: string; displayName: string; roleKey: string; roleName: string;
@@ -175,8 +256,17 @@ export class TeamService {
     tenantId: string,
     dto: { phone: string; displayName: string; roleKey: string; password: string },
     operatorId: string,
+    /**
+     * 调用者在本租户的权限集合（可选）。
+     * 不传也能工作：服务层会按 operatorId 去库里查该成员角色的权限（当前真源）。
+     * 传了则与库里那份取并集，少一次查询。
+     */
+    operatorPermissions?: string[],
   ): Promise<{ id: string; phone: string; displayName: string; roleKey: string }> {
     const role = await this.findRole(tenantId, dto.roleKey);
+    // 防提权：不能建出比自己权限更大的成员（与建角色同一把尺子）。
+    // 少了这一步，任何能管成员的角色都能建一个 super_admin 成员。
+    await this.assertRoleAssignable(tenantId, operatorId, role.id, operatorPermissions);
     // 手机号是 User 表的全局唯一键：同一个人可以加入多个租户，所以「已存在」不等于「已在本租户」
     const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
     if (existing) {
@@ -206,8 +296,12 @@ export class TeamService {
     userId: string,
     roleKey: string,
     operatorId: string,
+    /** 调用者在本租户的权限集合（可选，口径同 createMember） */
+    operatorPermissions?: string[],
   ): Promise<{ id: string; roleKey: string; roleId: string }> {
     const role = await this.findRole(tenantId, roleKey);
+    // 防提权：把成员提成比自己权限更大的角色，同样是提权（与建成员同一把尺子）
+    await this.assertRoleAssignable(tenantId, operatorId, role.id, operatorPermissions);
     const membership = await this.prisma.membership.findUnique({
       where: { userId_tenantId: { userId, tenantId } },
     });

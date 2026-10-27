@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -19,6 +20,8 @@ import { generateViaComfyui, generateViaMinimax, generateViaOpenai,
   generateViaOpenaiEdit, type GeneratedImage } from './image-provider.js';
 import { generateViaMinimaxVideo, generateViaOpenaiVideo } from './video-provider.js';
 import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../common/upstream-timeout.js';
+import { isUniqueViolation } from '../common/prisma-error.js';
+import { IdempotencyService } from '../common/idempotency.service.js';
 
 /**
  * 产物配额（字节）：UPLOAD_QUOTA_MB（MB）。
@@ -208,6 +211,7 @@ export class MediaService {
     private readonly config: ConfigService,
     private readonly tokens: TokenService,
     private readonly modelConfig: ModelConfigService,
+    private readonly idem: IdempotencyService,
   ) {}
 
   private uploadDir(): string {
@@ -342,7 +346,10 @@ export class MediaService {
   resolveSafe(rel: string): string {
     const root = this.uploadDir();
     const abs = join(root, rel);
-    if (!abs.startsWith(join(root))) throw new BadRequestException('BAD_PATH');
+    // 必须带目录分隔符再比前缀：只比 `join(root)` 时，
+    // root=/data/uploads 而路径是 /data/uploads-backup/x（前缀确实匹配）就能通过 ——
+    // `../uploads-backup/x` 经 join 归一化后正是这个形态，等于能读/写 uploads 之外的目录。
+    if (!abs.startsWith(join(root) + sep)) throw new BadRequestException('BAD_PATH');
     return abs;
   }
 
@@ -376,6 +383,12 @@ export class MediaService {
     maskDataUrl?: string;
   /** 提交幂等键：命中已有产物直接返回，不重复出图也不重复扣额度 */
   clientRequestId?: string;
+    /**
+     * 这次生成**已经扣过额度**（补跑场景：上一次尝试扣了钱却没出图，作业状态 unknown）。
+     * 为 true 时不再扣第二次 —— 同一份工作不能收两次钱。
+     * 只由服务端按作业状态置位，不接受客户端传。
+     */
+    alreadyCharged?: boolean;
     title?: string;
   }): Promise<{ id: string; url: string; status: string; deduped?: boolean }> {
     const cfg = await this.modelConfig.imageConfig();
@@ -388,15 +401,45 @@ export class MediaService {
       });
     }
 
-    // 幂等：同一提交键直接返回已有产物。放在所有扣费之前——
-    // 弱网超时后重试、跨标签页重复提交，靠这里避免第二次出图 + 第二次扣额度。
+    // 幂等快路径：同一提交键**已经有产物**就直接返回，不重复出图也不重复扣额度。
     // 按租户查，避免撞上别的租户恰好用了同一个键。
+    // 这一步只是快路径，真正的并发闸门在下面的「抢占」——
+    // 「先查后插」在并发下会双双查到空，然后双双扣额度、双双打上游。
     if (opts.clientRequestId) {
       const existing = await this.prisma.mediaAsset.findFirst({
         where: { tenantId: opts.tenantId, clientRequestId: opts.clientRequestId },
       });
       if (existing) {
         return { id: existing.id, url: `/api/media/assets/${existing.id}/file`, status: existing.status, deduped: true };
+      }
+    }
+
+    // 幂等闸门：**抢占式**，靠 (tenantId, key) 唯一约束原子判定。
+    //
+    // 为什么必须有这一步：光靠上面的「先查后插」，两个并发请求会同时查到空 ——
+    // 然后**双双扣额度、双双打上游**，用户只拿到一张图却被扣了两次。
+    // 这是钱的问题，不是体验问题，所以要用唯一约束把「谁能真跑」这件事变成原子的。
+    //
+    // 位置：所有校验之后、扣额度之前。
+    //   校验失败不该占住幂等键（用户改对了参数还得能重来）；
+    //   扣额度之后失败则**不释放**（钱已经花了，重试不能再扣一次），
+    //   要重来必须换一个提交键（画布补跑就是这么做的）。
+    const claimKey = opts.clientRequestId ? `media-gen:${opts.clientRequestId}` : undefined;
+    if (claimKey) {
+      const claim = await this.idem.claim(opts.tenantId, claimKey, 'media_generate');
+      if (!claim.fresh) {
+        // 同一提交键已经在跑，或上一轮已经出了结果
+        const done = await this.prisma.mediaAsset.findFirst({
+          where: { tenantId: opts.tenantId, clientRequestId: opts.clientRequestId },
+        });
+        if (done) {
+          return { id: done.id, url: `/api/media/assets/${done.id}/file`, status: done.status, deduped: true };
+        }
+        // 幂等记录在、产物还没落库 → 另一个请求正在跑，不能再打一次上游
+        throw new ConflictException({
+          code: 'GENERATION_IN_PROGRESS',
+          message: '同一提交正在处理中，请稍后刷新查看结果，不要重复提交',
+        });
       }
     }
 
@@ -449,7 +492,17 @@ export class MediaService {
       editInput = { image: srcBuf, mime: src.mimeType || 'image/png', mask: maskBuf };
     }
 
-    await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
+    // 扣额度：alreadyCharged=true 时跳过（补跑场景上一次已经扣过，不能收两次钱）
+    if (!opts.alreadyCharged) {
+      try {
+        await this.tokens.consume(opts.tenantId, IMAGE_TOKENS, 'CONSUME', { kind: 'image', prompt: opts.prompt.slice(0, 80) }, opts.userId);
+      } catch (error) {
+        // 扣额度这一步自己失败 = 钱没扣出去（余额不足等，扣减在事务里，失败即回滚）
+        // → 释放幂等键，允许用户充值或改完参数再来。
+        await this.idem.release(opts.tenantId, claimKey);
+        throw error;
+      }
+    }
 
     // 扣额度之后的任何失败都不是「没花钱的失败」。
     // 上层据此把作业标成 unknown（结果待核对）而不是 failed：
@@ -471,7 +524,7 @@ export class MediaService {
     prompt: string,
     size: string,
     editInput: { image: Buffer; mime: string; mask: Buffer } | null,
-  ): Promise<{ id: string; url: string; status: string }> {
+  ): Promise<{ id: string; url: string; status: string; deduped?: boolean }> {
     let img: GeneratedImage;
 
     if (editInput) {
@@ -519,20 +572,36 @@ export class MediaService {
     const rel = `images/${this.dayDir()}/${randomUUID()}.${img.ext}`;
     const { sizeBytes, mimeType } = await this.saveBuffer(img, rel);
 
-    const asset = await this.prisma.mediaAsset.create({
-      data: {
-        tenantId: opts.tenantId,
-        userId: opts.userId,
-        kind: 'image',
-        title: opts.title?.trim() || opts.prompt.slice(0, 30),
-        prompt: opts.prompt,
-        filePath: rel,
-        mimeType,
-        sizeBytes,
-        status: 'ready',
-        clientRequestId: opts.clientRequestId ?? null,
-      },
-    });
+    let asset;
+    try {
+      asset = await this.prisma.mediaAsset.create({
+        data: {
+          tenantId: opts.tenantId,
+          userId: opts.userId,
+          kind: 'image',
+          title: opts.title?.trim() || opts.prompt.slice(0, 30),
+          prompt: opts.prompt,
+          filePath: rel,
+          mimeType,
+          sizeBytes,
+          status: 'ready',
+          clientRequestId: opts.clientRequestId ?? null,
+        },
+      });
+    } catch (error) {
+      // 并发同键：两个请求都查到「没有这条」→ 都调了模型、都扣了额度，
+      // 后写库的那个撞上 clientRequestId 的唯一约束。
+      // 不接住的话前端收到 500，用户以为失败又点一次 —— 变成第三次扣费。
+      // 这里回查已存在的那行原样返回：**同一个提交键只应有一份产物**。
+      if (!isUniqueViolation(error) || !opts.clientRequestId) throw error;
+      const existing = await this.prisma.mediaAsset.findFirst({
+        where: { tenantId: opts.tenantId, clientRequestId: opts.clientRequestId },
+      });
+      if (!existing) throw error;
+      // 刚写盘的文件没有对应的库行（产物归了先到的那个请求），顺手删掉，别白占卷
+      await unlink(this.resolveSafe(rel)).catch(() => undefined);
+      return { id: existing.id, url: `/api/media/assets/${existing.id}/file`, status: existing.status, deduped: true };
+    }
     return { id: asset.id, url: `/api/media/assets/${asset.id}/file`, status: 'ready' };
   }
 
@@ -600,7 +669,7 @@ export class MediaService {
       firstFrameImage = `data:${asset.mimeType ?? 'image/jpeg'};base64,${buf.toString('base64')}`;
     }
 
-    // 幂等：与生图同一套，按租户查、扣费之前返回。
+    // 幂等快路径：命中已有视频直接返回（不重复出图也不重复扣额度）。
     // 视频单价高于图片，重复提交的直接代价更大，所以这里更不能漏。
     if (opts.clientRequestId) {
       const existing = await this.prisma.mediaAsset.findFirst({
@@ -611,12 +680,40 @@ export class MediaService {
       }
     }
 
-    await this.tokens.consume(opts.tenantId, VIDEO_TOKENS, 'CONSUME', { kind: 'video', prompt: opts.prompt.slice(0, 80) }, opts.userId);
-
+    // 校验在扣费前：Key 没配就报错，不能先扣了额度再告诉用户「配了 Key 再来」。
+    // （生图路径早就是「校验在扣费前」，视频这里原先是反的。）
     const vcfg = await this.modelConfig.videoConfig();
     if (!vcfg.apiKey) {
       throw new ServiceUnavailableException({ code: 'LLM_KEY_MISSING', message: '生视频 API Key 未配置，请在「模型配置」页填写对应 provider 的 Key' });
     }
+
+    // 幂等闸门：抢占式（唯一约束），与生图同一套。
+    // 光靠上面的「先查后插」，并发请求会双双查到空 → 双双扣额度、双双打上游。
+    const videoClaimKey = opts.clientRequestId ? `media-gen-video:${opts.clientRequestId}` : undefined;
+    if (videoClaimKey) {
+      const claim = await this.idem.claim(opts.tenantId, videoClaimKey, 'media_generate_video');
+      if (!claim.fresh) {
+        const done = await this.prisma.mediaAsset.findFirst({
+          where: { tenantId: opts.tenantId, clientRequestId: opts.clientRequestId },
+        });
+        if (done) {
+          return { id: done.id, url: `/api/media/assets/${done.id}/file`, status: done.status, deduped: true };
+        }
+        throw new ConflictException({
+          code: 'GENERATION_IN_PROGRESS',
+          message: '同一提交正在处理中，请稍后刷新查看结果，不要重复提交',
+        });
+      }
+    }
+
+    try {
+      await this.tokens.consume(opts.tenantId, VIDEO_TOKENS, 'CONSUME', { kind: 'video', prompt: opts.prompt.slice(0, 80) }, opts.userId);
+    } catch (error) {
+      // 扣额度失败 = 钱没扣出去（扣减在事务里，失败即回滚）→ 释放幂等键，允许重来
+      await this.idem.release(opts.tenantId, videoClaimKey);
+      throw error;
+    }
+
     const params = { prompt: opts.prompt, duration: opts.duration, resolution: opts.resolution, ratio: opts.ratio, firstFrameImage: firstFrameImage || undefined };
     const video =
       vcfg.provider === 'openai'
@@ -741,6 +838,14 @@ export class MediaService {
     ].join('');
     const dataUri = `data:${asset.mimeType};base64,${buf.toString('base64')}`;
 
+    // 扣额度必须在真正调上游**之前**。
+    //
+    // 原来这行在上游调用之后，还带着 `.catch(() => undefined)`：
+    //   余额不足抛的 TOKEN_INSUFFICIENT 被吞掉 → 请求照样成功返回提示词，额度却没扣（白嫖）；
+    //   而且顺序是「先花上游的真钱、再记自己的账」，上游那次调用没人买单。
+    // 现在：余额不够就在花钱之前报错，扣完额度再调上游。
+    await this.tokens.consume(tenantId, 10, 'CONSUME', { kind: 'image-reverse-prompt' }, userId);
+
     const res = await fetchUpstream(
       `${cfg.baseUrl}/chat/completions`,
       {
@@ -800,7 +905,6 @@ export class MediaService {
       });
     }
     if (prompt.length < 10) throw new ServiceUnavailableException({ code: 'VISION_EMPTY', message: '模型未返回有效描述，请重试或手写提示词' });
-    await this.tokens.consume(tenantId, 10, 'CONSUME', { kind: 'image-reverse-prompt' }, userId).catch(() => undefined);
     return { prompt, model: data.model ?? model };
   }
 

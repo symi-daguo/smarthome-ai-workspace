@@ -128,7 +128,13 @@ function extractGuards(root: string): Map<string, string[]> {
             if (pm) { perm = parsePermActions(pm[1]); break; }
           }
           const sub = (mm[2] ?? '').replace(/^\//, '').replace(/\/$/, '');
-          const full = ('/api/' + block.base + (sub ? '/' + sub : '')).replace(/\/\/+/g, '/');
+          // 路径参数归一化：控制器源码写 `:id`，清单与 OP_PERMISSIONS 写 `{id}`。
+          // 不归一化的话，带参数的路由在「清单漂移守卫」里**一条都匹配不上**
+          // （取不到就被当成「抽不到，不误判」跳过）—— 实测 71 条路由等于没检查，
+          // 这类漂移正是它要拦的东西。
+          const full = ('/api/' + block.base + (sub ? '/' + sub : ''))
+            .replace(/\/\/+/g, '/')
+            .replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '{$1}');
           out.set(`${mm[1].toUpperCase()} ${full}`, perm);
         }
       }
@@ -2045,9 +2051,29 @@ async function main(): Promise<void> {
     schemaModels.length > 0 && missingBackup.length === 0,
   );
   check(
-    '全库备份导出（tables 完整）',
-    backupRes.status === 200 && Boolean(backupJson?.exportedAt) && Array.isArray(backupJson?.tables?.user) && (backupJson?.tables?.user?.length ?? 0) >= 2,
+    '备份导出（本租户，tables 完整）',
+    backupRes.status === 200 && Boolean(backupJson?.exportedAt) && Array.isArray(backupJson?.tables?.user) && (backupJson?.tables?.user?.length ?? 0) >= 1,
   );
+  // 租户隔离的判据要落在**数据**上：
+  // 备份以前是不带 where 的全库导出，租户管理员能下载到所有租户的客户资料。
+  // 现在必须只含本租户的行 —— 用「导出的用户逐个回查归属」来锁住。
+  {
+    const exportedUserIds = (backupJson?.tables?.user ?? [])
+      .map((u) => (u as { id?: string }).id)
+      .filter((id): id is string => Boolean(id));
+    const tenantAUserCount = await prisma.user.count({
+      where: { memberships: { some: { tenantId: tenantA } } },
+    });
+    check(
+      '备份导出的用户数与本租户一致（不多不少）',
+      (backupJson?.tables?.user?.length ?? 0) === tenantAUserCount,
+      `导出 ${backupJson?.tables?.user?.length ?? 0} 个，本租户 ${tenantAUserCount} 个`,
+    );
+    const foreignUsers = await prisma.user.count({
+      where: { id: { in: exportedUserIds }, memberships: { none: { tenantId: tenantA } } },
+    });
+    check('备份导出的用户全部属于本租户（没有别人的）', foreignUsers === 0, `混入 ${foreignUsers} 个外租户用户`);
+  }
 
   const storageRes = await request<{ usedBytes: number; quotaBytes: number; assets: number }>(base, '/api/admin/storage', authA);
   check('存储占用统计可查', storageRes.status === 200 && storageRes.body.quotaBytes > 0);
@@ -2682,6 +2708,8 @@ async function main(): Promise<void> {
   // 若三步任一步漏带 Authorization，下游 canvas 作业会 failed，对应断言自然变红。
   const COMFY_SMOKE_KEY = 'comfy-smoke-key-1234';
   const comfyAuthSeen = new Map<string, string>();
+  /** 假上游被打了几次（/prompt 计数）：用来断言「同一提交键只打一次上游」 */
+  let comfyPromptCalls = 0;
   const comfyPng = Buffer.from('89504e470d0a1a0a', 'hex');
   const comfy = createServer((req, res) => {
     const path = req.url ?? '';
@@ -2694,6 +2722,7 @@ async function main(): Promise<void> {
       return;
     }
     if (path.startsWith('/prompt')) {
+      comfyPromptCalls += 1;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{}');
       return;
@@ -2749,6 +2778,104 @@ async function main(): Promise<void> {
       !comfyCfgEcho.body.image.comfyKeyMasked.includes(COMFY_SMOKE_KEY) &&
       JSON.stringify(comfyCfgEcho.body).includes(COMFY_SMOKE_KEY.slice(-4)),
   );
+
+  // ---------- 出图幂等：同一提交键并发提交只能真跑一次 ----------
+  //
+  // 判据落在**可数的量**上，不靠推断：
+  //   ① 假上游 /prompt 被调用了几次 → 「只打一次上游」
+  //   ② 租户额度少了多少 → 「只扣一次额度」
+  //
+  // 「一次出图的成本」先单发一次量出来，再拿并发两次去比 ——
+  // 这样断言不写死 BILLING_IMAGE_TOKENS 的数值（部署方可以改这个环境变量）。
+  const readBalance = async (): Promise<number> => {
+    const r = await request<{ tokenBalance: number }>(base, '/api/tenants/current/tokens', authA);
+    return r.body.tokenBalance;
+  };
+  const balBeforeSingle = await readBalance();
+  const singleRes = await request<{ id?: string }>(base, '/api/media/images', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({ prompt: '冒烟：单次出图量成本', clientRequestId: `smoke-single-${randomUUID()}` }),
+  });
+  const oneImageCost = balBeforeSingle - (await readBalance());
+  check(
+    '冒烟前置：单发出图成功且确实扣了一次额度',
+    singleRes.status === 201 && oneImageCost > 0,
+    `status=${singleRes.status} 扣费=${oneImageCost}`,
+  );
+
+  const promptCallsBeforeDup = comfyPromptCalls;
+  const dupKey = `smoke-dup-${randomUUID()}`;
+  const balBeforeDup = await readBalance();
+  const [dupA, dupB] = await Promise.all([
+    request<{ id?: string }>(base, '/api/media/images', { ...authA, method: 'POST', body: JSON.stringify({ prompt: '冒烟：并发同键去重', clientRequestId: dupKey }) }),
+    request<{ id?: string }>(base, '/api/media/images', { ...authA, method: 'POST', body: JSON.stringify({ prompt: '冒烟：并发同键去重', clientRequestId: dupKey }) }),
+  ]);
+  const dupCost = balBeforeDup - (await readBalance());
+  const dupUpstreamCalls = comfyPromptCalls - promptCallsBeforeDup;
+  check(
+    '同一提交键并发提交只打一次上游（不重复出图）',
+    dupUpstreamCalls === 1,
+    `上游被打 ${dupUpstreamCalls} 次（期望 1 次）`,
+  );
+  check(
+    '同一提交键并发提交只扣一次额度（不重复扣费）',
+    dupCost === oneImageCost,
+    `并发扣了 ${dupCost}，单次成本 ${oneImageCost}`,
+  );
+  check(
+    '并发两次同一提交键：要么都拿到同一份产物，要么第二个被明确告知「正在处理中」',
+    (dupA.status === 201 && dupB.status === 201 && dupA.body.id === dupB.body.id) ||
+      (dupA.status === 201 && dupB.status === 409) ||
+      (dupB.status === 201 && dupA.status === 409),
+    `状态 ${dupA.status}/${dupB.status}`,
+  );
+
+  // ---------- 画布补跑：已扣额度的作业不再二次扣费，且免费补跑机会只有一次 ----------
+  //
+  // `unknown`（额度已扣、结果待核对）平时由「扣了额度之后上游失败」产生，
+  // 冒烟里没法稳定复现那条路径，所以直接落一条作业到该状态，
+  // 验的是**补跑策略本身**：不二次扣费 + 免费机会只有一次。
+  const freeRerunJob = await prisma.generationJob.create({
+    data: {
+      tenantId: tenantA,
+      userId: me.body.id,
+      kind: 'image',
+      status: 'unknown',
+      error: '冒烟：模拟已扣额度但没拿到结果',
+      params: { prompt: '冒烟：已扣额度的作业补跑', fullPrompt: '冒烟：已扣额度的作业补跑', size: '1024x1024' },
+    },
+  });
+  // **必须用库里返回的 id**：GenerationJob 的 id 是数据库默认生成的 uuid，
+  // 自己随机一个去查永远查不到（会误判成「补跑找不到作业」）。
+  const freeJobId = freeRerunJob.id;
+  // 把生图通道指向不可达地址：这次补跑会「扣了额度之后失败」→ 作业回到 unknown
+  await request(base, '/api/admin/model-config/image', {
+    ...authA,
+    method: 'PUT',
+    body: JSON.stringify({ provider: 'comfyui', comfyBaseUrl: 'http://127.0.0.1:1', comfyApiKey: COMFY_SMOKE_KEY, workflowPath: 'comfyui-workflow.json', promptNode: '6', negativeNode: '7', latentNode: '5', seedNode: '3' }),
+  });
+  const balBeforeFree = await readBalance();
+  const freeRun1 = await request<{ ran: boolean; status: string; reason?: string }>(base, `/api/canvas/jobs/${freeJobId}/run`, { ...authA, method: 'POST' });
+  const balAfterFree = await readBalance();
+  check(
+    '已扣额度的作业补跑不再扣第二次额度',
+    balBeforeFree === balAfterFree,
+    `补跑前后余额 ${balBeforeFree} → ${balAfterFree}`,
+  );
+  check(
+    '已扣额度的作业补跑失败后回到「待核对」而不是「失败」',
+    freeRun1.status === 201 && freeRun1.body.ran === true && freeRun1.body.status === 'unknown',
+    `status=${freeRun1.status} body=${JSON.stringify(freeRun1.body)}`,
+  );
+  const freeRun2 = await request<{ ran: boolean; status: string; reason?: string; message?: string }>(base, `/api/canvas/jobs/${freeJobId}/run`, { ...authA, method: 'POST' });
+  check(
+    '同一个作业的免费补跑机会只有一次（第二次被明确拒绝并给出原因）',
+    freeRun2.status === 201 && freeRun2.body.ran === false && freeRun2.body.reason === 'FREE_RERUN_ALREADY_USED',
+    `body=${JSON.stringify(freeRun2.body)}`,
+  );
+  // 恢复生图通道（后面的画布用例还要出图）
+  await request(base, '/api/admin/model-config/image', comfyImageCfg(COMFY_SMOKE_KEY));
 
   /** 轮询画布作业直到终态（出图异步，上游链路每 2s 轮询一次，最多等 10s） */
   const waitCanvasJob = async (jobId: string): Promise<CanvasJobRow | null> => {
@@ -3087,6 +3214,54 @@ async function main(): Promise<void> {
   });
   check('越界页码被拒（400，不会误改别的页）', badIndex.status === 400);
   await prisma.planProject.delete({ where: { id: editSeed.id } });
+
+  // ---------- 预算分配建议：落库 + 校验 ----------
+  //
+  // 这个分配此前只活在浏览器内存里：门店在建议条上改了金额，刷新就没了，
+  // 方案里也没有、Agent 也够不着 —— 客户看到的预算页与门店改过的数字对不上。
+  // 现在它随方案落库，并且是生成提示词的硬约束。
+  {
+    const badSplit = await request<{ message?: unknown }>(base, '/api/plans', {
+      method: 'POST',
+      // 用 authA（改密后重新签发的 token），**不能用注册时那个 regA.body.token** ——
+      // 中途改过密码，tokenVersion 自增，旧 token 早已失效（401），断言会「因为 401 而红」。
+      headers: { Authorization: `Bearer ${authA.headers.Authorization.split(' ')[1]}` },
+      body: JSON.stringify({ title: '预算分配校验', budgetSplit: { 安防: -1 } }),
+    });
+    check('预算分配出现负数被校验拒绝', badSplit.status === 400, `实际 status=${badSplit.status}`);
+
+    const badSplitKey = await request<{ message?: unknown }>(base, '/api/plans', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authA.headers.Authorization.split(' ')[1]}` },
+      body: JSON.stringify({ title: '预算分配校验', budgetSplit: { ['x'.repeat(30)]: 1 } }),
+    });
+    check('预算分配的键过长被校验拒绝', badSplitKey.status === 400, `实际 status=${badSplitKey.status}`);
+
+    const splitSeed = await prisma.planProject.create({
+      data: {
+        tenantId: tenantA,
+        userId: me.body.id,
+        title: '预算分配落库冒烟方案',
+        style: 'A',
+        edition: 'standard',
+        pageCount: 9,
+        pages: [],
+        versionNo: 1,
+        budgetSplit: { 安防: 6.6, 灯光: 7.2 },
+      },
+    });
+    const splitDetail = await request<{ budgetSplit?: Record<string, number> }>(base, `/api/plans/${splitSeed.id}`, {
+      headers: { Authorization: `Bearer ${authA.headers.Authorization.split(' ')[1]}` },
+    });
+    check(
+      '预算分配建议随方案落库并能原样读回',
+      splitDetail.status === 200
+        && splitDetail.body.budgetSplit?.['安防'] === 6.6
+        && splitDetail.body.budgetSplit?.['灯光'] === 7.2,
+      JSON.stringify(splitDetail.body.budgetSplit ?? null),
+    );
+    await prisma.planProject.delete({ where: { id: splitSeed.id } });
+  }
 
   // ---------- 本地资料库（零配置 AI 召回） ----------
   {

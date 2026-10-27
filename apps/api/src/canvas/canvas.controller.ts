@@ -22,7 +22,9 @@ type TenantUser = AuthProfile & { activeTenantId?: string };
 
 /**
  * AI 画布接口：对话线 CRUD、发起轮次、异步作业轮询、轮次编辑与删除。
- * 权限 content:generate（designer 及以上），数据按 activeTenantId 隔离。
+ *
+ * 权限按读写切分：看（列对话线/查作业/查任务）content:read，
+ * 改（建对话线/改名/发轮次/补跑作业/删任务）content:generate，数据按 activeTenantId 隔离。
  */
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('canvas')
@@ -35,7 +37,8 @@ export class CanvasController {
     return this.canvas.list(user.activeTenantId as string);
   }
 
-  @RequirePermissions('content:read')
+  /** 建对话线：写操作（落 ImageConversation 行） */
+  @RequirePermissions('content:generate')
   @Post('conversations')
   create(@CurrentUser() user: TenantUser, @Body(new ZodValidationPipe(createConversationSchema)) dto: CreateConversationDto) {
     return this.canvas.create(user.activeTenantId as string, user.id, dto);
@@ -47,7 +50,8 @@ export class CanvasController {
     return this.canvas.detail(user.activeTenantId as string, id);
   }
 
-  @RequirePermissions('content:read')
+  /** 改对话线（改名）：写操作 */
+  @RequirePermissions('content:generate')
   @Patch('conversations/:id')
   rename(@CurrentUser() user: TenantUser, @Param('id') id: string, @Body(new ZodValidationPipe(updateConversationSchema)) dto: UpdateConversationDto) {
     return this.canvas.rename(user.activeTenantId as string, id, dto);
@@ -86,7 +90,7 @@ export class CanvasController {
   }
 
   /** 手动触发执行（正常流程由创建轮次时后台自动调用，此端点供补跑与排障） */
-  @RequirePermissions('content:read')
+  @RequirePermissions('content:generate')
   @Post('jobs/:id/run')
   runJob(@CurrentUser() user: TenantUser, @Param('id') id: string) {
     return this.canvas.runJob(user.activeTenantId as string, user.id, id);
@@ -103,7 +107,7 @@ export class CanvasController {
   }
 
   /** 清空已结束任务（进行中的必须保留，否则用户会以为任务丢了） */
-  @RequirePermissions('content:read')
+  @RequirePermissions('content:generate')
   @Delete('tasks/finished')
   clearTasks(@CurrentUser() user: TenantUser) {
     return this.canvas.clearFinishedTasks(user.activeTenantId as string);

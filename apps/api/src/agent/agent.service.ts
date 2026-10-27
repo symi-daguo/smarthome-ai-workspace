@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.module.js';
@@ -171,7 +171,12 @@ export class AgentService {
   // ---------- 服务账号 ----------
 
   /** 建一个只能经 API Key 使用的机器账号：无可用密码，权限完全由所选角色的 RBAC 决定 */
-  async createServiceAccount(tenantId: string, name: string, roleKey: string): Promise<{
+  async createServiceAccount(
+    tenantId: string,
+    name: string,
+    roleKey: string,
+    actorId?: string,
+  ): Promise<{
     id: string;
     name: string;
     roleKey: string;
@@ -179,6 +184,12 @@ export class AgentService {
     note: string;
   }> {
     const role = await this.resolveRole(tenantId, roleKey);
+    // 平台级角色（super_admin）只能由持平台级角色的人发出去。
+    //
+    // roleKey 可以填任意系统角色名，填 super_admin 就会建出一个平台级机器账号，
+    // 它的 API Key 能调平台级接口 —— 持「成员管理」权限的角色不该有这个能力。
+    // （与 team.service 建成员那道闸门同一件事。）
+    if (actorId) await this.assertRoleAssignable(tenantId, role.id, actorId);
 
     // 手机号位用 svc_ 前缀的 uuid：登录接口只接受手机号格式，因此这个账号天然登不进来
     const phone = `svc_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
@@ -208,6 +219,26 @@ export class AgentService {
   }
 
   /** 系统模板用可读 key、自定义角色用 uuid —— 与团队成员分配角色同一套解析规则 */
+  /**
+   * 平台级角色（Role.scope = PLATFORM）只能由持平台级角色的人分配。
+   *
+   * 租户级角色不看 scope：租户管理员手里的权限已经覆盖了全部 action，
+   * 再按 action 比一遍只是重复判断。
+   */
+  private async assertRoleAssignable(tenantId: string, roleId: string, actorId: string): Promise<void> {
+    const role = await this.prisma.role.findUnique({ where: { id: roleId }, select: { scope: true, key: true } });
+    if (role?.scope !== 'PLATFORM') return;
+    const memberships = await this.prisma.membership.findMany({
+      where: { tenantId, userId: actorId },
+      select: { role: { select: { scope: true } } },
+    });
+    if (!memberships.some((m) => m.role.scope === 'PLATFORM')) {
+      throw new ForbiddenException(
+        `PRIVILEGE_ESCALATION: 平台级角色（${role.key}）只能由平台级管理员分配`,
+      );
+    }
+  }
+
   private async resolveRole(tenantId: string, keyOrId: string): Promise<{ id: string; key: string }> {
     const role = /^[0-9a-f-]{36}$/i.test(keyOrId)
       ? await this.prisma.role.findFirst({ where: { id: keyOrId, tenantId, isSystem: false } })
@@ -452,7 +483,10 @@ export class AgentService {
    * 采用「按 id upsert 回来 + 删掉快照里没有的行」，而不是「整表清空再插」：
    *   - 子表 upsert 时父行已存在，外键不会断
    *   - 只碰本租户的行，其他租户不受影响
-   *   - 中途失败时已经写回去的行是幂等的，重跑一次即可
+   *
+   * **整段在一个事务里**：逐行 upsert + 逐表 deleteMany 若中途失败，
+   * 会留下「写了一半、删了一半」的混合态 —— 那比还原失败更难收拾。
+   * 事务超时给足（默认 5s 对整租户还原远远不够）。
    */
   async restoreSnapshot(
     tenantId: string,
@@ -478,37 +512,68 @@ export class AgentService {
     const direct = SNAPSHOT_TABLES.filter((t) => t.scope === 'direct');
     const children = SNAPSHOT_TABLES.filter((t) => t.scope === 'child');
 
-    // 先按「父表在前」写回，保证子表 upsert 时父行已经存在
-    const writeOrder = [...direct, ...children];
-    for (const spec of writeOrder) {
-      const rows = data[spec.table] ?? [];
-      const model = (this.prisma as unknown as Record<string, { upsert: (a: unknown) => Promise<unknown> }>)[spec.table];
-      for (const row of rows) {
-        await model.upsert({ where: { id: (row as { id: string }).id }, create: row, update: row });
-      }
-      restored[spec.table] = rows.length;
-    }
+    // 整段还原放进一个事务：要么全成，要么全不成
+    await this.prisma.$transaction(
+      async (tx) => {
+        const db = tx as unknown as Record<string, {
+          upsert: (a: unknown) => Promise<unknown>;
+          deleteMany: (a: unknown) => Promise<{ count: number }>;
+          findMany: (a: unknown) => Promise<Record<string, unknown>[]>;
+        }>;
 
-    // 再删掉「快照之后才出现」的行。子表先删，否则父表删除会被外键挡住。
-    if (dropNewer) {
-      const model = (this.prisma as unknown as Record<string, { deleteMany: (a: unknown) => Promise<{ count: number }> }>);
-      for (const spec of [...children, ...direct]) {
-        if (spec.scope === 'direct') {
-          const keep = (data[spec.table] ?? []).map((r) => String(r.id));
-          const where = keep.length === 0 ? { tenantId } : { tenantId, id: { notIn: keep } };
-          const res = await model[spec.table].deleteMany({ where });
-          removed[spec.table] = res.count;
-        } else if (spec.fk) {
-          const parentRows = data[spec.parent!] ?? [];
-          const keep = parentRows.map((r) => String(r.id));
-          const where = keep.length === 0 ? { [spec.fk!]: { in: ['__none__'] } } : { [spec.fk!]: { notIn: keep } };
-          const res = await model[spec.table].deleteMany({ where });
-          removed[spec.table] = res.count;
+        // 先按「父表在前」写回，保证子表 upsert 时父行已经存在
+        const writeOrder = [...direct, ...children];
+        for (const spec of writeOrder) {
+          const rows = data[spec.table] ?? [];
+          const model = db[spec.table];
+          for (const row of rows) {
+            await model.upsert({ where: { id: (row as { id: string }).id }, create: row, update: row });
+          }
+          restored[spec.table] = rows.length;
         }
-      }
-    }
 
-    await this.prisma.changeSnapshot.update({ where: { id }, data: { restoredAt: new Date() } });
+        // 再删掉「快照之后才出现」的行。子表先删，否则父表删除会被外键挡住。
+        if (dropNewer) {
+          for (const spec of [...children, ...direct]) {
+            if (spec.scope === 'direct') {
+              const keep = (data[spec.table] ?? []).map((r) => String(r.id));
+              const where = keep.length === 0 ? { tenantId } : { tenantId, id: { notIn: keep } };
+              const res = await db[spec.table].deleteMany({ where });
+              removed[spec.table] = res.count;
+            } else if (spec.fk) {
+              // 子表（extractedField / extractionDeficiency / reviewConfirmation / orderNote）
+              // **行上没有 tenantId**，只有指向父行的外键。
+              // 直接按 `notIn(快照里的父行)` 删 = 把**别的租户**挂在别的父行上的子行也删了。
+              // 所以先把「本租户当前的父行 id」查出来，删除条件取交集：
+              //   fk ∈ 本租户当前父行 且 fk ∉ 快照里的父行
+              // 别的租户的父行 id 不在本租户集合里，永远匹配不上。
+              const parentModel = db[spec.parent!];
+              const currentParents = await parentModel.findMany({ where: { tenantId }, select: { id: true } });
+              const currentIds = currentParents.map((r) => String(r.id));
+              if (currentIds.length === 0) {
+                // 本租户当前没有父行 → 本租户不可能有子行（外键约束），一条都不用删
+                removed[spec.table] = 0;
+                continue;
+              }
+              const keep = (data[spec.parent!] ?? []).map((r) => String(r.id));
+              // keep 为空 = 快照里根本没有这些父行 → 本租户现有的子行全是「快照之后才有的」，全删。
+              // （原来的 `in: ['__none__']` 是条永远匹配不上的假条件，等于「新建父行的子行永远删不掉」）
+              const where = keep.length === 0
+                ? { [spec.fk!]: { in: currentIds } }
+                : { [spec.fk!]: { notIn: keep, in: currentIds } };
+              const res = await db[spec.table].deleteMany({ where });
+              removed[spec.table] = res.count;
+            }
+          }
+        }
+
+        // 标记已还原也放在事务里：失败时不能留下「标记成已还原、内容却是半截」的快照
+        await tx.changeSnapshot.update({ where: { id }, data: { restoredAt: new Date() } });
+      },
+      // 整租户还原要写很多行，默认 5s 的交互式事务超时远远不够
+      { timeout: 300_000, maxWait: 15_000 },
+    );
+
     this.logger.warn(`快照已还原 snapshot=${id} tenant=${tenantId} actor=${tenantId} removed=${JSON.stringify(removed)}`);
     return { ok: true, restored, removed, warning: CAPABILITY_NOTE };
   }

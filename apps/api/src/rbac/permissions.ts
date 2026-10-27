@@ -80,6 +80,11 @@ export const WRITE_IMPLIES_READ: Record<string, string> = {
   'content:generate': 'content:read',
   'cs:write': 'cs:read',
   'benchmark:write': 'benchmark:read',
+  // 这两组漏登记过，后果都是「明明有写权限却被读接口挡在门外」：
+  //   knowledge:manage 的角色调 POST /knowledge/docs/search（要 knowledge:read）→ 403
+  //   content:extract  的角色看不了 GET /media/assets（要 content:read）→ 403
+  'knowledge:manage': 'knowledge:read',
+  'content:extract': 'content:read',
 };
 
 /**

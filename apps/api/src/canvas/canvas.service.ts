@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { MediaService, isChargedError } from '../media/media.service.js';
+import { IdempotencyService } from '../common/idempotency.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import type { CreateConversationDto, CreateTurnDto, UpdateConversationDto, UpdateTurnDto } from './canvas.schemas.js';
 
@@ -40,6 +41,41 @@ interface JobParams {
   parentId?: string | null;
 }
 
+/**
+ * 允许「补跑」的作业状态。
+ *
+ * failed  = 失败且**没扣**额度（失败发生在扣额度之前）→ 补跑正常扣一次
+ * unknown = 已扣额度但结果待核对 → 补跑**不再扣第二次**（alreadyCharged），且只有一次机会
+ * pending = 首次执行
+ * done / running / interrupted 不在其中：已经有结果的不用重跑，进行中的不该被顶掉。
+ */
+const RERUNNABLE_JOB_STATUS = ['pending', 'failed', 'unknown'];
+
+/** 补跑端点的执行结果：不再是「什么都不做也不报错」 */
+export interface JobRunResult {
+  /** 是否真的执行了（false = 没有可执行的作业） */
+  ran: boolean;
+  /** 作业当前状态 */
+  status: string;
+  /** 没执行的原因（ran=false）或失败原因（ran=true 且失败） */
+  reason?: string;
+  /** 给人和 Agent 看的白话说明（reason 的展开，省得各自去猜代码） */
+  message?: string;
+  /** 产出物 id（成功时） */
+  assetId?: string;
+}
+
+/**
+ * 每个已扣额度的作业允许的**免费补跑**次数：1 次。
+ *
+ * unknown = 额度已经扣了，但没拿到结果。此时补跑**不再扣用户额度**（用户已经付过这一笔），
+ * 可上游 API 是实打实的成本 —— 不设上限，「反复点补跑」就成了一条白烧平台额度的路。
+ *
+ * 用抢占式（唯一约束）实现：并发重复点只有一个能抢到，抢不到的直接返回明确原因。
+ * 抢占记录**不释放**：这一次机会花掉就没了，要再来得重新发起（重新发起会正常计费）。
+ */
+const FREE_RERUN_KEY_PREFIX = 'canvas-free-rerun:';
+
 @Injectable()
 export class CanvasService implements OnModuleInit {
   private readonly logger = new Logger(CanvasService.name);
@@ -47,6 +83,7 @@ export class CanvasService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly media: MediaService,
+    private readonly idem: IdempotencyService,
   ) {}
 
   /**
@@ -279,12 +316,47 @@ export class CanvasService implements OnModuleInit {
   /**
    * 执行出图：调 MediaService.generateImage（扣额度在其中完成，本服务不重复扣），
    * 成功后作业置 done + 结果 URL 追加进对应 assistant 轮的变体，失败则两端一起置 failed。
-   * 幂等：非 pending 的作业直接返回，避免重复扣费与重复追加变体。
+   *
+   * 可重跑的状态（作业失败后重跑是这个端点存在的唯一理由）：
+   *   - pending   首次执行
+   *   - failed    失败且**没扣**额度（失败发生在扣额度之前）→ 补跑正常扣一次
+   *   - unknown   已扣额度但结果待核对 → 补跑**不再扣第二次**（alreadyCharged）
+   * done / running / interrupted 不重跑：已经有结果的不用重跑，进行中的不该被顶掉。
+   *
+   * 幂等：作业级 clientRequestId —— 同一个作业只可能有一份产物。
+   * 补跑命中已有产物时直接复用，不再出图也不再扣额度。
    */
-  async runJob(tenantId: string, userId: string, jobId: string): Promise<void> {
+  async runJob(tenantId: string, userId: string, jobId: string): Promise<JobRunResult> {
     try {
       const job = await this.prisma.generationJob.findFirst({ where: { id: jobId, tenantId } });
-      if (!job || job.status !== 'pending') return;
+      if (!job) {
+        return { ran: false, status: 'not_found', reason: 'JOB_NOT_FOUND', message: '作业不存在或不属于当前租户' };
+      }
+      if (!RERUNNABLE_JOB_STATUS.includes(job.status)) {
+        return {
+          ran: false,
+          status: job.status,
+          reason: 'JOB_NOT_RERUNNABLE',
+          message: `作业当前状态是「${job.status}」，不需要（也不能）补跑`,
+        };
+      }
+
+      // 已扣额度的作业补跑是**免费**的：用户已经为这一笔付过钱了。
+      // 但上游 API 的成本是真的 —— 所以给一次免费补跑机会（抢占式，并发重复点只有一个能抢到）。
+      // 机会用完还想要，只能重新发起一次新的生成（那一笔会正常计费）。
+      const isFreeRerun = job.status === 'unknown';
+      if (isFreeRerun) {
+        const claim = await this.idem.claim(tenantId, `${FREE_RERUN_KEY_PREFIX}${job.id}`, 'canvas_free_rerun');
+        if (!claim.fresh) {
+          return {
+            ran: false,
+            status: job.status,
+            reason: 'FREE_RERUN_ALREADY_USED',
+            message: '这次免费补跑机会已经用过了。要再出图请重新发起一次生成（会重新计费）。',
+          };
+        }
+      }
+
       const params = job.params as unknown as JobParams;
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { status: 'running' } });
 
@@ -298,11 +370,18 @@ export class CanvasService implements OnModuleInit {
         ...(params.imageAssetId && params.maskDataUrl
           ? { imageAssetId: params.imageAssetId, maskDataUrl: params.maskDataUrl }
           : {}),
+        // 作业级幂等键：同一个作业只有一份产物（补跑不会出第二张图）。
+        // 免费补跑换一把键：上一把键的幂等记录还占着（那笔钱已经花掉了，不能让它再跑一次），
+        // 免扣靠 alreadyCharged 标志，不靠换键 —— 换键只是为了避开已占用的幂等记录。
+        clientRequestId: isFreeRerun ? `canvas-job:${job.id}:rerun` : `canvas-job:${job.id}`,
+        // unknown = 上一次已经扣过额度（扣了钱却没出图），补跑不能再扣第二次
+        alreadyCharged: isFreeRerun,
         title: 'AI 画布',
       });
 
       await this.prisma.generationJob.update({ where: { id: job.id }, data: { status: 'done', resultUrl: asset.url, error: null } });
       await this.appendVariant(params.turnId, asset.url);
+      return { ran: true, status: 'done', assetId: asset.id };
     } catch (error) {
       const reason = this.errorText(error);
       // 扣了额度却没出图，不等于「没花钱的失败」。标成 unknown（结果待核对），
@@ -320,6 +399,14 @@ export class CanvasService implements OnModuleInit {
       } catch {
         // 收尾失败（如进程正在关闭）不再抛出：作业状态已尽力落库
       }
+      return {
+        ran: true,
+        status,
+        reason,
+        message: status === 'unknown'
+          ? '这次生成已经扣了额度但没拿到结果，状态记为「待核对」。可以补跑一次（不重复扣额度），补跑机会只有一次。'
+          : '这次生成失败（未扣额度），可以直接补跑。',
+      };
     }
   }
 

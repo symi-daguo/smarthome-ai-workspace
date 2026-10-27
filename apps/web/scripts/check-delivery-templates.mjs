@@ -463,5 +463,150 @@ check(
 );
 clearPageImageOverrides();
 
+// —— 15. 财务三模块：附加费 / 页数核算 / 额度换算 ——
+// 这三个模块直接决定「客户看到的钱」：
+// 附加费算错 → 报价单多收钱；页数算错 → 交付件少几页；
+// 额度换算错 → 用户看到的余额与实际扣费对不上。
+// 判据一律落在**算出来的数字**上，不看界面、不看文案。
+const { feeAmount, feesTotal } = await import('../src/lib/quoteFees.ts');
+const { CORE_MODULES, PAGE_COUNT_MAX, materialPageMinimum, resolvePageCount, estimateCost } =
+  await import('../src/lib/pageBudget.ts');
+const { tokenToYuan } = await import('../src/lib/money.ts');
+
+const fee = (mode, amount) => ({ name: 'x', mode, amount });
+const noMaterial = { floorplanCount: 1, renderCount: 0 };
+
+check(
+  '附加费：三种模式各按自己的口径计（none=0 / fixed=填写额 / percent=小计×百分比）',
+  feeAmount(fee('none', 99999), 10000) === 0
+    && feeAmount(fee('fixed', 200), 10000) === 200
+    && feeAmount(fee('percent', 3), 10000) === 300,
+);
+check(
+  '附加费：0% 费率计 0 元；负费率按原公式为负（不静默夹成 0，错配置要看得见）',
+  feeAmount(fee('percent', 0), 10000) === 0
+    && feeAmount(fee('percent', -10), 10000) === -1000,
+);
+check(
+  '附加费：超大费率按原公式放大（1000000% × 1 元 = 10000 元，不做上限截断）',
+  feeAmount(fee('percent', 1000000), 1) === 10000,
+);
+check(
+  '附加费：合计等于逐项相加（空列表 0，单项等于该项，none 项不参与）',
+  feesTotal([], 10000) === 0
+    && feesTotal([fee('fixed', 200)], 10000) === 200
+    && feesTotal([fee('fixed', 200), fee('percent', 3), fee('none', 999)], 10000) === 500,
+);
+check(
+  `页数：NaN 兜底为沟通模块基数（${CORE_MODULES} 页）`,
+  resolvePageCount(Number.NaN, noMaterial, 'standard') === CORE_MODULES,
+);
+check(
+  `页数：低于下限夹到 ${CORE_MODULES}、高于上限夹到 ${PAGE_COUNT_MAX}`,
+  resolvePageCount(3, noMaterial, 'standard') === CORE_MODULES
+    && resolvePageCount(99, noMaterial, 'standard') === PAGE_COUNT_MAX,
+);
+check(
+  '页数：素材下限高于所选页数时按素材下限算（9 + 2 张额外户型图 + 2 个素材页 = 13）',
+  resolvePageCount(10, { floorplanCount: 3, renderCount: 2 }, 'standard') === 13,
+);
+check(
+  '页数：私宅版至少留 1 页场景演示（10 页 vs 标准版 9 页）',
+  materialPageMinimum(noMaterial, 'private') === 10
+    && materialPageMinimum(noMaterial, 'standard') === CORE_MODULES,
+);
+check(
+  '出图费用：四舍五入到分（9 页 medium 9.00 / high 14.40 / low 5.40，未知画质回落 medium）',
+  estimateCost(9) === '9.00'
+    && estimateCost(9, 'high') === '14.40'
+    && estimateCost(9, 'low') === '5.40'
+    && estimateCost(3, 'nope') === '3.00',
+);
+check(
+  '额度换算：比例恒为 100 token = ¥1.00（占比归一，不因改动漂成别的比例）',
+  tokenToYuan(100) === '¥1.00' && tokenToYuan(0) === '¥0.00',
+);
+/** 元 → 分（避免浮点误差，0.1 + 0.2 那种） */
+const fen = (yuan) => Math.round(Number(yuan.replace('¥', '')) * 100);
+check(
+  '额度换算：整数 token 四舍五入到分不失真，逐笔换算合计 = 一次换算（不丢 1 分）',
+  tokenToYuan(1) === '¥0.01'
+    && fen(tokenToYuan(1)) * 3 === fen(tokenToYuan(3))
+    && fen(tokenToYuan(123)) === 123,
+);
+// 预算分配建议：算式在纯 TS 模块 lib/budgetSplit.ts 里（.tsx 带 JSX，Node 里 import 不了），
+// 所以这里能**直接调用**它断言，而不是在源码里正则扒数字。
+//
+// 为什么这条必须有：分摊算式曾写成 `budgetTotal * percent * 10 / 10` ——
+// percent 是百分数（22 = 22%）却按 `* 10` 算，差 100 倍：
+// 预算 13 万时「安防 22%」显示成 286 万，界面上的合计凭空多出 1700 万，
+// 而且这个错值会落库、还会作为生成提示词的硬约束传给模型。
+const { ECOSYSTEM_SPLIT, splitAmount, buildBudgetSplit } = await import('../src/lib/budgetSplit.ts');
+const splitPercents = ECOSYSTEM_SPLIT.map((r) => r.percent);
+check(
+  '预算分配建议：各项占比合计 100%（比例写错，分摊总额就对不上）',
+  splitPercents.length === 6 && splitPercents.reduce((a, b) => a + b, 0) === 100,
+  splitPercents.join(' + '),
+);
+check(
+  '预算分配建议：百分数按 /100 折算（预算 13 万 × 安防 22% = 2.9 万，不是 286 万）',
+  splitAmount(22, null, 13) === 2.9,
+  `实际 ${splitAmount(22, null, 13)}`,
+);
+check(
+  '预算分配建议：六项分摊合计等于预算总额（0.1 万精度内）',
+  Math.abs(
+    Object.values(buildBudgetSplit({}, 13)).reduce((a, b) => a + b, 0) - 13,
+  ) <= 0.1,
+  Object.entries(buildBudgetSplit({}, 13)).map(([k, v]) => `${k}=${v}`).join(' '),
+);
+check(
+  '预算分配建议：门店改过的金额优先于建议占比，且原样进入提交映射',
+  splitAmount(22, 5.5, 13) === 5.5 && buildBudgetSplit({ security: 5.5 }, 13).安防 === 5.5,
+);
+check(
+  '预算分配建议：没填预算时各项为 0（不是 NaN、也不是按 0 预算硬算）',
+  splitAmount(22, null, null) === 0 && Object.values(buildBudgetSplit({}, null)).every((v) => v === 0),
+);
+check(
+  '预算分配建议：提交映射的键是生态中文名（要直接进提示词、也要让 Agent 读得懂）',
+  Object.keys(buildBudgetSplit({}, 13)).join(',') === '安防,灯光,遮阳,影音,暖通,网络',
+);
+
+// —— 16. 页型配图：预算页 / 报价页 / 其它页型都走同一套取图口径 ——
+// 预算页与报价页的页眉横幅是这一轮加的（与 PPTX 侧 bannerPanel 同一位置语义）。
+// 判据：① 取图口径仍收敛在 resolvePageImage 一处
+// ② 预算页与报价页确实取得到横幅图 ③ 其它页型不受影响
+// ④ 户型页依然没有配图落位（返回空串是正常情况，不是异常）
+clearPageImageOverrides();
+check(
+  '页型配图：预算页与报价页都取得到横幅配图',
+  resolvePageImage(pageOf('budget')) !== '' && resolvePageImage(pageOf('quote')) !== '',
+);
+check(
+  '页型配图：其它页型取图结果仍等于 PAGE_IMAGE 常量（横幅改动没影响它们）',
+  resolvePageImage(pageOf('cover')) === PAGE_IMAGE.cover
+    && resolvePageImage(pageOf('needs')) === PAGE_IMAGE.needs
+    && resolvePageImage(pageOf('delivery')) === PAGE_IMAGE.delivery,
+);
+check(
+  '页型配图：户型页没有配图落位（返回空串是正常情况）',
+  resolvePageImage(pageOf('floorplan')) === '',
+);
+check(
+  '页型配图：PlanSlide 的预算页与报价页都接了顶部横幅（同一张图、同一位置语义）',
+  (slideSrc.match(/<Banner\b/g) ?? []).length === 2
+    && slideSrc.includes('Banner src={pageImage(page)}'),
+);
+check(
+  '页型配图：PlanSlide 的配图一律走真正的 <img>（不再用 CSS 背景图承载）',
+  slideSrc.includes('<img') && !/background:\s*`url\(/.test(slideSrc),
+);
+const printSrc = readFileSync(join(WEB_SRC, 'pages/PlanPrintView.tsx'), 'utf8');
+check(
+  '打印视图：打印前等图加载完，并带超时兜底（不会无限等）',
+  printSrc.includes('PRINT_IMAGE_TIMEOUT_MS') && printSrc.includes('Promise.race'),
+);
+
 console.log(`\n小计: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

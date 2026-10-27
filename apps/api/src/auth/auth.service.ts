@@ -2,18 +2,12 @@ import { BadRequestException, ConflictException, Injectable, UnauthorizedExcepti
 import { JwtService } from '@nestjs/jwt';
 import argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.module.js';
+import { isUniqueViolation } from '../common/prisma-error.js';
 import type { LoginDto, RegisterDto } from './auth.schemas.js';
 
 // 新注册租户默认额度：入门版点数 80,000 按 1:1 折算为 token
 const DEFAULT_TENANT_TOKENS = 80_000;
 
-/** Prisma 唯一约束冲突错误码：命中 User.phone 的 @unique */
-const UNIQUE_VIOLATION = 'P2002';
-
-/** 判断是否唯一约束冲突：避免把原始数据库错误抛给前端 */
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === UNIQUE_VIOLATION;
-}
 
 @Injectable()
 export class AuthService {

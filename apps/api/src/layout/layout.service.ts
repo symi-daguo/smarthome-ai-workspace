@@ -302,7 +302,13 @@ export class LayoutService {
   async summary(tenantId: string, id: string) {
     const row = await this.detail(tenantId, id);
     const points = (Array.isArray(row.points) ? row.points : []) as { productId: string; name: string; category: string }[];
-    const products = await this.prisma.product.findMany({ where: { id: { in: [...new Set(points.map((p) => p.productId))] } } });
+    // 租户隔离：layoutPoints 里的 productId 是**客户端直接传进来的数组**，未经归属校验。
+    // 不加租户条件就等于「凭一个 id 就能读出别家租户的产品名与价格区间」。
+    // 口径与产品列表一致：公共库（tenantId=null）+ 本租户。
+    const ids = [...new Set(points.map((p) => p.productId).filter((v): v is string => Boolean(v)))];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: ids }, OR: [{ tenantId: null }, { tenantId }] },
+    });
     const byId = new Map(products.map((p) => [p.id, p]));
     const agg = new Map<string, { name: string; category: string; qty: number; priceMin: number; priceMax: number }>();
     for (const p of points) {

@@ -64,8 +64,12 @@ function slug(text) {
   return text
     .trim()
     .toLowerCase()
-    .replace(/[`*_~]/g, '')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/[`*~]/g, '')
+    // 下划线要保留：GitHub 的 github-slugger 不删下划线
+    // （它删的是 ASCII 标点与符号，`_` 是 0x5F，正好落在它跳过的那个区间里）。
+    // 这里以前把它删了，于是「标题含下划线 + 锚点链接指向它」会判成死链（误报挡住提交），
+    // 反过来写错锚点又能放过去（GitHub 上是死链）。
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
     .replace(/\s+/g, '-');
 }
 
@@ -105,8 +109,29 @@ for (const file of files) {
   if (fence) report(rel, `代码块未闭合（始于第 ${fence.line} 行）`);
 
   // --- 2. 表格列数一致 ---
+  //
+  // 必须跳过代码块内的行：文档里贴一段含 markdown 表格的代码示例
+  // （表头 2 列、数据行 1 列）不是表格，是代码 —— 早先这里没判 fence，
+  // 会报「第 N 行列数 1 ≠ 表头 2（表格会渲染错位）」，把 CI 门禁弄红，
+  // 而报错指向一个根本不存在的「表格渲染错位」。
+  const inCode = new Set();
+  {
+    let fence = null;
+    for (const [i, line] of lines.entries()) {
+      const m = line.match(/^\s*(```+|~~~+)/);
+      if (!m) {
+        if (fence) inCode.add(i);
+        continue;
+      }
+      const marker = m[1][0];
+      if (fence === null) fence = marker;
+      else if (marker === fence) fence = null;
+      inCode.add(i);
+    }
+  }
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
+    if (inCode.has(i)) continue;
     if (!/^\s*\|.*\|\s*$/.test(line)) continue;
     // 表头下一行必须是分隔行
     const next = lines[i + 1] ?? '';
@@ -117,6 +142,7 @@ for (const file of files) {
     let j = i + 2;
     for (; j < lines.length; j += 1) {
       const row = lines[j];
+      if (inCode.has(j)) break;
       if (!/^\s*\|.*\|\s*$/.test(row)) break;
       if (cols(row) !== head) {
         report(rel, `第 ${j + 1} 行列数 ${cols(row)} ≠ 表头 ${head}（表格会渲染错位）`);

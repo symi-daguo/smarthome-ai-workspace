@@ -290,7 +290,9 @@ export function ProductCenter(): ReactNode {
   const exportProducts = (format: 'csv' | 'json'): void => {
     const token = tokenStore.get();
     const url = `${import.meta.env.VITE_API_BASE_URL ?? ''}/api/products/export?scope=mine&format=${format}`;
-    const fileName = `products-${new Date().toISOString().slice(0, 10)}.${format}`;
+    // 文件名用**本地日期**：`toISOString()` 取的是 UTC 日期，东八区每天 00:00~07:59
+    // 会把今天的导出写成昨天。`toLocaleDateString('sv')` 就是 YYYY-MM-DD。
+    const fileName = `products-${new Date().toLocaleDateString('sv')}.${format}`;
     if (!token) {
       message.warning('未登录，无法导出');
       return;

@@ -41,7 +41,8 @@ interface DesktopConfigBody {
  * 覆盖两条主线：
  * 1. **非桌面端模式下端点不存在**（404）—— 云服务器部署里不该有这组接口；
  * 2. **桌面端模式下读写正常**，且写配置**绝不破坏**桌面端自己的字段
- *    （jwtSecret / dbPort / apiPort / migrated —— 那些一丢，桌面端下次启动就得重建）。
+ *    （jwtSecret / dbPort / apiPort —— 那些一丢，桌面端下次启动就得重建）。
+ *    旧版本配置里的迁移标记也算在内：API 不认识它，也**不能**把它删掉。
  */
 export async function assertDesktopConfigAssertions(ctx: DesktopConfigSmokeContext): Promise<void> {
   const { check, request, base, auth, roAuth } = ctx;
@@ -53,7 +54,7 @@ export async function assertDesktopConfigAssertions(ctx: DesktopConfigSmokeConte
   const SECRET = 'smoke-jwt-secret';
   const TOKEN = 'smoke-tts-token-1234';
 
-  // 一份「桌面端真实长什么样」的配置文件：私有字段（密钥/端口/迁移标记）必须原样活下来
+  // 一份「桌面端真实长什么样」的配置文件：私有字段（密钥/端口/旧版迁移标记）必须原样活下来
   writeFileSync(
     cfgPath,
     JSON.stringify(
@@ -125,7 +126,7 @@ export async function assertDesktopConfigAssertions(ctx: DesktopConfigSmokeConte
       );
       const after = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
       check(
-        '保存只改请求里的字段：桌面端私有字段（jwtSecret/端口/迁移标记）一个都没丢',
+        '保存只改请求里的字段：桌面端私有字段（jwtSecret/端口/旧版迁移标记）一个都没丢',
         after.jwtSecret === SECRET &&
           after.dbPort === 55432 &&
           after.apiPort === 30800 &&

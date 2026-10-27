@@ -8,7 +8,7 @@
  *
  * 报价清单必须由「真实点位 + 产品库价格」推出：
  *   数量 = 该款设备在平面图上的点位个数
- *   单价 = 产品库的参考零售价（priceRetail）
+ *   单价 = 产品库的参考零售价（priceRetail；没填时回退 priceMax，见 quoteUnitPrice）
  * 这样清单与平面图天然一一对应，客户翻两页就能对着核。
  *
  * 口径：**不含**辅材、布线、安装与调试费用（页面上写明了）——
@@ -60,6 +60,42 @@ export interface QuoteProduct {
   name: string;
   category: string;
   priceRetail?: number | null;
+  /** 指导价：priceRetail 为 0 时的兜底（见 quoteUnitPrice） */
+  priceMax?: number | null;
+}
+
+/**
+ * 报价单价口径（**唯一真源**）。
+ *
+ * 规则：priceRetail 优先；它是 0（没填）时回退 priceMax；两个都没有才是 0。
+ *
+ * 为什么必须回退 priceMax：建产品时 priceRetail 缺省 0，而
+ * `syncLegacyPriceRange` 在两个价格都没填时直接 return，priceMax 保留用户填的值 ——
+ * 于是「priceMin=699, priceMax=999」的产品会得到 priceRetail=0、priceMax=999。
+ * 只看 priceRetail 的算法算出 ¥0，而前端口径是 `priceRetail || priceMax || 0`（显示 ¥999），
+ * 同一台设备在报价页与分享页/PPTX 里价钱不一样，客户看到的是「报价单上没有这台设备的钱」。
+ *
+ * 三处口径（前端 QuoteStudio、后端报价、户型识别候选）必须一致，
+ * 所以这里抽成一个函数，谁用都调它，别再各写一遍 `||`。
+ */
+export function quoteUnitPrice(
+  product: { priceRetail?: number | null; priceMax?: number | null } | null | undefined,
+): number {
+  return Number(product?.priceRetail || product?.priceMax || 0);
+}
+
+/**
+ * 报价取产品的租户条件（与产品列表同口径：公共库 + 本租户）。
+ *
+ * 报价结果会进**免鉴权的公开分享页** —— 产品查询一旦不带租户条件，
+ * 别的租户的产品与价格就会出现在本页面上。ids 来自客户端传的 layoutPoints，
+ * 未经归属校验，只能靠这个 where 圈死范围。
+ */
+export function quoteProductWhere(
+  tenantId: string,
+  ids: string[],
+): { id: { in: string[] }; OR: { tenantId: null | string }[] } {
+  return { id: { in: ids }, OR: [{ tenantId: null }, { tenantId }] };
 }
 
 /**
@@ -115,7 +151,8 @@ export function buildQuoteSummary(
   const agg = new Map<string, QuoteItem>();
   for (const pt of points) {
     const prod = (pt.productId ? byId.get(pt.productId) : undefined) ?? byName.get(pt.name);
-    const price = Number(prod?.priceRetail ?? 0);
+    // 单价口径与前端 QuoteStudio 一致：priceRetail 为 0 时回退 priceMax（见 quoteUnitPrice）
+    const price = quoteUnitPrice(prod);
     const key = `${pt.category} ${pt.name}`;
     const cur = agg.get(key);
     if (cur) {

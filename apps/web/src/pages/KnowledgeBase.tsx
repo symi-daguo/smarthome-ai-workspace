@@ -239,8 +239,12 @@ export function KnowledgeBase(): ReactNode {
   useEffect(() => {
     api<DocItem[]>('/api/content/extractions/documents')
       .then(setDocs)
-      .catch(() => setDocs([]));
-  }, []);
+      .catch((e: unknown) => {
+        // 静默置空会让用户以为「知识库是空的」—— 先提示，再置空。
+        message.error((e as Error).message || '知识库文档加载失败');
+        setDocs([]);
+      });
+  }, [message]);
 
   const uploadAll = async (): Promise<void> => {
     if (files.length === 0) return;

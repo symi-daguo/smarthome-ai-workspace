@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { withRetry } from '../common/retry.js';
+import { isUniqueViolation } from '../common/prisma-error.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
@@ -59,6 +60,8 @@ interface PlanInput {
   serviceContact: string;
   budgetItems: string;
   budgetSource: string;
+  /** 预算分配建议（万元，键为生态中文名）；门店改过的金额与建议金额都在这里 */
+  budgetSplit: Record<string, number>;
   style: string;
   edition: 'standard' | 'presale' | 'private';
   floorplanTemplate: 'annotated' | 'compare' | 'render';
@@ -250,6 +253,9 @@ export class PlansService {
     }
     // 效果图校验放在**调 LLM 之前**：分组没填就重跑一次生成，代价是白扣一次额度。
     assertRenderAssetsReady(input.renderAssetIds, input.renderAssetMeta);
+    // 效果图也要校验归属：户型图校验了、效果图没校验，
+    // 于是 A 租户可以把 B 租户的素材 id 填进 renderAssetIds，那张图就进了 A 的交付包。
+    await this.assertAssetsOwned(input.tenantId, input.renderAssetIds);
     // 户型图同样要在调 LLM 之前校（归属 + 体积）：过了这关才值得花额度生成
     await this.assertFloorplanAssets(
       input.tenantId,
@@ -267,44 +273,59 @@ export class PlansService {
       input.userId,
     );
 
-    return this.prisma.planProject.create({
-      data: {
-        tenantId: input.tenantId,
-        userId: input.userId,
-        title: input.title,
-        customer: input.customer,
-        area: input.area,
-        budget: input.budget,
-        ecosystem: input.ecosystem,
-        store: input.store,
-        highlights: input.highlights,
-        keySpaces: input.keySpaces,
-        needs: input.needs,
-        extraFloorplanAssetIds: dedupeFloorplanExtras(input.floorplanAssetId, input.extraFloorplanAssetIds),
-        floorplanFloors: alignFloorplanFloors(input.floorplanAssetId, input.extraFloorplanAssetIds, input.floorplanFloors),
-        renderAssetIds: input.renderAssetIds,
-        renderAssetMeta: input.renderAssetMeta as never,
-        priorityNeeds: input.priorityNeeds,
-        excludedItems: input.excludedItems,
-        renovationStage: input.renovationStage,
-        existingDevices: input.existingDevices,
-        serviceEvidence: input.serviceEvidence,
-        serviceScope: input.serviceScope,
-        serviceContact: input.serviceContact,
-        budgetItems: input.budgetItems,
-        budgetSource: input.budgetSource,
-        style: input.style,
-        edition: input.edition,
-        floorplanTemplate: input.floorplanTemplate,
-        markerTemplate: input.markerTemplate,
-        pageCount: pages.length,
-        pages: pages as unknown as never,
-        versionNo: 1,
-        floorplanAssetId: input.floorplanAssetId ?? null,
-        layoutPoints: (input.layoutPoints ?? null) as never,
-        clientRequestId: input.clientRequestId ?? null,
-      },
-    });
+    try {
+      return await this.prisma.planProject.create({
+        data: {
+          tenantId: input.tenantId,
+          userId: input.userId,
+          title: input.title,
+          customer: input.customer,
+          area: input.area,
+          budget: input.budget,
+          ecosystem: input.ecosystem,
+          store: input.store,
+          highlights: input.highlights,
+          keySpaces: input.keySpaces,
+          needs: input.needs,
+          extraFloorplanAssetIds: dedupeFloorplanExtras(input.floorplanAssetId, input.extraFloorplanAssetIds),
+          floorplanFloors: alignFloorplanFloors(input.floorplanAssetId, input.extraFloorplanAssetIds, input.floorplanFloors),
+          renderAssetIds: input.renderAssetIds,
+          renderAssetMeta: input.renderAssetMeta as never,
+          priorityNeeds: input.priorityNeeds,
+          excludedItems: input.excludedItems,
+          renovationStage: input.renovationStage,
+          existingDevices: input.existingDevices,
+          serviceEvidence: input.serviceEvidence,
+          serviceScope: input.serviceScope,
+          serviceContact: input.serviceContact,
+          budgetItems: input.budgetItems,
+          budgetSource: input.budgetSource,
+          budgetSplit: input.budgetSplit as never,
+          style: input.style,
+          edition: input.edition,
+          floorplanTemplate: input.floorplanTemplate,
+          markerTemplate: input.markerTemplate,
+          pageCount: pages.length,
+          pages: pages as unknown as never,
+          versionNo: 1,
+          floorplanAssetId: input.floorplanAssetId ?? null,
+          layoutPoints: (input.layoutPoints ?? null) as never,
+          clientRequestId: input.clientRequestId ?? null,
+        },
+      });
+    } catch (error) {
+      // 并发重放：两个请求都先查到「没有同幂等键的方案」，双双调完 LLM、双双扣费，
+      // 后落库的那个撞上 clientRequestId 的唯一约束。
+      // DB 唯一约束才是最后一道防线，这里把它翻译成「取回先落库的那份」，
+      // 而不是让前端收到一个查不出原因的 500。
+      if (isUniqueViolation(error) && input.clientRequestId) {
+        const existing = await this.prisma.planProject.findFirst({
+          where: { tenantId: input.tenantId, clientRequestId: input.clientRequestId },
+        });
+        if (existing) return { ...existing, deduped: true };
+      }
+      throw error;
+    }
   }
 
   /**
@@ -425,6 +446,33 @@ export class PlansService {
     if (tooBig) throw new BadRequestException(tooBig);
   }
 
+  /** 效果图归属校验：只接受本租户的素材 */
+  private async assertAssetsOwned(tenantId: string, ids: string[]): Promise<void> {
+    const all = [...new Set(ids)].filter(Boolean);
+    if (!all.length) return;
+    const found = await this.prisma.mediaAsset.findMany({
+      where: { id: { in: all }, tenantId },
+      select: { id: true },
+    });
+    if (found.length !== all.length) throw new NotFoundException('ASSET_NOT_FOUND');
+  }
+
+  /**
+   * 点位里的产品 id 必须属于本租户或公共库。
+   *
+   * layoutPoints 是客户端直接传上来的数组，不校验就等于允许把别人的产品 id 写进方案 ——
+   * 报价会按那个产品算钱，交付件里也会出现别人的产品。
+   */
+  private async assertPointProductsOwned(tenantId: string, layoutPoints: unknown): Promise<void> {
+    const ids = [...new Set(quotePointsOf(layoutPoints).map((p) => p.productId).filter((v): v is string => Boolean(v)))];
+    if (!ids.length) return;
+    const found = await this.prisma.product.findMany({
+      where: { id: { in: ids }, OR: [{ tenantId: null }, { tenantId }] },
+      select: { id: true },
+    });
+    if (found.length !== ids.length) throw new NotFoundException('PRODUCT_NOT_FOUND');
+  }
+
   /** 挂接户型图与设备点位（点位编辑器产物 → 空间动线页配图） */
   async attachFloorplan(
     tenantId: string,
@@ -435,6 +483,8 @@ export class PlansService {
     // 额外户型图逐个校验归属；混入他人租户的资源要在这里挡住，不能只看主图
     const extraIds = [...new Set(dto.extraFloorplanAssetIds ?? [])].filter((x) => x && x !== dto.floorplanAssetId);
     await this.assertFloorplanAssets(tenantId, dto.floorplanAssetId, extraIds);
+    // 点位里的产品 id 同样要校验归属（含公共库产品）
+    await this.assertPointProductsOwned(tenantId, dto.layoutPoints);
     // 楼层名与图片一一对应；缺失补空串，避免数组错位导致「二层」贴到「一层」的图上
     const total = 1 + extraIds.length;
     if (total > FLOORPLAN_MAX_FILES) {
@@ -595,6 +645,15 @@ export class PlansService {
       `客户称呼：${input.customer || '（未提供，用"您"）'}`,
       `面积：${input.area || '未提供'}`,
       `预算：${input.budget || '未提供（给出常见区间）'}`,
+      // 预算分配：门店在「预算分配建议」条上确认的金额。写进提示词，
+      // 预算页的分项才会按这份分配来写 —— 否则门店改过的数字与客户看到的对不上。
+      ...(Object.keys(input.budgetSplit).length
+        ? [
+          `门店已确认的预算分配（万元）：${Object.entries(input.budgetSplit)
+            .map(([name, amount]) => `${name} ${amount}`)
+            .join('、')}；预算页各分项必须按这份分配写，下限-上限区间的中值取该金额`,
+        ]
+        : []),
       `智能生态：${input.ecosystem || '米家 / 可扩展全屋智能'}`,
       `门店品牌：${input.store || ''}`,
       `服务亮点：${input.highlights || ''}`,
@@ -613,7 +672,11 @@ export class PlansService {
       '- heading：该页大标题（封面页为"项目名｜面积 + 全屋智能生活方案"式主张句）；',
       '- subtitle：一句话副标题/引言行（20 字内，封面页为客户价值主张）；',
       '- body：该页核心说明（60-140 字，面向终端客户可读）；',
-      '- bullets：3-6 条要点；封面页为 3 条价值卡（格式"标题：一句话"）；空间/场景页每条格式"要点名：说明"；预算页每条格式"分项名：下限-上限"（纯数字区间，单位元，如"智能灯光系统：6000-12000"，不要写"元"字）；交付页每条格式"阶段名｜一句话说明"（如"复测对接｜现场确认点位与预留"）；',
+      '- bullets：3-6 条要点；封面页为 3 条价值卡（格式"标题：一句话"）；空间/场景页每条格式"要点名：说明"；预算页每条格式"分项名：下限-上限"（纯数字区间，单位元，如"智能灯光系统：6000-12000"，不要写"元"字）；交付页每条格式"阶段名｜一句话说明"（如"复测对接｜现场确认点位与预留"）；'
+        + (Object.keys(input.budgetSplit).length
+          // 分项名必须跟门店确认的生态名一致：PPT 预算页与报价单要能对上
+          ? '预算页的分项名必须用上面「门店已确认的预算分配」里给出的生态名；'
+          : ''),
       '- narration：本页讲解稿（销售当面讲解用，80-150 字口语化，客户阅读模式不显示）；',
       '- quote：该页底部一句话引言（25 字内，价值收束语，如"把钱花在每天用得上的地方"）。',
       '',
@@ -753,8 +816,10 @@ export class PlansService {
     const [products, tenant] = await Promise.all([
       ids.length
         ? this.prisma.product.findMany({
-            where: { id: { in: ids } },
-            select: { id: true, name: true, category: true, priceRetail: true },
+            // 必须带租户条件：这份报价会进**免鉴权**的公开分享页，
+            // 不按租户过滤等于把别的租户的产品与价格公开出去。
+            where: { id: { in: ids }, OR: [{ tenantId: null }, { tenantId }] },
+            select: { id: true, name: true, category: true, priceRetail: true, priceMax: true },
           })
         : Promise.resolve([]),
       this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { installRate: true } }),

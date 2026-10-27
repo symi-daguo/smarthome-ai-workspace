@@ -45,7 +45,7 @@ import {
   theme,
   type MenuProps,
 } from 'antd';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { trackRoute } from '../lib/errorContext';
 import { api } from '../lib/api';
@@ -109,14 +109,20 @@ export function setShowBilling(next: boolean): void {
 /** 顶栏额度胶囊（紫点 + 数字） */
 function TokenPill(): ReactNode {
   const { token } = useToken();
+  const { message } = AntApp.useApp();
   const navigate = useNavigate();
   const [balance, setBalance] = useState<number | null>(null);
 
   useEffect(() => {
     api<TokenBalance>('/api/tenants/current/tokens')
       .then((res) => setBalance(res.tokenBalance))
-      .catch(() => setBalance(null));
-  }, []);
+      .catch((e: unknown) => {
+        // 静默置空只剩一个「--」，用户以为额度是 0。
+        // 先提示取数失败，再置空 —— 胶囊显示「--」而不是「0.00」。
+        message.error((e as Error).message || '额度读取失败');
+        setBalance(null);
+      });
+  }, [message]);
 
   return (
     <Button
@@ -198,12 +204,25 @@ export function MainLayout(): ReactNode {
     };
   }, []);
 
-  // 侧栏历史列表需要方案记录；在路由切换时刷新，保证生成/编辑后及时更新
+  /**
+   * 侧栏历史列表需要方案记录；在路由切换时刷新，保证生成/编辑后及时更新。
+   *
+   * in-flight 去重：连着点几个菜单时同一个 `/api/plans` 会并发多次 ——
+   * 每次切换都打一遍纯属浪费，而且后到的响应可能把先到的覆盖掉（列表顺序错乱）。
+   * 上一次请求还在飞就跳过（列表内容与路由无关，落地的那份就是最新的）。
+   */
+  const plansReq = useRef<Promise<unknown> | null>(null);
   useEffect(() => {
-    api<PlanSidebarItem[]>('/api/plans')
+    if (plansReq.current) return;
+    plansReq.current = api<PlanSidebarItem[]>('/api/plans')
       .then(setPlans)
-      .catch(() => setPlans([]));
-  }, [location.pathname]);
+      .catch((e: unknown) => {
+        // 静默置空会让用户以为「我没有方案」—— 先提示，再置空。
+        message.error((e as Error).message || '方案列表加载失败');
+        setPlans([]);
+      })
+      .finally(() => { plansReq.current = null; });
+  }, [location.pathname, message]);
 
   // 首次登录自动弹出使用说明（按用户 id 记忆，仅弹一次）
   useEffect(() => {

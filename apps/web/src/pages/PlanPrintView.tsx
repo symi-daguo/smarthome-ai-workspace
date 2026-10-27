@@ -10,6 +10,14 @@ import { deliverPages, floorplanListPageNo, quoteListPageNo, type QuoteSummary }
 const { Text } = Typography;
 
 /**
+ * 打印前等图的最长等待（毫秒）。
+ *
+ * 超时就照常打印：已经加载完的图会打进去，慢的那张可能缺，
+ * 但用户至少拿到一份 PDF —— 一直转圈比缺一张图更糟。
+ */
+const PRINT_IMAGE_TIMEOUT_MS = 8000;
+
+/**
  * 方案打印视图 —— 「导出高清 PDF」的落地页。
  *
  * 为什么用浏览器原生打印，而不是在 Node 端转 PPTX：
@@ -121,15 +129,32 @@ export function PlanPrintView(): ReactNode {
     return { pages: r.pages };
   }, [plan, slidePlan]);
 
-  // 图片与字体都到位后再触发打印：提前 print 会打出半张空页
+  /**
+   * 图片与字体都到位后再触发打印：提前 print 会打出半张空页。
+   *
+   * 为什么必须等：配图是真正的 `<img>`（不是 CSS 背景图），
+   * 图没加载完就打印，PDF 里配图位置是一片空白 ——
+   * 门店在页面上看到的预览和客户拿到的 PDF 不是同一份东西。
+   *
+   * 为什么要有超时兜底：`Promise.all` 只要有一张图一直不落地
+   * （弱网、图 404 后被浏览器反复重试）就永远等下去 ——
+   * 用户点了「导出 PDF」，界面一直转圈，比打出半张空页更糟。
+   */
   useEffect(() => {
     if (!plan || !shown.pages.length) return;
     const imgs = [...document.images];
-    const waits = imgs.map((im) => (im.complete ? Promise.resolve() : new Promise<void>((res) => { im.onload = () => res(); im.onerror = () => res(); })));
-    Promise.all(waits)
+    const waits = imgs.map((im) => (im.complete ? Promise.resolve() : new Promise<void>((res) => {
+      // 用 addEventListener 而不是写 im.onload：别覆盖别处挂上去的处理器
+      im.addEventListener('load', () => res(), { once: true });
+      im.addEventListener('error', () => res(), { once: true });
+    })));
+    let timer = 0;
+    const timeout = new Promise<void>((res) => { timer = window.setTimeout(res, PRINT_IMAGE_TIMEOUT_MS); });
+    Promise.race([Promise.all(waits), timeout])
       .then(() => document.fonts?.ready)
       .catch(() => undefined)
       .then(() => {
+        window.clearTimeout(timer);
         setReady(true);
         // 留一帧给浏览器完成布局，否则第一页可能是空白的
         window.setTimeout(() => window.print(), 350);

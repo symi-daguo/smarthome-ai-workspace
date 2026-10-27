@@ -37,8 +37,16 @@ const actions: ErrorContext['actions'] = [];
 let route = typeof location !== 'undefined' ? location.pathname + location.hash : '';
 let lastError: string | null = null;
 
+/**
+ * 时间戳：本地时刻（HH:mm:ss）。
+ *
+ * 为什么不用 `toISOString().slice(11, 19)`：那是 **UTC** 时刻 ——
+ * 东八区用户看到的时间比实际早 8 小时（晚上 8 点提交反馈，记录里写的是 12:00），
+ * 用户拿这段时间去对照自己的操作记录会以为系统乱了。
+ * `toLocaleTimeString('sv')` 就是本地 HH:mm:ss，不用手搓 padStart。
+ */
 function stamp(): string {
-  return new Date().toISOString().slice(11, 19);
+  return new Date().toLocaleTimeString('sv');
 }
 
 /** 记录一次用户操作（去重，避免连点刷屏） */

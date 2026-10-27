@@ -79,8 +79,12 @@ export function MyAssets(): ReactNode {
   useEffect(() => {
     api<MediaRow[]>('/api/media/assets')
       .then(setMedia)
-      .catch(() => setMedia([]));
-  }, []);
+      .catch((e: unknown) => {
+        // 静默置空会让用户以为「我就是没有素材」—— 先提示，再置空。
+        message.error((e as Error).message || '素材列表加载失败');
+        setMedia([]);
+      });
+  }, [message]);
 
   // 重命名：点卡片「重命名」打开 Modal 改写标题（最基本的修改能力）
   const openRename = (id: string, currentTitle: string): void => {
@@ -116,7 +120,13 @@ export function MyAssets(): ReactNode {
     try {
       await api('/api/media/materials/upload', { method: 'POST', body: fd });
       message.success('视频已上传');
-      api<MediaRow[]>('/api/media/assets').then(setMedia).catch(() => undefined);
+      // 刷新失败要说话，但**不清空列表**：上传本身是成功的，
+      // 清空会让用户以为视频没传上去（甚至以为素材被删了）。
+      api<MediaRow[]>('/api/media/assets')
+        .then(setMedia)
+        .catch((e: unknown) => {
+          message.warning(`视频已上传，但列表刷新失败：${(e as Error).message || '请手动刷新页面'}`);
+        });
     } catch (e) {
       message.error((e as Error).message || '上传失败');
     }

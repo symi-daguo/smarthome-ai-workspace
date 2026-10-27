@@ -1,14 +1,8 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.module.js';
+import { isUniqueViolation } from '../common/prisma-error.js';
 import type { CreateAgentDto, UpdateAgentDto } from './agents.schemas.js';
 
-/** Prisma 唯一约束冲突错误码：命中 CustomAgent 的 @@unique([tenantId, name]) */
-const UNIQUE_VIOLATION = 'P2002';
-
-/** 判断是否唯一约束冲突：避免把原始数据库错误抛给前端 */
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === UNIQUE_VIOLATION;
-}
 
 /**
  * 定制智能体服务：租户内的人设/系统提示词管理。

@@ -153,7 +153,7 @@ async function bootstrap(): Promise<void> {
       log,
     });
   }
-  saveConfig({ ...loadConfig(), dbPort, apiPort, migrated: true });
+  saveConfig({ ...loadConfig(), dbPort, apiPort });
 
   // 3) API
   api = await startApi({
@@ -281,9 +281,15 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(bootstrap).catch((e: Error) => {
+  app.whenReady().then(bootstrap).catch(async (e: Error) => {
     log(`启动失败：${e.message}\n${e.stack ?? ''}`);
     dialog.showErrorBox('启动失败', `${e.message}\n\n日志：${logFile}`);
+    // 必须**先关停再退出**：app.exit() 不会触发 before-quit / will-quit，
+    // 而关停逻辑只挂在 before-quit 上 —— 直接退出会把内嵌 PostgreSQL 留在后台
+    // （pg_ctl 起的库不随主进程死），它占着端口与数据目录，
+    // 用户下次点开就会撞端口冲突，从此「点了就打不开」。
+    // shutdown() 是幂等的，正常退出路径重复调用无副作用。
+    await shutdown();
     app.exit(1);
   });
 

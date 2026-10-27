@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.module.js';
 import { LlmService } from '../llm/llm.service.js';
 import { MediaService } from '../media/media.service.js';
 import { TokenService } from '../billing/token.service.js';
+import { quoteUnitPrice } from '../plans/plan-quote.js';
 import { assignByRoom, normalizeRooms, placeByRoom, type DetectCandidate, type DetectedPoint, type DetectedRoom } from './floorplan-points.js';
 
 /**
@@ -115,7 +116,8 @@ export class FloorplanDetectService {
     });
     const out: DetectCandidate[] = [];
     for (const r of rows) {
-      const price = r.priceRetail || r.priceMax || 0;
+      // 单价口径与报价单、前端一致（priceRetail 为 0 时回退 priceMax），别再各写一遍 ||
+      const price = quoteUnitPrice(r);
       if (!price) continue;
       out.push({
         id: r.id,

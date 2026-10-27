@@ -66,11 +66,19 @@ export const PAGE_TYPE_LABEL: Record<PlanPage['type'], string> = {
 /**
  * 页型→实景配图（本地 public/images/cases，按空间语义映射）：
  * c1 客厅落地窗灯带 / c2 家庭影院 / c3 玄关走廊感应灯 / c4 夜间卧室 / c5 餐厅暖光吊灯
+ *
+ * **键集 = 「可配置页型」的唯一来源**：
+ * `pages/PageImages.tsx` 的 `PAGE_TYPES = Object.keys(PAGE_IMAGE)` 直接由它派生，
+ * 所以增删这里的键就等于增删「页型配图」界面上的可配页型。
+ *
+ * 为什么没有 `floorplan`（户型与设备点位）：
+ * 户型页的主体图**就是客户自己的户型图** —— 这一页存在的前提就是客户传了户型图，
+ * 门店再配的任何图都没有落位。留一个勾了不显示的开关，比没有更误导用户
+ * （勾了却看不到，门店只会以为系统坏了）。
+ * 户型页有需要展示的实景时，由门店上传的素材本身承担。
  */
-export const PAGE_IMAGE: Record<PlanPage['type'], string> = {
-  // 户型页优先用门店上传的图，这里只是没上传时的兜底实景
-  floorplan: '/images/cases/c4.jpg',
-  // 报价页是表格式页面，配图只做右侧窄栏点缀
+export const PAGE_IMAGE: Partial<Record<PlanPage['type'], string>> = {
+  // 报价页是表格式页面，配图作页眉横幅用
   quote: '/images/cases/c5.jpg',
   cover: '/images/cases/c1.jpg',
   brand: '/images/cases/c5.jpg',
@@ -113,14 +121,20 @@ const pageImageOverrides = new Map<PlanPage['type'], string>();
 /**
  * 写入覆盖表（整表替换）。
  *
- * 只接受 PAGE_IMAGE 里存在的页型：服务端可能留着历史页型（或手写的脏数据），
- * 那些键不该进覆盖表 —— 否则前端会拿着一个不认识的页型去查图。
+ * 只接受**合法页型**（`PAGE_TYPE_LABEL` 的键 = `PlanPage['type']` 全集）：
+ * 服务端可能留着历史页型（或手写的脏数据），那些键不该进覆盖表 ——
+ * 否则前端会拿着一个不认识的页型去查图。
+ *
+ * 注意判据是「合法页型」而不是「PAGE_IMAGE 的键」：
+ * `floorplan` 已从 PAGE_IMAGE 移除（户型页没有配图落点），
+ * 但服务端可能早就存过一条 floorplan 配图 —— 读回来时不能因此报错，
+ * 留着它也不影响：户型页的主体图是客户自己的户型图，配图不会被画上去。
  */
 export function setPageImageOverrides(map: Record<string, string | undefined>): void {
   pageImageOverrides.clear();
   for (const [pageType, url] of Object.entries(map ?? {})) {
     if (!url) continue;
-    if (!Object.prototype.hasOwnProperty.call(PAGE_IMAGE, pageType)) continue;
+    if (!Object.prototype.hasOwnProperty.call(PAGE_TYPE_LABEL, pageType)) continue;
     pageImageOverrides.set(pageType as PlanPage['type'], url);
   }
 }
@@ -135,11 +149,16 @@ export function clearPageImageOverrides(): void {
  *
  * 场景页原本按副标题关键词细化配图（sceneImage）；
  * 门店给「场景拆解」页配了图就一律用门店自己的，不再按关键词挑。
+ *
+ * **不在 PAGE_IMAGE 里的页型返回空串**（不抛错）：
+ * `floorplan`（户型与设备点位）没有配图落点 —— 它的主体图是客户自己的户型图。
+ * 这里返回空串，调用方（预览 / 导出）就不会去画一张永远轮不到的图。
  */
 export function resolvePageImage(page: PlanPage): string {
   const override = pageImageOverrides.get(page.type);
   if (override) return override;
-  return page.type === 'scene' ? sceneImage(page.subtitle + page.heading) : PAGE_IMAGE[page.type];
+  if (page.type === 'scene') return sceneImage(page.subtitle + page.heading);
+  return PAGE_IMAGE[page.type] ?? '';
 }
 
 /** 卡片阴影（预览端 CSS；PPTX 端用 pptxgenjs shadow 对象） */

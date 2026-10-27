@@ -456,6 +456,17 @@ model PlanProject {
   serviceContact           String   @default("") // 对接人与联系方式（不自动带入登录账号）
   budgetItems              String   @default("") // 已确认参考费用（每行：项目|类别|金额区间）
   budgetSource             String   @default("") // 费用来源与日期
+  /**
+   * 预算分配建议（万元，键为生态标识：security/lighting/shading/media/hvac/network）。
+   *
+   * 此前这个分配只活在浏览器内存里：门店在建议条上改了金额，刷新就没了，
+   * 方案里也没有、Agent 也够不着 —— 客户看到的预算页与门店改过的数字对不上。
+   * 存成 JSON 而不是六列：它是**一张表**（键值对），拆成六列会让
+   * 「新增一个生态」变成一次加列 + 改六处代码的迁移。
+   * 取值范围由应用层校验（DTO），页型/生态清单的唯一来源在前端
+   * data/planThemes.ts，后端不抄一份枚举（抄了就必然漂移）。
+   */
+  budgetSplit              Json     @default("{}")
   // A-K 风格键
   style                    String   @default("A")
   // standard | presale | private

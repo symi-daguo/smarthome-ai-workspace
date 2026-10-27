@@ -19,10 +19,6 @@ export interface DesktopConfig {
   dbPort: number;
   /** 本地 API 端口 */
   apiPort: number;
-  /** 数据库是否已初始化（决定要不要跑 initdb 与建库） */
-  dbInitialized: boolean;
-  /** 是否已跑过 migrate + seed */
-  migrated: boolean;
   /**
    * 预置的管理员凭据是否已经失效（手机号或密码被改过）。
    * 每次启动用「默认手机号 + 默认密码」试登一次：登得进去说明还在用公开示例值，
@@ -83,8 +79,6 @@ export function loadConfig(): DesktopConfig {
           jwtSecret: raw.jwtSecret,
           dbPort: raw.dbPort,
           apiPort: raw.apiPort,
-          dbInitialized: raw.dbInitialized === true,
-          migrated: raw.migrated === true,
           adminPasswordChanged: raw.adminPasswordChanged === true,
           brandName: typeof raw.brandName === 'string' ? raw.brandName : '',
           brandLogoUrl: typeof raw.brandLogoUrl === 'string' ? raw.brandLogoUrl : '',
@@ -101,8 +95,6 @@ export function loadConfig(): DesktopConfig {
     jwtSecret: randomBytes(32).toString('hex'),
     dbPort: 0,
     apiPort: 0,
-    dbInitialized: false,
-    migrated: false,
     adminPasswordChanged: false,
     brandName: '',
     brandLogoUrl: '',

@@ -20,6 +20,20 @@ export const createPlanSchema = z.object({
   serviceContact: z.string().max(2000).optional().default(''),
   budgetItems: z.string().max(2000).optional().default(''),
   budgetSource: z.string().max(2000).optional().default(''),
+  /**
+   * 预算分配建议（万元）。
+   *
+   * 键是**生态的中文名**（如「安防」「灯光」），值是该生态分到的金额。
+   * 用中文名而不是内部 key：这一份数据要直接进生成提示词、也要让 Agent 读得懂，
+   * 键再套一层映射就得在前端与后端各抄一份生态清单，抄了就必然漂移。
+   *
+   * 后端只校验取值形态，生态清单的唯一来源在前端 data/planThemes.ts 的 ECOSYSTEM_SPLIT。
+   */
+  budgetSplit: z
+    .record(z.string().max(20), z.number().min(0).max(1_000_000))
+    .refine((v) => Object.keys(v).length <= 12, '预算分配项过多')
+    .optional()
+    .default({}),
   style: z.string().length(1).default('A'),
   edition: z.enum(['standard', 'presale', 'private']).default('standard'),
   // 交付模版：户型图设计样式 + 产品放置样式（取值见 web/src/data/planTemplates.ts）

@@ -84,7 +84,7 @@ export class MediaController {
   }
 
   /** 重命名我的资料（图片/视频）：最基本的修改能力；公共产品图不可改 */
-  @RequirePermissions('content:read')
+  @RequirePermissions('content:generate')
   @Patch('assets/:id')
   renameAsset(
     @CurrentUser() user: AuthProfile & { activeTenantId?: string },

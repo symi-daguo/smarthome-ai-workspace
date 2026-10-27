@@ -5,6 +5,7 @@ import { customerText } from './planSanitize';
 import { floorplanListPageNo, quoteListPageNo, POINT_ROWS_PER_PAGE, QUOTE_ROWS_PER_PAGE, deliverPages, deliverPointCount, type QuoteSummary } from './planPages';
 import { floorplanTemplate, markerTemplate, floorplanImages, floorplanPageCopy, COMPARE_LEFT_LABEL } from '../data/planTemplates';
 import { getBranding } from './branding';
+import { parseBudget, parseStages } from './planText';
 
 /**
  * 方案 PPT 生成器（16:9 原生可编辑幻灯片）。
@@ -40,6 +41,22 @@ const W = 13.333;const H = 7.5;
 const MX = 0.66; // 左右外边距
 /** 户型页左栏图片框（英寸），与前端卡片的图片区保持同一比例 */
 const FLOOR_BOX: [number, number] = [8.6, 6.15];
+
+/**
+ * 页型配图的**横幅**（英寸）：预算页与报价页的页眉区一条横幅。
+ *
+ * 几何（与前端预览同规则，导出与预览必须长得一样）：
+ * - 横幅：x = MX，w = W - 2*MX，h = 1.0，位于 y = 0.5
+ * - 横幅之下的内容（页码 / 标题 / 正文 / 图表 / 表格 / 引言 / 页脚）依次下移，
+ *   下移量从正文与面板的富余空间里吸收；**页脚与底部引言的位置保持不变**
+ * - 任何元素的 y+h ≤ H - 0.3（不溢出画布）
+ */
+const BANNER_X = MX;
+const BANNER_Y = 0.5;
+const BANNER_W = W - MX * 2;
+const BANNER_H = 1.0;
+/** 横幅之下内容的起始 y（页码行） */
+const CONTENT_TOP = BANNER_Y + BANNER_H + 0.12;
 
 /**
  * 点位清单是否走「编号列表」版式、以及交付页序列，都放在 planPages.ts ——
@@ -141,35 +158,13 @@ function lighten(c: string, f: number): string {
   return m(r) + m(g) + m(b);
 }
 
-interface BudgetItem { name: string; min: number; max: number; }
-
-function parseBudget(bullets: string[]): BudgetItem[] | null {
-  const items: BudgetItem[] = [];
-  for (const b of bullets) {
-    const m = b.match(/^(.+?)\s*[：:]\s*([\d,]+)\s*[-–~]\s*([\d,]+)/);
-    if (!m) return null;
-    const min = Number(m[2].replace(/,/g, ''));
-    const max = Number(m[3].replace(/,/g, ''));
-    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= 0) return null;
-    items.push({ name: m[1].trim(), min, max });
-  }
-  return items.length >= 2 ? items : null;
-}
-
-function parseStages(bullets: string[]): { name: string; desc: string }[] | null {
-  const stages = bullets.map((b) => {
-    const cleaned = b.replace(/^\s*0?\d{1,2}\s*[.、::｜|]?\s*/, '');
-    const idx = cleaned.search(/[｜|：:]/);
-    if (idx < 0) return { name: cleaned.trim(), desc: '' };
-    return { name: cleaned.slice(0, idx).trim(), desc: cleaned.slice(idx + 1).replace(/[｜|]/g, ' ').trim() };
-  });
-  const ok = stages.filter((s) => s.name && s.desc);
-  return ok.length >= 3 ? ok.slice(0, 6) : null;
-}
-
-function fmt(n: number): string {
-  return n >= 10000 ? `${(n / 10000).toFixed(n % 10000 === 0 ? 0 : 1)}万` : `${n}`;
-}
+/**
+ * `parseBudget` / `parseStages` 从 lib/planText.ts 取，不再在本文件另抄一份。
+ *
+ * 为什么：它们此前在 planPptx.ts 与 components/PlanSlide.tsx 里**逐字重复**，
+ * 改一处忘另一处就会出现「门店在预览里看到的金额与导出 PPTX 的金额对不上」。
+ * 现在两端共用同一份纯函数实现。
+ */
 
 function pageImageType(page: PlanPage): string {
   // 走统一取图口径：门店配了页型图就用门店的，没配就用写死的兜底常量。
@@ -187,6 +182,23 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
   pptx.title = plan.title;
   pptx.author = plan.store || getBranding().name;
 
+  /**
+   * 交付页序（合成页）：**唯一来源**是 lib/planPages.ts 的 deliverPages。
+   *
+   * 取图建键必须按**最终页序**建，不能按 `plan.pages`：
+   * 渲染循环遍历的是合成页，虚拟页（报价页）不在 plan.pages 里 ——
+   * 按 plan.pages 建键，报价页的键必然 MISS，`img()` 返回空串，
+   * 门店给「设备清单与报价」上传的图在导出的 PPT 里永远不出现。
+   */
+  const finalPages = deliverPages(plan).pages;
+  /**
+   * 参与取图的页：户型页不在其中。
+   *
+   * 户型页的主体图就是客户自己的户型图，没有页型配图的落点
+   * （PAGE_IMAGE 里也因此没有 floorplan 键），给它取图是白费一次请求。
+   */
+  const imagePages = finalPages.filter((p) => p.type !== 'floorplan');
+
   // 预取全部页型配图（去重），并按各页实际图框比例 canvas 预裁剪（pptxgenjs cover 失效的规避）
   const IMG_BOX: Partial<Record<PlanPage['type'], [number, number]>> = {
     cover: [W * 0.42, H],
@@ -196,16 +208,19 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
     ecosystem: [3.4, 2.9],
     scene: [W * 0.34, H],
     delivery: [2.6, 2.45],
+    // 预算页 / 报价页：页眉区横幅（比例与横幅实际框一致，避免裁出来再拉伸）
+    budget: [BANNER_W, BANNER_H],
+    quote: [BANNER_W, BANNER_H],
   };
   console.info('[pptx] 开始导出，原始页数', plan.pages.length, '标题', plan.title);
-  const imgPaths = [...new Set(plan.pages.map(pageImageType))];
+  const imgPaths = [...new Set(imagePages.map(pageImageType))].filter(Boolean);
   console.info('[pptx] 待取图', imgPaths.length, '张');
   const rawMap = new Map<string, string>();
   await Promise.all(imgPaths.map(async (p) => rawMap.set(p, await imgData(p))));
   console.info('[pptx] 原图取齐');
   const cropMap = new Map<string, string>();
   await Promise.all(
-    plan.pages.map(async (p) => {
+    imagePages.map(async (p) => {
       const key = `${pageImageType(p)}|${p.type}`;
       if (cropMap.has(key)) return;
       const [bw, bh] = IMG_BOX[p.type] ?? [16, 9];
@@ -313,7 +328,7 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
   }
 
   // 有户型图素材时补一页「户型与设备点位」：分享页/预览/PPTX 必须页数一致
-  const finalPages = deliverPages(plan).pages;
+  // （finalPages 已在上面按最终页序取好，取图与渲染共用同一份）
   const listCount = deliverPointCount(plan);
   console.info('[pptx] 交付页数', finalPages.length, '| 有户型图', Boolean(plan.floorplanUrl || plan.renderedFloorplanUrl), '| 点位清单', listCount);
   finalPages.forEach((p, i) => {
@@ -328,15 +343,18 @@ export async function exportPlanPptx(plan: PlanForExport): Promise<{ blob: Blob;
       case 'needs': needsSlide(slide, p, i, plan, t, img(p)); break;
       case 'ecosystem': ecosystemSlide(slide, p, i, plan, t, img(p)); break;
       case 'scene': sceneSlide(slide, p, i, plan, t, img(p)); break;
-      case 'budget': budgetSlide(slide, p, i, plan, t, pptx); break;
+      case 'budget': budgetSlide(slide, p, i, plan, t, pptx, img(p)); break;
       case 'delivery': deliverySlide(slide, p, i, plan, t, img(p), pptx); break;
-      case 'floorplan': floorplanSlide(slide, p, i, plan, t, img(p), floorplan, leftImage, rightImage, listNo); break;
-      case 'quote': quoteSlide(slide, p, i, plan, t, quoteNo); break;
+      case 'floorplan': floorplanSlide(slide, p, i, plan, t, floorplan, leftImage, rightImage, listNo); break;
+      case 'quote': quoteSlide(slide, p, i, plan, t, quoteNo, img(p)); break;
     }
     if (p.narration) slide.addNotes(p.narration);
   });
 
-  const fileName = `${plan.title}-${plan.edition === 'private' ? '私宅' : plan.edition === 'presale' ? '售前' : '标准'}方案-V${plan.versionNo}-${new Date().toISOString().slice(0, 10)}.pptx`;
+  // 日期用**本地日期**：`toISOString()` 取的是 UTC 日期，东八区每天 00:00~07:59
+  // 会写成昨天 —— 客户拿到的交付件日期差一天。
+  // `toLocaleDateString('sv')` 就是 YYYY-MM-DD 格式（sv 区域），不用手搓 padStart。
+  const fileName = `${plan.title}-${plan.edition === 'private' ? '私宅' : plan.edition === 'presale' ? '售前' : '标准'}方案-V${plan.versionNo}-${new Date().toLocaleDateString('sv')}.pptx`;
   // 浏览器里不能用 writeFile：那是 Node 端 API，会静默什么都不落盘，
   // 按钮转一圈然后什么都没有。write({outputType:'blob'}) 才是浏览器路径。
   console.info('[pptx] 写文件…');
@@ -408,6 +426,25 @@ function brighten(slide: PptxGenJS.Slide, x: number, y: number, w: number, h: nu
   slide.addShape('rect', { x, y, w, h, fill: { color: 'FFFFFF', transparency } });
 }
 
+/**
+ * 页型配图的横幅（预算页 / 报价页用）。
+ *
+ * 与 `imagePanel` 的区别：横幅是**页眉区的一条横带**，不是侧栏图框，
+ * 所以标签贴在右下角一小块上，不占整条横幅的宽度。
+ *
+ * 没有图时什么都不画 —— 横幅的位置由版式常量预留着，
+ * 版式不随「图取到了没有」变化，避免同一份方案导出两次版式不一样。
+ */
+function bannerPanel(slide: PptxGenJS.Slide, data: string, x: number, y: number, w: number, h: number, t: Theme, label?: string): void {
+  if (!data) return;
+  slide.addImage({ data, x, y, w, h, shadow: cardShadow() });
+  slide.addShape('rect', { x, y, w, h, fill: { type: 'none' }, line: { color: hex(t.accent), width: 0.75, transparency: 65 } });
+  if (label) {
+    slide.addShape('rect', { x: x + w - 2.3, y: y + h - 0.36, w: 2.3, h: 0.36, fill: { color: '0F0A05', transparency: 32 } });
+    slide.addText(label, { x: x + w - 2.3, y: y + h - 0.36, w: 2.3, h: 0.36, fontSize: 9, bold: true, color: 'FFFFFF', align: 'right', fontFace: FONT, valign: 'middle', margin: 0 });
+  }
+}
+
 function quoteBar(slide: PptxGenJS.Slide, p: PlanPage, t: Theme, x: number, y: number, w: number): void {
   if (!p.quote) return;
   slide.addShape('roundRect', { x, y, w, h: 0.44, fill: { color: hex(t.surface) }, line: { type: 'none' }, rectRadius: 0.06, shadow: cardShadowSoft() });
@@ -476,7 +513,8 @@ function brandSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
     slide.addText(rest.join(' '), { x: x + 0.16, y: y + 0.48, w: cw - 0.32, h: 0.68, fontSize: 9, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.25, valign: 'top', margin: 0 });
   });
   quoteBar(slide, p, t, MX, 6.42, leftW);
-  footer(slide, plan, t, MX, 6.98, leftW);
+  // 页脚落在 H-0.3 = 7.2 之内（此前 6.98 + 0.24 = 7.22，超出安全边距 0.02）
+  footer(slide, plan, t, MX, 6.96, leftW);
   imagePanel(slide, img, W - MX - imgW, 0.5, imgW, H - 1.0, t, p.subtitle || '门店实景');
 }
 
@@ -594,7 +632,7 @@ function sceneSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
  */
 function floorplanSlide(
   slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme,
-  img: string, floorplan: { data: string; ratio: number } | null,
+  floorplan: { data: string; ratio: number } | null,
   leftImage: { data: string; ratio: number } | null = null,
   rightImage: { data: string; ratio: number } | null = null,
   listNo = 0,
@@ -697,7 +735,8 @@ function floorplanSlide(
     slide.addText(runs, { x, y: 5.86, w: rightW, h: 0.6, fontFace: FONT, valign: 'top', margin: 0, lineSpacingMultiple: 1.15 });
   }
   quoteBar(slide, p, t, x, 6.5, rightW);
-  footer(slide, plan, t, x, 6.98, rightW);
+  // 页脚落在 H-0.3 = 7.2 之内（此前 6.98 + 0.24 = 7.22，超出安全边距 0.02）
+  footer(slide, plan, t, x, 6.96, rightW);
 
   // 左侧图区
   const boxW = x - 0.4;
@@ -728,40 +767,58 @@ function floorplanSlide(
   if (floorplan?.data) {
     // 主流程已按 FLOOR_BOX 预裁过，这里直接铺满，不留白
     slide.addImage({ data: floorplan.data, x: 0, y: 0.45, w: boxW, h: boxH });
-  } else if (img) {
-    // 没有上传户型图时用实景兜底，但要在图上说明，别让客户以为是自家户型
-    slide.addImage({ data: img, x: 0, y: 0.45, w: boxW, h: boxH });
   }
   // 图注必须与图上实际内容一致：口径来自 floorplanImages，PPT 与预览同一份
-  const caption = !floorplan?.data ? '空间实景示意（非客户户型）' : images.mainLabel;
+  // 户型图没取到时不要写「实景示意」—— 页上根本没有图，那样写是在骗客户。
+  const caption = floorplan?.data ? images.mainLabel : '户型图未能加载';
   slide.addText(caption, { x: 0.22, y: H - 0.75, w: boxW - 0.44, h: 0.32, fontSize: 9.5, bold: true, color: 'FFFFFF', fill: { color: '0F0A05', transparency: 35 }, fontFace: FONT, valign: 'middle', margin: 0 });
 }
 
-function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, pptx: PptxGenJS): void {
+/**
+ * 预算规划页。
+ *
+ * 版式（与前端预览 BudgetSlide 同规则）：
+ * - 页眉区一条**页型配图横幅**（x=MX，w=W-2*MX，h=1.0，y=0.5）
+ * - 横幅之下：页码行 → 标题 → 正文（左栏） / 图表面板（右栏）
+ * - 底部引言条与页脚位置**保持不变**（下移量从正文与面板的富余空间里吸收）
+ *
+ * 坐标（英寸，H=7.5，任何元素 y+h ≤ 7.2）：
+ *   横幅   0.66 / 0.50 / 12.013 / 1.00  → 底 1.50
+ *   页码行 0.66 / 1.62（分隔线 2.06）
+ *   标题   0.66 / 2.16 / 3.9 / 0.82    → 底 2.98
+ *   正文   0.66 / 3.04 / 3.9 / 2.40    → 底 5.44
+ *   引言条 0.66 / 5.60 / 3.9 / 0.44    → 底 6.04
+ *   页脚   0.66 / 6.85 / 3.9 / 0.24    → 底 7.09
+ *   面板   4.96 / 1.62 / 7.713 / 4.78  → 底 6.40
+ *   图表   5.21 / 2.32 / 7.213 / 3.83  → 底 6.15
+ */
+function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, pptx: PptxGenJS, img: string): void {
   const items = parseBudget(p.bullets)?.slice(0, 6);
   const leftW = 3.9;
-  folio(slide, p, i, t, MX, 0.5, leftW);
-  claim(slide, p, t, MX, 1.12, leftW, 0.9, 20);
-  slide.addText(p.body, { x: MX, y: 2.15, w: leftW, h: 2.6, fontSize: 10.5, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.55, valign: 'top', margin: 0 });
+  // 页眉区横幅：门店给「预算规划」配的图。图取不到时版式不变（位置是预留的）。
+  bannerPanel(slide, img, BANNER_X, BANNER_Y, BANNER_W, BANNER_H, t, '门店实景');
+  folio(slide, p, i, t, MX, CONTENT_TOP, leftW);
+  claim(slide, p, t, MX, CONTENT_TOP + 0.54, leftW, 0.82, 20);
+  slide.addText(p.body, { x: MX, y: CONTENT_TOP + 1.42, w: leftW, h: 2.4, fontSize: 10.5, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.55, valign: 'top', margin: 0 });
   quoteBar(slide, p, t, MX, 5.6, leftW);
   footer(slide, plan, t, MX, 6.85, leftW);
   // 右：阴影面板 + 原生可编辑条形图
   const x = MX + leftW + 0.4;
   const w = W - MX - x;
-  slide.addShape('roundRect', { x, y: 0.5, w, h: 5.9, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: cardShadow() });
+  slide.addShape('roundRect', { x, y: CONTENT_TOP, w, h: 6.4 - CONTENT_TOP, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: cardShadow() });
   slide.addText(
     [
       { text: '分项预算区间（元）', options: { fontSize: 12, bold: true, color: hex(t.text) } },
       { text: '    实际报价以现场确认为准', options: { fontSize: 8.5, color: hex(t.sub) } },
     ],
-    { x: x + 0.25, y: 0.72, w: w - 0.5, h: 0.34, fontFace: FONT, margin: 0, valign: 'middle' },
+    { x: x + 0.25, y: CONTENT_TOP + 0.22, w: w - 0.5, h: 0.34, fontFace: FONT, margin: 0, valign: 'middle' },
   );
   if (items) {
     slide.addChart(pptx.ChartType.bar, [
       { name: '预算下限', labels: items.map((it) => it.name), values: items.map((it) => it.min) },
       { name: '预算上限', labels: items.map((it) => it.name), values: items.map((it) => it.max) },
     ], {
-      x: x + 0.25, y: 1.2, w: w - 0.5, h: 4.95,
+      x: x + 0.25, y: CONTENT_TOP + 0.7, w: w - 0.5, h: 6.15 - (CONTENT_TOP + 0.7),
       barDir: 'bar', barGrouping: 'clustered', barGapWidthPct: 55, barOverlapPct: -12,
       chartColors: [lighten(t.accent, 0.55), hex(t.accent)],
       catAxisLabelColor: hex(t.text), catAxisLabelFontSize: 10, catAxisLabelFontFace: FONT,
@@ -771,9 +828,13 @@ function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanF
       legendPos: 'b', legendColor: hex(t.sub), legendFontSize: 9, legendFontFace: FONT,
     });
   } else {
+    // 预算要点解析不出区间时退回要点卡：卡高按「面板实际可用高度 ÷ 条数」算，
+    // 免得 6 张卡在 3.83 英寸的面板里叠到面板外。
     const bullets = p.bullets.slice(0, 6);
-    const ch = Math.min(0.66, 4.6 / Math.max(bullets.length, 1));
-    bullets.forEach((b, bi) => pointCard(slide, b, bi + 1, x + 0.25, 1.3 + bi * (ch + 0.12), w - 0.5, ch, t));
+    const cardTop = CONTENT_TOP + 0.8;
+    const cardBottom = 6.15;
+    const ch = Math.min(0.66, (cardBottom - cardTop - 0.12 * (bullets.length - 1)) / Math.max(bullets.length, 1));
+    bullets.forEach((b, bi) => pointCard(slide, b, bi + 1, x + 0.25, cardTop + bi * (ch + 0.12), w - 0.5, ch, t));
   }
 }
 
@@ -786,21 +847,40 @@ function budgetSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanF
  *
  * 口径必须写清楚：设备参考零售价**不含**辅材、布线、安装与调试，
  * 否则客户拿这一页的合计当整包总价，差距会到好几倍。
+ *
+ * 版式（与前端预览 QuoteSlide 同规则）：
+ * - 页眉区一条**页型配图横幅**（x=MX，w=W-2*MX，h=1.0，y=0.5）
+ * - 横幅之下：页码行 → 标题 → 正文（左）/ 合计卡（右上）→ 设备清单表格
+ * - 底部引言条与页脚位置**保持不变**；表格行高相应压缩，行数与分页规则不变
+ *
+ * 坐标（英寸，H=7.5，任何元素 y+h ≤ 7.2）：
+ *   横幅   0.66 / 0.50 / 12.013 / 1.00  → 底 1.50
+ *   页码行 0.66 / 1.62（分隔线 2.06）
+ *   标题   0.66 / 2.14 / 8.2 / 0.50    → 底 2.64
+ *   正文   0.66 / 2.70 / 8.2 / 0.50    → 底 3.20
+ *   合计卡 9.28 / 1.62 / 3.393 / 1.50  → 底 3.12
+ *   表头   0.66 / 3.34 / 12.013 / 0.30 → 底 3.64
+ *   数据行 14 × 0.17（3.64 → 6.02）
+ *   合计行 0.66 / 6.08 / …    / 0.32   → 底 6.40
+ *   引言条 0.66 / 6.50 / 12.013 / 0.44 → 底 6.94
+ *   页脚   0.66 / 6.96 / 12.013 / 0.24 → 底 7.20
  */
-function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, pageNo: number): void {
+function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, pageNo: number, img: string): void {
   const sum = plan.quoteSummary;
   const fullW = W - MX * 2;
   const yuan = (n: number) => `¥${Math.round(n).toLocaleString('zh-CN')}`;
-  folio(slide, p, i, t, MX, 0.5, fullW);
-  claim(slide, p, t, MX, 1.0, 8.2, 0.8, 20);
-  slide.addText(p.body, { x: MX, y: 1.86, w: 8.2, h: 0.72, fontSize: 10, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.5, valign: 'top', margin: 0 });
+  // 页眉区横幅：门店给「设备清单与报价」配的图。图取不到时版式不变（位置是预留的）。
+  bannerPanel(slide, img, BANNER_X, BANNER_Y, BANNER_W, BANNER_H, t, '门店实景');
+  folio(slide, p, i, t, MX, CONTENT_TOP, fullW);
+  claim(slide, p, t, MX, CONTENT_TOP + 0.52, 8.2, 0.5, 20);
+  slide.addText(p.body, { x: MX, y: CONTENT_TOP + 1.08, w: 8.2, h: 0.5, fontSize: 10, color: hex(t.sub), fontFace: FONT, lineSpacingMultiple: 1.5, valign: 'top', margin: 0 });
 
   // 右上合计卡：整页的锚点数字
   const cardX = MX + 8.62;
   const cardW = fullW - 8.62;
-  slide.addShape('roundRect', { x: cardX, y: 0.95, w: cardW, h: 1.58, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: cardShadow() });
-  slide.addText('整包合计（含安装调试）', { x: cardX + 0.22, y: 1.06, w: cardW - 0.44, h: 0.3, fontSize: 9.5, bold: true, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
-  slide.addText(sum ? yuan(sum.grandTotal) : '—', { x: cardX + 0.22, y: 1.33, w: cardW - 0.44, h: 0.62, fontSize: 27, bold: true, color: hex(t.accent), fontFace: FONT, valign: 'middle', margin: 0 });
+  slide.addShape('roundRect', { x: cardX, y: CONTENT_TOP, w: cardW, h: 1.5, fill: { color: hex(t.surface) }, line: { color: lighten(t.accent, 0.85), width: 0.5 }, rectRadius: 0.1, shadow: cardShadow() });
+  slide.addText('整包合计（含安装调试）', { x: cardX + 0.22, y: CONTENT_TOP + 0.08, w: cardW - 0.44, h: 0.26, fontSize: 9.5, bold: true, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
+  slide.addText(sum ? yuan(sum.grandTotal) : '—', { x: cardX + 0.22, y: CONTENT_TOP + 0.36, w: cardW - 0.44, h: 0.56, fontSize: 27, bold: true, color: hex(t.accent), fontFace: FONT, valign: 'middle', margin: 0 });
   // 拆项：设备价 + 安装调试费（费率来自租户设置，默认 20%）
   slide.addText(
     sum
@@ -810,14 +890,14 @@ function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
           { text: `安装调试 ${sum.installRate}% ${yuan(sum.installFee)}`, options: { fontSize: 8.5, color: hex(t.sub) } },
         ]
       : '',
-    { x: cardX + 0.22, y: 1.97, w: cardW - 0.44, h: 0.3, fontFace: FONT, valign: 'middle', margin: 0 },
+    { x: cardX + 0.22, y: CONTENT_TOP + 0.94, w: cardW - 0.44, h: 0.26, fontFace: FONT, valign: 'middle', margin: 0 },
   );
-  slide.addText(sum ? `共 ${sum.kindCount} 种设备 · ${sum.deviceCount} 台` : '', { x: cardX + 0.22, y: 2.22, w: cardW - 0.44, h: 0.28, fontSize: 8.5, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
+  slide.addText(sum ? `共 ${sum.kindCount} 种设备 · ${sum.deviceCount} 台` : '', { x: cardX + 0.22, y: CONTENT_TOP + 1.22, w: cardW - 0.44, h: 0.24, fontSize: 8.5, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
 
   if (!sum || !sum.items.length) {
-    slide.addText('本套方案未产生设备报价', { x: MX, y: 3.0, w: fullW, h: 0.5, fontSize: 12, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
+    slide.addText('本套方案未产生设备报价', { x: MX, y: 3.34, w: fullW, h: 0.5, fontSize: 12, color: hex(t.sub), fontFace: FONT, valign: 'middle', margin: 0 });
     quoteBar(slide, p, t, MX, 6.5, fullW);
-    footer(slide, plan, t, MX, 6.98, fullW);
+    footer(slide, plan, t, MX, 6.96, fullW);
     return;
   }
 
@@ -830,9 +910,9 @@ function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
     { key: 'unit', w: 1.85, align: 'right' as const },
     { key: 'sub', w: 1.85, align: 'right' as const },
   ];
-  const headY = 2.62;
-  const rowH = 0.225;
-  const headH = 0.32;
+  const headY = 3.34;
+  const rowH = 0.17;
+  const headH = 0.3;
   // 表头
   slide.addShape('roundRect', { x: MX, y: headY, w: fullW, h: headH, fill: { color: hex(t.accent) }, line: { type: 'none' }, rectRadius: 0.05 });
   const heads: Record<string, string> = { no: '序号', name: '设备名称', cat: '品类', qty: '数量', unit: '参考单价', sub: '小计' };
@@ -873,9 +953,8 @@ function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
   });
 
   // 合计行：末页显示「设备 + 安装调试 + 整包」三项，非末页显示本页设备小计
-  // 纵向位置：表头 0.32 + 14 行 × 0.225 = 3.47，表格底落在 6.09，
-  // 合计行 6.15~6.49，引言条 6.5 起 —— 三者不叠。
-  // （此前行高 0.245 时表格底到 6.13，合计行与引言条压在一起，已修）
+  // 纵向位置：表头 0.30 + 14 行 × 0.17 = 2.68，表格底落在 6.02，
+  // 合计行 6.08~6.40，引言条 6.5 起 —— 三者不叠。
   const pageSubtotal = rows.reduce((s, it) => s + it.subtotal, 0);
   const isLast = start + rows.length >= sum.items.length;
   const totalY = headY + headH + rows.length * rowH + 0.06;
@@ -901,7 +980,7 @@ function quoteSlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanFo
   }
 
   quoteBar(slide, p, t, MX, 6.5, fullW);
-  footer(slide, plan, t, MX, 6.98, fullW);
+  footer(slide, plan, t, MX, 6.96, fullW);
 }
 
 function deliverySlide(slide: PptxGenJS.Slide, p: PlanPage, i: number, plan: PlanForExport, t: Theme, img: string, pptx: PptxGenJS): void {

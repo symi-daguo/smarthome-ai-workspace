@@ -4,13 +4,14 @@ import { AuthModule } from '../auth/auth.module.js';
 import { BillingModule } from '../billing/billing.module.js';
 import { RbacModule } from '../rbac/rbac.module.js';
 import { LlmModule } from '../llm/llm.module.js';
+import { IdempotencyService } from '../common/idempotency.service.js';
 import { MediaController, MediaFileController } from './media.controller.js';
 import { MediaService } from './media.service.js';
 
 @Module({
   imports: [ConfigModule, AuthModule, BillingModule, RbacModule, LlmModule],
   controllers: [MediaController, MediaFileController],
-  providers: [MediaService],
+  providers: [MediaService, IdempotencyService],
   exports: [MediaService],
 })
 export class MediaModule {}

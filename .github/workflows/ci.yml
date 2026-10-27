@@ -103,6 +103,13 @@ jobs:
       - name: 冒烟测试
         run: pnpm --filter @app/api smoke
 
+      - name: 备份/恢复脚本回归
+        # 灾备脚本是「出事那天才发现坏」的那类东西：平时没人碰，
+        # 真要恢复数据时才发现脚本已经不能用了。
+        # 这套测试用假 docker 跑真实的 backup-full.sh / restore-full.sh，
+        # 不碰真容器真库、可离线跑，跑完即退。
+        run: pnpm check:backup
+
   desktop:
     name: 桌面端编译（tsc）
     runs-on: ubuntu-latest
@@ -191,7 +198,9 @@ jobs:
         run: pnpm --filter @app/desktop build
 
       - name: 准备运行时（内嵌 PG + 生产依赖）
-        run: pnpm --filter @app/desktop prepare:runtime
+        # --skip-build：上一步已经把 api 与前端编好了，prepare:runtime 内部
+        # 会再编一遍 —— 同一份产物编两次，白白多花一两分钟 CI 时间。
+        run: pnpm --filter @app/desktop prepare:runtime -- --skip-build
 
       - name: 运行时自证（起库→迁移→种子→登录）
         # 与 macOS 同一条门禁：证明裁剪后的 runtime 在 Windows 上真的能起内嵌 PG。
@@ -252,8 +261,12 @@ jobs:
     # 免得以后有人把仓库设置改回只读时 job 静默失败）
     permissions:
       contents: write
-    # 打包失败就别发空资产给客户
-    if: needs.desktop-windows.result == 'success'
+    # 打包失败就别发空资产给客户。
+    #
+    # 未设 RELEASE_TAG 时**显式跳过**（GitHub 界面上显示为 skipped，一眼可见），
+    # 而不是「跑一遍然后 exit 0」—— 后者让「CI 全绿」与「资产已发布」彻底脱钩，
+    # 是本仓库 AGENTS.md 记过的「静默跳过」坑的翻版。
+    if: needs.desktop-windows.result == 'success' && vars.RELEASE_TAG != ''
     env:
       # 版本号放在仓库变量里，不写死在 workflow 里 —— 发新版只改变量
       RELEASE_TAG: ${{ vars.RELEASE_TAG }}
@@ -264,15 +277,16 @@ jobs:
           name: desktop-windows
           path: release-assets
 
-      - name: 推送到 Release（同名资产已存在则跳过）
+      - name: 推送到 Release（同名同大小才跳过）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ -z "$RELEASE_TAG" ]; then
-            echo "未设置 RELEASE_TAG 仓库变量，本次不发布"
-            exit 0
+            echo "::error::未设置 RELEASE_TAG 仓库变量，本次不发布任何资产"
+            echo "正常情况下这个 job 会因为 if 条件被整个跳过；走到这里说明条件被绕过了。"
+            exit 1
           fi
           # 不用 gh 命令：它靠 git remote 推断仓库，在 CI 里会踩坑
           # （实测报「Release 不存在」，而同一个 Release 本机查得到）。
@@ -281,23 +295,43 @@ jobs:
           auth="Authorization: Bearer $GH_TOKEN"
           if ! curl -sf -H "$auth" -H "Accept: application/vnd.github+json" \
                "$api/releases/tags/$RELEASE_TAG" -o /tmp/release.json; then
-            echo "查不到 Release $RELEASE_TAG，跳过。原始响应："
+            echo "::error::查不到 Release $RELEASE_TAG —— 资产无处可发，本次失败"
+            echo "原始响应："
             curl -s -H "$auth" -H "Accept: application/vnd.github+json" \
               "$api/releases/tags/$RELEASE_TAG" | head -5
-            exit 0
+            exit 1
           fi
           rid=$(jq -r '.id' /tmp/release.json)
-          existing=$(jq -r '.assets[].name' /tmp/release.json)
+          # 产物名里的版本必须与 RELEASE_TAG 对得上：
+          # 变量指到了别的 tag 时，名字对不上就会把新版本塞进已发布的旧 Release，
+          # 那个页面上同时挂着两个版本的安装包，客户下载到哪个全凭文件名。
+          want_version="${RELEASE_TAG#v}"
           for f in release-assets/*.exe release-assets/*.zip; do
             [ -e "$f" ] || continue
             name=$(basename "$f")
-            # 幂等：同名资产已存在就跳过。重新推一个已发出去的资产，
-            # 等于换掉客户已经下载过的文件。
-            if printf '%s\n' "$existing" | grep -Fxq "$name"; then
-              echo "$name 已存在，跳过"
-              continue
+            case "$name" in
+              *"$want_version"*) ;;
+              *)
+                echo "::error::产物 $name 里的版本与 RELEASE_TAG（$RELEASE_TAG）对不上，拒绝上传"
+                exit 1
+                ;;
+            esac
+            size=$(stat -c%s "$f")
+            # 幂等判据要落在**内容**上，不只是「名字对得上」：
+            # 同名同大小 = 同一个产物，跳过；同名不同大小 = Release 上挂的是旧包，
+            # 自动覆盖会换掉客户已经下载过的文件，所以这里**报错让人确认**，
+            # 而不是默默跳过（默默跳过 = Release 上留着与代码对不上的包，CI 却全绿）。
+            old_size=$(jq -r --arg n "$name" '.assets | map(select(.name==$n) | .size) | .[0] // empty' /tmp/release.json)
+            if [ -n "$old_size" ] && [ "$old_size" != "null" ]; then
+              if [ "$old_size" = "$size" ]; then
+                echo "$name 已存在且大小一致（$size 字节），跳过"
+                continue
+              fi
+              echo "::error::$name 已存在但大小不同（Release 上 $old_size 字节 vs 本次 $size 字节）"
+              echo "请人工确认后删除 Release 上的旧资产再重跑本 job —— 本 job 不自动覆盖已发布的文件。"
+              exit 1
             fi
-            echo "上传 $name（$(stat -c%s "$f") 字节）"
+            echo "上传 $name（$size 字节）"
             # uploads.github.com 是**一步到位**的端点：
             # 直接 POST 二进制即完成，不必先建 asset 条目。
             code=$(curl -s -o /tmp/asset.json -w '%{http_code}' -X POST \

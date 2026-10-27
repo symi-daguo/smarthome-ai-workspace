@@ -72,7 +72,10 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
 
   'GET /api/team/role-templates': ['tenant:member:manage'],
   'GET /api/team/members': ['tenant:member:manage'],
-  'POST /api/team/members': ['tenant:member:manage'],
+  // 建成员时可指定角色模板 —— 这就是「分配角色」动作，与下面改成员角色同一件事，
+  // 所以成员管理权与角色分配权都要有（守卫是「全都要」的关系）。
+  // 以前只有成员管理权，于是持它的角色能直接建出一个 super_admin 成员（提权）。
+  'POST /api/team/members': ['tenant:member:manage', 'tenant:role:assign'],
   // 改成员角色 = 分配角色：成员管理权与角色分配权都要有（守卫是「全都要」的关系）
   'PATCH /api/team/members/{userId}': ['tenant:member:manage', 'tenant:role:assign'],
   'DELETE /api/team/members/{userId}': ['tenant:member:manage'],
@@ -97,7 +100,7 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'DELETE /api/products/{id}': ['quote:write'],
   'POST /api/products/{id}/copy-to-mine': ['quote:write'],
   'GET /api/categories': ['quote:read'],
-  'POST /api/categories/mine': ['quote:read'],
+  'POST /api/categories/mine': ['quote:write'],
   'DELETE /api/categories/{id}': ['quote:write'],
   'POST /api/products/ai-process': ['content:generate'],
   'GET /api/products/export': ['quote:read'],
@@ -107,10 +110,11 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
 
   'GET /api/orders': ['order:read'],
   'POST /api/orders': ['order:write'],
-  'GET /api/orders/{id}': ['order:write'],
-  'PATCH /api/orders/{id}': ['order:read'],
+  'GET /api/orders/{id}': ['order:read'],
+  'PATCH /api/orders/{id}': ['order:write'],
   'DELETE /api/orders/{id}': ['order:write'],
-  'POST /api/orders/intake': ['order:read'],
+  // AI 接待解析：不是纯解析 —— 写幂等记录与额度流水并扣额度，属写动作
+  'POST /api/orders/intake': ['order:write'],
   'PATCH /api/orders/{id}/status': ['order:write'],
   'POST /api/orders/{id}/notes': ['order:write'],
   'POST /api/orders/{id}/followup': ['order:write'],
@@ -148,36 +152,36 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'GET /api/layouts': ['content:read'],
   'POST /api/layouts': ['content:generate'],
   'GET /api/layouts/{id}': ['content:read'],
-  'PATCH /api/layouts/{id}': ['content:read'],
+  'PATCH /api/layouts/{id}': ['content:generate'],
   'DELETE /api/layouts/{id}': ['content:generate'],
   'GET /api/layouts/{id}/summary': ['quote:read'],
   'POST /api/floorplan/detect': ['content:generate'],
 
   'GET /api/lighting': ['content:read'],
-  'POST /api/lighting': ['content:read'],
+  'POST /api/lighting': ['content:generate'],
   'GET /api/lighting/{id}': ['content:read'],
-  'PATCH /api/lighting/{id}': ['content:read'],
+  'PATCH /api/lighting/{id}': ['content:generate'],
   'DELETE /api/lighting/{id}': ['content:generate'],
   'GET /api/lighting/diagnose/modes': ['content:read'],
   'POST /api/lighting/diagnose': ['content:generate'],
 
   'GET /api/canvas/conversations': ['content:read'],
-  'POST /api/canvas/conversations': ['content:read'],
+  'POST /api/canvas/conversations': ['content:generate'],
   'GET /api/canvas/conversations/{id}': ['content:read'],
-  'PATCH /api/canvas/conversations/{id}': ['content:read'],
+  'PATCH /api/canvas/conversations/{id}': ['content:generate'],
   'DELETE /api/canvas/conversations/{id}': ['content:generate'],
   'POST /api/canvas/conversations/{id}/turns': ['content:generate'],
   'PATCH /api/canvas/turns/{id}': ['content:generate'],
   'DELETE /api/canvas/turns/{id}': ['content:generate'],
   'GET /api/canvas/jobs/{id}': ['content:read'],
-  'POST /api/canvas/jobs/{id}/run': ['content:read'],
+  'POST /api/canvas/jobs/{id}/run': ['content:generate'],
   'GET /api/canvas/tasks': ['content:read'],
-  'DELETE /api/canvas/tasks/finished': ['content:read'],
+  'DELETE /api/canvas/tasks/finished': ['content:generate'],
 
   'POST /api/media/uploads': ['content:generate'],
   'GET /api/media/assets': ['content:read'],
   'GET /api/media/assets/{id}/file': ['content:read'],
-  'PATCH /api/media/assets/{id}': ['content:read'],
+  'PATCH /api/media/assets/{id}': ['content:generate'],
   'DELETE /api/media/assets/{id}': ['content:generate'],
   'POST /api/media/images': ['content:generate'],
   'POST /api/media/images/reverse-prompt': ['content:generate'],
@@ -185,16 +189,16 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'POST /api/media/materials/upload': ['content:generate'],
 
   'GET /api/agents': ['content:read'],
-  'POST /api/agents': ['content:read'],
+  'POST /api/agents': ['content:generate'],
   'PATCH /api/agents/{id}': ['content:generate'],
   'DELETE /api/agents/{id}': ['content:generate'],
 
-  'GET /api/knowledge/external': ['knowledge:manage'],
+  'GET /api/knowledge/external': ['knowledge:read'],
   'PUT /api/knowledge/external': ['knowledge:manage'],
   'DELETE /api/knowledge/external': ['knowledge:manage'],
   'POST /api/knowledge/external/search': ['knowledge:manage'],
   'POST /api/knowledge/external/test': ['knowledge:manage'],
-  'GET /api/knowledge/docs': ['knowledge:manage'],
+  'GET /api/knowledge/docs': ['knowledge:read'],
   'POST /api/knowledge/docs/upload': ['knowledge:manage'],
   'POST /api/knowledge/docs/{id}/toggle': ['knowledge:manage'],
   'DELETE /api/knowledge/docs/{id}': ['knowledge:manage'],
@@ -260,11 +264,13 @@ export const OP_PERMISSIONS: Record<string, string[]> = {
   'GET /api/desktop/config': ['platform:billing:manage'],
   'PUT /api/desktop/config': ['platform:billing:manage'],
 
-  // 自身机器接入里无守卫的部分（快照与还原走成员身份，不额外要权限）
+  // 快照与还原：打的是**整租户**的相关表，还原是整租户级回滚 ——
+  // 门槛与「成员管理」同级（tenant:member:manage），普通成员不开放。
+  // 之前这三条没挂任何权限（PermissionsGuard 无声明即放行），只读成员就能打整租户快照并执行还原。
   'GET /api/agent/manifest': [],
-  'POST /api/agent/snapshots': [],
-  'GET /api/agent/snapshots': [],
-  'POST /api/agent/snapshots/{id}/restore': [],
+  'POST /api/agent/snapshots': ['tenant:member:manage'],
+  'GET /api/agent/snapshots': ['tenant:member:manage'],
+  'POST /api/agent/snapshots/{id}/restore': ['tenant:member:manage'],
 
   // 两个免鉴权的部署级只读端点：探活与品牌信息。
   // 清单必须写出来 —— Agent 拿到的是「本系统能做什么」，这两个是它上手的第一步
@@ -306,9 +312,9 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'POST', p: '/api/agent/keys', d: '签发 API Key。只返回一次，平台不留存密钥材料', risk: W, q: { name: '用途标签', ttlDays: '1-365，默认 90', serviceAccountId: '不给则给当前用户自己建' } },
       { m: 'GET', p: '/api/agent/keys', d: '列 Key（只有前 12 位与状态，无明文）', risk: R },
       { m: 'POST', p: '/api/agent/keys/{id}/revoke', d: '吊销 Key，立即生效', risk: W },
-      { m: 'POST', p: '/api/agent/snapshots', d: '动数据前打快照，整租户相关表存 JSON', risk: W, q: { label: '写清这一步要干什么', trigger: 'manual|auto' } },
-      { m: 'GET', p: '/api/agent/snapshots', d: '列快照（不拉数据体）', risk: R },
-      { m: 'POST', p: '/api/agent/snapshots/{id}/restore', d: '还原到该快照。撤不回已花掉的额度与已生成的媒体', risk: D, q: { confirm: '必须是快照 id 前 8 位，防手滑', dropNewer: '默认 true，连快照后新增的数据一起删' } },
+      { m: 'POST', p: '/api/agent/snapshots', d: '动数据前打快照，整租户相关表存 JSON（需 tenant:member:manage）', risk: W, q: { label: '写清这一步要干什么', trigger: 'manual|auto' } },
+      { m: 'GET', p: '/api/agent/snapshots', d: '列快照（不拉数据体，需 tenant:member:manage）', risk: R },
+      { m: 'POST', p: '/api/agent/snapshots/{id}/restore', d: '还原到该快照。撤不回已花掉的额度与已生成的媒体（需 tenant:member:manage）', risk: D, q: { confirm: '必须是快照 id 前 8 位，防手滑', dropNewer: '默认 true，连快照后新增的数据一起删' } },
       { m: 'GET', p: '/api/agent/audit', d: '查审计。?actorKind=agent 只看机器操作', risk: R, q: { requestId: '精确追一次动作', limit: '默认 100' } },
       { m: 'GET', p: '/api/health', d: '服务健康检查（免鉴权）。接入前先探活', risk: R },
       { m: 'GET', p: '/api/public/branding', d: '部署级品牌信息（免鉴权）：产品名与图标地址。生成文案/方案落款用产品名', risk: R },
@@ -407,7 +413,7 @@ export const MANIFEST: ManifestGroup[] = [
     about: '生成方案 PPT/PDF、逐页编辑、渲染户型图，客户分享页靠 token 免登录访问。',
     ops: [
       { m: 'GET', p: '/api/plans', d: '方案列表', risk: R },
-      { m: 'POST', p: '/api/plans', d: '新建方案', risk: W },
+      { m: 'POST', p: '/api/plans', d: '新建方案', risk: W, q: { budgetSplit: '预算分配建议（万元），形如 {"安防":6.6,"灯光":7.2}；键是生态中文名，会写进预算页' } },
       { m: 'GET', p: '/api/plans/{id}', d: '方案详情（含分页内容）', risk: R },
       { m: 'GET', p: '/api/plans/{id}/preflight', d: '交付前预检：逐页报出「待确认/暂无资料」这类内部语句（只读，不扣额度）', risk: R },
       { m: 'DELETE', p: '/api/plans/{id}', d: '删方案', risk: D },
@@ -474,7 +480,7 @@ export const MANIFEST: ManifestGroup[] = [
       { m: 'PATCH', p: '/api/canvas/turns/{id}', d: '改一轮的描述', risk: W },
       { m: 'DELETE', p: '/api/canvas/turns/{id}', d: '删一轮', risk: D },
       { m: 'GET', p: '/api/canvas/jobs/{id}', d: '查某个出图作业状态', risk: R },
-      { m: 'POST', p: '/api/canvas/jobs/{id}/run', d: '手动触发待执行作业', risk: W },
+      { m: 'POST', p: '/api/canvas/jobs/{id}/run', d: '手动补跑一个出图作业。返回 {ran,status,reason,message}：ran=false 时看 reason/message 决定要不要重来', risk: W, q: { '已扣额度的作业（unknown）': '补跑不重复扣额度，但每个作业只有一次免费补跑机会，用完要重新发起（会重新计费）' } },
       { m: 'GET', p: '/api/canvas/tasks', d: '进行中的任务', risk: R },
       { m: 'DELETE', p: '/api/canvas/tasks/finished', d: '清掉已完成的作业记录', risk: D },
     ],
@@ -622,10 +628,10 @@ export const MANIFEST: ManifestGroup[] = [
   {
     id: 'admin',
     name: '备份与存储治理（部署级）',
-    about: '全库备份、产物占用统计与清理。',
+    about: '本租户数据备份、产物占用统计与清理。',
     ops: [
-      { m: 'GET', p: '/api/admin/backup', d: '全库 JSON 快照下载（同时在 uploads/backups 留一份）', risk: R, q: { '⚠️': '含用户手机号等敏感数据，别外传' } },
-      { m: 'POST', p: '/api/admin/backup/restore', d: '从备份 JSON 恢复数据（破坏性，需确认串；merge 不删现有数据 / replace 覆盖）', risk: D, q: { '⚠️': '覆盖模式会清空目标表后写入，无法撤销' } },
+      { m: 'GET', p: '/api/admin/backup', d: '本租户 JSON 快照下载（同时在 uploads/backups 留一份）', risk: R, q: { '⚠️': '含本租户用户手机号等敏感数据，别外传' } },
+      { m: 'POST', p: '/api/admin/backup/restore', d: '从备份 JSON 恢复本租户数据（破坏性，需确认串；merge 不删现有数据 / replace 覆盖本租户）', risk: D, q: { '⚠️': '覆盖模式会先清空本租户在目标表里的行再写入，无法撤销' } },
       { m: 'GET', p: '/api/admin/storage', d: '产物占用统计', risk: R },
       { m: 'POST', p: '/api/admin/storage/cleanup', d: '清理 N 天前且未被引用的产物（行+文件）', risk: D, q: { beforeDays: '天阈值，传 0 只为实测连通性' } },
     ],

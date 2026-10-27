@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.module.js';
+import { isUniqueViolation } from './prisma-error.js';
 
 /** Prisma 唯一约束冲突的错误码 */
-const UNIQUE_VIOLATION = 'P2002';
 
 /**
  * 幂等记录保留期（天）。
@@ -19,9 +19,13 @@ export const IDEMPOTENCY_RETENTION_DAYS = 7;
  * 每次抢占都清 = 自己制造写放大（一次 DELETE 的 WAL + 死元组 + 索引维护），
  * 比不清理还糟。取 200：清理一次摊到 200 次抢占上可以忽略。
  *
- * 注意：IdempotencyService 是**各模块各注册一份**（orders / lighting / layout），
+ * 注意：IdempotencyService 是**各模块各注册一份**（orders / lighting / layout / media），
  * 计数也是各数各的 —— 真实清理频率是「每个使用方每 200 次抢占」，
  * 仍然远低于写入频率。
+ *
+ * media 那一份是给**出图**用的：出图带 clientRequestId（业务表幂等键），
+ * 光靠「先查后插」在并发下会双双扣额度、双双打上游 —— 用户只拿到一张图却被扣两次。
+ * 抢占式判定把「谁能真跑」变成原子的（靠本表的唯一约束），这才是防双扣的那一道。
  */
 export const IDEMPOTENCY_PURGE_EVERY = 200;
 
@@ -69,7 +73,7 @@ export class IdempotencyService {
       await this.prisma.idempotencyRecord.create({ data: { tenantId, key, kind } });
       return { fresh: true };
     } catch (e) {
-      if ((e as { code?: string }).code === UNIQUE_VIOLATION) {
+      if (isUniqueViolation(e)) {
         const existing = await this.prisma.idempotencyRecord.findUnique({
           where: { idempotency_tenant_key: { tenantId, key } },
         });

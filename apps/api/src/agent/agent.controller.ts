@@ -17,7 +17,7 @@ import { COMMON_NOTES, MANIFEST, OP_PERMISSIONS, destructiveOps } from './manife
 /**
  * Agent 机器接入端点（0.1.53）
  *
- * 权限口径：签发 Key / 建机器账号用 `tenant:member:manage`（租户管理员自带）。
+ * 权限口径：签发 Key / 建机器账号 / 打快照与还原都用 `tenant:member:manage`（租户管理员自带）。
  * 曾用 platform:tenant:manage，那是平台级权限、开源自部署的租户管理员根本没有，
  * 结果是「谁也发不出 Key」——权限定得太高，功能等于不存在。
  * Agent 日常操作走原有 RBAC，不受这里限制。
@@ -100,7 +100,7 @@ export class AgentController {
     @CurrentUser() user: AuthProfile,
     @Body(new ZodValidationPipe(serviceAccountSchema)) dto: ServiceAccountDto,
   ): Promise<unknown> {
-    return this.agent.createServiceAccount(this.tenantOf(user), dto.name, dto.roleKey);
+    return this.agent.createServiceAccount(this.tenantOf(user), dto.name, dto.roleKey, user.id);
   }
 
   @RequirePermissions('tenant:member:manage')
@@ -129,18 +129,29 @@ export class AgentController {
   }
 
   // ---------- 快照与还原 ----------
+  //
+  // 门槛与「成员管理」同级（tenant:member:manage），不给普通成员开：
+  // 快照打的是**整租户**的相关表，还原是一次整租户级回滚 ——
+  // 权限低于成员管理的话，一个只读成员就能把整个租户拖回旧状态。
+  // 不新增权限 action：权限清单是公开契约，多一个要同步 seed、前端名表与数据库。
 
+  /** 打快照：整租户相关表存 JSON */
+  @RequirePermissions('tenant:member:manage')
   @Post('snapshots')
   createSnapshot(@CurrentUser() user: AuthProfile, @Body(new ZodValidationPipe(snapshotSchema)) dto: SnapshotDto): Promise<unknown> {
     return this.agent.createSnapshot(this.tenantOf(user), user.id, dto.label, dto.trigger === 'auto' ? 'AUTO' : 'MANUAL');
   }
 
+  /** 快照列表（不拉数据体） */
+  @RequirePermissions('tenant:member:manage')
   @Get('snapshots')
   listSnapshots(@CurrentUser() user: AuthProfile, @Query('limit') limit?: string): Promise<unknown> {
     const n = Number(limit ?? 20);
     return this.agent.listSnapshots(this.tenantOf(user), Number.isFinite(n) && n > 0 ? Math.min(n, 100) : 20);
   }
 
+  /** 还原到指定快照：整租户级回滚，同样要成员管理权 */
+  @RequirePermissions('tenant:member:manage')
   @Post('snapshots/:id/restore')
   restore(
     @CurrentUser() user: AuthProfile,
