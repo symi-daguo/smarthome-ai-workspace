@@ -152,6 +152,11 @@ jobs:
     name: 桌面端 Windows 打包（安装包 + zip）
     runs-on: windows-latest
     timeout-minutes: 60
+    # 把应用版本号传给下游的发布 job：只有「产物版本 == RELEASE_TAG」时才该发布资产。
+    # 少了这个输出，升完版本号但还没建对应 Release 的每一次 push 都会把发布 job 打红，
+    # 红得没有信息量（代码是好的，只是资产没处可发），久了就没人看 CI 了。
+    outputs:
+      appVersion: ${{ steps.appver.outputs.version }}
 
     # 为什么必须单独一个 Windows runner：
     # electron-builder 的 win 目标在 macOS 上要靠 wine 交叉编译 ——
@@ -196,6 +201,16 @@ jobs:
 
       - name: 编译桌面端主进程
         run: pnpm --filter @app/desktop build
+
+      - name: 读取应用版本
+        # 发布 job 用它判断「这次产物对应哪个 Release」，见 outputs 的说明
+        id: appver
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if (-not $v) { throw "读不到 package.json 的版本号" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "应用版本：$v"
 
       - name: 准备运行时（内嵌 PG + 生产依赖）
         # --skip-build：上一步已经把 api 与前端编好了，prepare:runtime 内部
@@ -266,7 +281,15 @@ jobs:
     # 未设 RELEASE_TAG 时**显式跳过**（GitHub 界面上显示为 skipped，一眼可见），
     # 而不是「跑一遍然后 exit 0」—— 后者让「CI 全绿」与「资产已发布」彻底脱钩，
     # 是本仓库 AGENTS.md 记过的「静默跳过」坑的翻版。
-    if: needs.desktop-windows.result == 'success' && vars.RELEASE_TAG != ''
+    #
+    # 第三条：本次产物的版本必须正好是 RELEASE_TAG 指向的那个版本。
+    #   - 升了版本号但还没建对应的 Release：跳过（不是失败）—— 代码是好的，
+    #     只是资产无处可发。以前这种情况会把 job 打红，红得没有信息量。
+    #   - 版本对得上：照常发布，job 内那条「产物名必须含版本号」的断言继续兜底。
+    if: >-
+      needs.desktop-windows.result == 'success'
+      && vars.RELEASE_TAG != ''
+      && format('v{0}', needs.desktop-windows.outputs.appVersion) == vars.RELEASE_TAG
     env:
       # 版本号放在仓库变量里，不写死在 workflow 里 —— 发新版只改变量
       RELEASE_TAG: ${{ vars.RELEASE_TAG }}
