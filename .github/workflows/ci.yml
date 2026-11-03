@@ -1,12 +1,17 @@
 name: CI
 
-# 触发时机：主干推送 + 面向主干的 PR。
-# 为什么必须要有：仓库此前零 CI，「本地门禁全绿」无法证明别人克隆下来也能构建。
+# 触发时机：主干推送 + 面向主干的 PR + 手动。
+#
+# 为什么要有 workflow_dispatch：发布时「建好 Release + 设好 RELEASE_TAG」之后，
+# 才能让发布 job 把产物传上去。而设变量这个动作本身不会触发任何流水线 ——
+# 没有手动入口就只能靠再推一个提交来碰运气，等于把发版变成「顺手推一下」。
+# 有了它，发版是：建 Release → 设 RELEASE_TAG → 手动跑一次 CI。
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # 同一分支的重复推送只留最新一次，省 Actions 配额
 concurrency:
