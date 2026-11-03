@@ -266,6 +266,9 @@ export function MainLayout(): ReactNode {
   // 命名说明：这里判的是 platform:billing:manage 权限（seed 里 tenant_admin 与 super_admin 都有），
   // 不是 super_admin 角色本身。叫 isSuperAdmin 会让后来者误以为只有超管可见，与 ModelConfig.tsx 的 canManageModels 也对不上。
   const canManageModels = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
+  // 团队与接入的每个端点都要求 tenant:member:manage。菜单原来对所有人可见：
+  // 销售/设计师点进去，四个请求全被 403，页面一片空白，只闪一条 toast。
+  const canManageTeam = user?.memberships.some((m) => m.permissions.includes('tenant:member:manage')) ?? false;
 
   /**
    * 侧栏入口的显示由「设置 → 侧栏功能」逐项控制，默认全部显示。
@@ -318,9 +321,9 @@ export function MainLayout(): ReactNode {
         { key: '/content', icon: <FileSearchOutlined />, label: '内容提取' },
       ].filter((i) => visible(i.key)),
     };
-    // 个人中心人人可见；模型配置仅具备平台配置权限（开源自部署默认 tenant_admin 即有）时追加
+    // 个人中心人人可见；团队与接入要成员管理权、模型配置要平台配置权（开源自部署默认 tenant_admin 即有）
     const systemChildren: NonNullable<MenuProps['items']> = [
-      { key: '/team', icon: <TeamOutlined />, label: '团队与接入' },
+      ...(canManageTeam ? [{ key: '/team', icon: <TeamOutlined />, label: '团队与接入' }] : []),
       { key: '/tokens', icon: <WalletOutlined />, label: '个人中心' },
     ].filter((i) => visible(i.key));
     if (canManageModels && visible('/model-config')) systemChildren.push({ key: '/model-config', icon: <ThunderboltOutlined />, label: '模型配置' });
@@ -332,7 +335,7 @@ export function MainLayout(): ReactNode {
     };
     // 分组内一个入口都不显示时，整个分组也不显示（否则会留一个空标题）
     return [creation, design, toolbox, system].filter((g) => ((g as { children?: unknown[] }).children ?? []).length > 0);
-  }, [canManageModels, hiddenSidebarKeys]);
+  }, [canManageModels, canManageTeam, hiddenSidebarKeys]);
 
   /**
    * 折叠态侧栏用的扁平菜单。

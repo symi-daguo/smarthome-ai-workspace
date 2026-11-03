@@ -141,6 +141,9 @@ export const createLayoutSchema = z.object({
         category: z.string().max(30),
         // 产品主图（有图点位用产品照片作图标，无图回退品类 SVG）
         iconUrl: z.string().max(200).optional(),
+        // 产品级图标 key：点位板上换过的图标必须存下来，
+        // 否则重新打开时又退回品类图标（前端一直在传，schema 没声明，被 zod 剥掉了）
+        iconKey: z.string().max(40).optional(),
         // 所属房间名：右侧清单与交付页按它与图上的编号对应（缺失按「未标注」处理）
         room: z.string().max(20).optional(),
         x: z.number().min(0).max(1),

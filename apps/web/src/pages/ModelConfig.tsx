@@ -348,6 +348,10 @@ export function ModelConfig(): ReactNode {
     setSaving(scope);
     try {
       const endpoint = scope === 'comfy' ? 'image' : scope;
+      // 当前 provider 是 comfyui 时，生图表单里那个下拉只是占位（本地 SD 走独立表单），
+      // 保存时必须**不提交 provider**：后端按字段合并，不传就不改。
+      // 一起提交的话会把出图通道从 comfyui 悄悄切回 minimax —— 用户只是改了个 Key，出图后端却换了。
+      if (scope === 'image' && status?.image.providerKey === 'comfyui') delete values.provider;
       await api(`/api/admin/model-config/${endpoint}`, { method: 'PUT', body: JSON.stringify(values) });
       message.success('已保存，即时生效（无需重启）');
       await load();

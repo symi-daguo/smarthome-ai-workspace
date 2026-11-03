@@ -7,6 +7,7 @@ import { api, fileUrl, tokenStore } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { catMeta, categoryList, categoryOptions, loadCategoryDict, refreshCategoryDict, type CategoryDef } from '../lib/categoryStore';
 import { compressImage } from '../lib/compress';
+import { downloadBlob } from '../lib/download';
 import { categoryIconSvg, iconSvgByKey, productIconSvg, ICON_SIZE, PRODUCT_ICON_KEYS } from '../lib/product-icons';
 import { BRAND_GRADIENT, pageContainerStyle } from '../theme/tokens';
 
@@ -307,12 +308,10 @@ export function ProductCenter(): ReactNode {
           return;
         }
         const blob = await res.blob();
-        const obj = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = obj;
-        link.download = fileName;
-        link.click();
-        URL.revokeObjectURL(obj);
+        // 走共用工具：它会先挂到 DOM 再点、并延后释放 objectURL。
+        // 原来这里「createElement + click + 立即 revoke」且不挂 DOM：
+        // Electron 内嵌浏览器会丢掉 a.download 的文件名，Firefox/Safari 则可能直接落 0 字节。
+        downloadBlob(blob, fileName);
         message.success(`已导出 ${format.toUpperCase()}`);
       } catch (e) {
         message.error((e as Error).message);
@@ -402,15 +401,9 @@ export function ProductCenter(): ReactNode {
     message.success('格式说明已下载，可直接交给你的 Agent');
   };
 
-  /** 浏览器里触发一次下载 */
+  /** 浏览器里触发一次下载（统一走 lib/download：挂 DOM + 延后释放，见那里的说明） */
   const downloadText = (filename: string, text: string, mime: string): void => {
-    const blob = new Blob([text], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([text], { type: mime }), filename);
   };
 
   /** agent 批量处理：勾选行一次补全文案/品类归位 + 批量生成产品图（生图按张扣额度） */

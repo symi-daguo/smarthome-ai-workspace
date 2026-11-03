@@ -196,6 +196,27 @@ function errorMessage(e: unknown): string {
   return raw.replace(/\s+/g, ' ').slice(0, 200);
 }
 
+/**
+ * 恢复「已有行」时不覆盖的字段。
+ *
+ * User 是全局账号：phone / passwordHash / tokenVersion 决定「谁能登进这个账号」。
+ * 备份恢复的语义是「把我的业务数据搬回来」，不是「替别人改密码」——
+ * 即使是本租户成员，凭据也只在**新建账号**（create 分支）时写入。
+ * 换机迁移不受影响：空库里这些账号全是新建，备份里的 hash 照样生效。
+ */
+const RESTORE_UPDATE_OMIT: Record<string, string[]> = {
+  user: ['phone', 'passwordHash', 'tokenVersion'],
+};
+
+/** 已有行的 update 载荷：剔除不允许被备份覆盖的字段 */
+function updatePayload(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  const omit = RESTORE_UPDATE_OMIT[table];
+  if (!omit) return row;
+  const out = { ...row };
+  for (const field of omit) delete out[field];
+  return out;
+}
+
 @UseGuards(AuthGuard('jwt'), TenantGuard, PermissionsGuard)
 @Controller('admin')
 export class BackupController {
@@ -226,11 +247,18 @@ export class BackupController {
   }
 
   /**
-   * 允许写入的用户 id：现有成员 + 备份里带的本租户成员。
+   * 允许写入的用户 id：**现有本租户成员** + **库里根本不存在的全新账号**。
    *
    * 为什么用户要单独算：User 是全局账号、自己没有 tenantId 列，
-   * 「属于本租户」的判据是成员关系 —— 而备份可以顺带把新成员带进来，
-   * 所以还要把备份里 tenantId 命中本租户的成员关系中的 userId 算进来。
+   * 「属于本租户」的判据是成员关系。
+   *
+   * 为什么不能直接相信备份里的 membership 行（这是修掉的一个提权洞）：
+   * 上传的 JSON 由调用方提供，任何人只要在 `membership` 数组里塞一条
+   * `{ tenantId: 自己的租户, userId: <别人的 id> }`，那一行就会把 victim 的 id
+   * 算进「允许写入」，随后 `user` 表的 upsert 会用备份内容**整行覆盖** victim
+   * （phone / passwordHash 一起改）—— 一条伪造记录完成跨租户账号接管。
+   * 现在只有两种情况放行：这个人本来就是本租户成员，或者这个 id 在库里查不到
+   * （换机迁移时导入新成员，此时没有可被覆盖的既有账号）。
    */
   private async memberUserIds(tenantId: string, tables: Record<string, unknown>): Promise<Set<string>> {
     const db = this.prisma as unknown as Record<string, { findMany: (a?: unknown) => Promise<unknown[]> }>;
@@ -239,8 +267,15 @@ export class BackupController {
       rows.map((r) => String((r as { id?: unknown }).id ?? '')).filter((id) => id.length > 0),
     );
     const memberships = Array.isArray(tables.membership) ? (tables.membership as Record<string, unknown>[]) : [];
-    for (const m of memberships) {
-      if (m.tenantId === tenantId && typeof m.userId === 'string') ids.add(m.userId);
+    const incoming = memberships
+      .filter((m) => m.tenantId === tenantId && typeof m.userId === 'string')
+      .map((m) => m.userId as string);
+    if (incoming.length === 0) return ids;
+    const known = await db.user.findMany({ where: { id: { in: [...new Set(incoming)] } }, select: { id: true } });
+    const knownIds = new Set(known.map((r) => String((r as { id?: unknown }).id ?? '')));
+    for (const id of incoming) {
+      // 已存在的账号必须已经是本租户成员（上面那一批），否则拒绝
+      if (!knownIds.has(id)) ids.add(id);
     }
     return ids;
   }
@@ -381,14 +416,30 @@ export class BackupController {
 
     // 圈定范围要用到的父行 id 集合：必须在清空之前取（清完父表就空了）
     const parentIds = await this.parentIdSets(tenantId);
-    // 允许写入的用户：现有成员 + 备份里带的本租户成员（备份可以把新成员带进来）
+    // 允许写入的用户：现有成员 + 备份里带的**全新**账号（见 memberUserIds 的说明）
     const memberIds = await this.memberUserIds(tenantId, tables);
+    // 平台级角色：备份里的成员关系一律不得引用它们。
+    // 不加这道判断，任何持 platform:billing:manage 的租户管理员都能在自己导出的备份里
+    // 塞一条 `{tenantId: 自己, userId: 自己, roleId: <super_admin>}`，恢复后自己就是平台管理员 ——
+    // 与 team.service 的 assertRoleAssignable「平台级角色只能由平台级管理员分配」同一条规则。
+    const platformRoleIds = new Set(
+      (await this.prisma.role.findMany({ where: { scope: 'PLATFORM' }, select: { id: true } })).map((r) => r.id),
+    );
     const belongs = (spec: BackupTableSpec, row: Record<string, unknown>): boolean => {
       switch (spec.scope) {
         case 'self':
           return String(row.id) === tenantId;
         case 'own':
-          return String(row.tenantId) === tenantId;
+          if (String(row.tenantId) !== tenantId) return false;
+          if (spec.table === 'membership') {
+            // 成员关系两条额外校验，缺一条就能绕过前一道闸门：
+            //   ① roleId 不得是平台级角色 —— 否则一行 JSON 给自己发 super_admin；
+            //   ② userId 必须是「本租户现有成员」或「库里不存在的新账号」——
+            //      否则先把别人拉进本租户、再恢复一次就能改他的账号（两步接管）。
+            if (platformRoleIds.has(String(row.roleId))) return false;
+            if (!memberIds.has(String(row.userId))) return false;
+          }
+          return true;
         case 'member':
           return memberIds.has(String(row.id));
         case 'child':
@@ -396,6 +447,21 @@ export class BackupController {
         case 'global':
           return true;
       }
+    };
+    /** 拒绝原因：让失败明细能直接看出「是越界，还是角色提权」 */
+    const denyReason = (spec: BackupTableSpec, row: Record<string, unknown>): string => {
+      if (spec.scope === 'own' && spec.table === 'membership') {
+        if (platformRoleIds.has(String(row.roleId))) {
+          return 'MEMBERSHIP_ROLE_ESCALATION: 备份里的成员关系引用了平台级角色，拒绝写入';
+        }
+        if (!memberIds.has(String(row.userId))) {
+          return 'MEMBERSHIP_USER_NOT_IN_TENANT: 备份里的成员关系引用了本租户之外的用户，拒绝写入';
+        }
+      }
+      if (spec.scope === 'member') {
+        return 'NOT_TENANT_MEMBER: 该用户既不是本租户现有成员，也不是可新建的账号，拒绝覆盖';
+      }
+      return 'ROW_NOT_IN_TENANT';
     };
 
     if (mode === 'replace') {
@@ -448,14 +514,14 @@ export class BackupController {
               await raw.$executeRawUnsafe(`SAVEPOINT ${spRow}`);
               try {
                 if (!belongs(spec, row)) {
-                  throw new Error('ROW_NOT_IN_TENANT');
+                  throw new Error(denyReason(spec, row));
                 }
                 if (spec.write === 'upsert') {
                   // 不清空的表（租户行/用户/部署级配置）按主键更新，不留重复行
                   await db[table].upsert({
                     where: idOf(row),
                     create: row as never,
-                    update: row as never,
+                    update: updatePayload(table, row) as never,
                   });
                 } else {
                   await db[table].create({ data: row as never });
@@ -486,9 +552,9 @@ export class BackupController {
         for (const row of rows) {
           try {
             // 不是本租户的行拒写：合并模式虽然不删行，但 upsert 一样能写进别的租户
-            if (!belongs(spec, row)) throw new Error('ROW_NOT_IN_TENANT');
+            if (!belongs(spec, row)) throw new Error(denyReason(spec, row));
             const where = idOf(row);
-            await db[table].upsert({ where, create: row as never, update: row as never });
+            await db[table].upsert({ where, create: row as never, update: updatePayload(table, row) as never });
             n += 1;
           } catch (e) {
             noteFailure(table, errorMessage(e), false);
@@ -534,7 +600,17 @@ export class BackupController {
     planPackageBytes: number; narrationAudioBytes: number; backupBytes: number; files: number;
     tenantUsedBytes: number;
   }> {
-    const agg = await this.prisma.mediaAsset.aggregate({ _sum: { sizeBytes: true }, _count: true, _min: { createdAt: true } });
+    const tenantId = user.activeTenantId as string;
+    // assets / oldest 按**本租户**统计：这两个数字在界面上读作「我的产物库有多大」。
+    // 不带 tenantId 时它们是全库口径（租户管理员看到别人家的产物数量与最早时间），
+    // 与同一张卡里的 tenantUsedBytes 自相矛盾。
+    // usedBytes / trackedBytes 仍然保持全库口径 —— 那是"磁盘会不会满"，不是"我用了多少"。
+    const agg = await this.prisma.mediaAsset.aggregate({
+      where: { tenantId },
+      _sum: { sizeBytes: true },
+      _count: true,
+      _min: { createdAt: true },
+    });
     // 配额换算与上传闸门同一份来源（media.quotaBytes），避免「面板说还有空间、上传却被拒」
     const quotaBytes = this.media.quotaBytes();
     const usage = await this.media.volumeUsage();
@@ -543,7 +619,7 @@ export class BackupController {
       usedBytes: usage.usedBytes,
       // tenantUsedBytes = 本租户已用产物字节，与上传闸门同一个函数算出来的（回答「我还能传多少」）
       // 两个口径不同是有意的：配额按租户算，磁盘占用是全局的；混用会得出「还有空间却传不上去」
-      tenantUsedBytes: await this.media.tenantUsedBytes(user.activeTenantId as string),
+      tenantUsedBytes: await this.media.tenantUsedBytes(tenantId),
       quotaBytes,
       assets: agg._count,
       oldest: agg._min.createdAt?.toISOString() ?? null,

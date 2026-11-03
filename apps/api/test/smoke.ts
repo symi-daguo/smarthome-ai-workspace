@@ -1764,7 +1764,9 @@ async function main(): Promise<void> {
       title: '旧但高互动',
       text: '旧内容文案',
       sourceUrl: 'https://example.com/p/old',
-      publishedAt: new Date(Date.now() - 30 * benchDay).toISOString(),
+      // 13 天前：仍在 14 天采集窗口内，但足够老，能验证时效衰减；
+      // 原来写 30 天前 —— 窗口规则真正生效后它会被直接丢弃，这条用例就不再成立。
+      publishedAt: new Date(Date.now() - 13 * benchDay).toISOString(),
       play: 100000,
       like: 5000,
       comment: 800,
@@ -1795,6 +1797,24 @@ async function main(): Promise<void> {
     body: JSON.stringify({ batchId: 'smoke-bench', items: benchItems }),
   });
   check('重复提交同一链接只更新不重复入库', benchAgain.body.created === 0 && benchAgain.body.updated === 2);
+
+  // 采集契约写着「只看最近 14 天」，服务端必须真的执行：超窗的条目不入库，并在响应里报数
+  const benchExpired = await request<{ accepted: number; skippedOutOfWindow: number }>(base, '/api/benchmark/contents', {
+    ...authA,
+    method: 'POST',
+    body: JSON.stringify({
+      items: [{
+        accountId: benchAccId, title: '超窗内容', text: '陈年内容文案',
+        sourceUrl: 'https://example.com/p/expired',
+        publishedAt: new Date(Date.now() - 30 * benchDay).toISOString(), play: 99999,
+      }],
+    }),
+  });
+  check(
+    '超出 14 天窗口的内容被丢弃并计数',
+    benchExpired.status === 201 && benchExpired.body.accepted === 0 && benchExpired.body.skippedOutOfWindow === 1,
+    JSON.stringify(benchExpired.body).slice(0, 120),
+  );
 
   const benchHot = await request<{ contents: { title: string; hotScore: number }[] }>(
     base,
@@ -2172,6 +2192,64 @@ async function main(): Promise<void> {
     }
   }
 
+
+  // ---------- 备份恢复不得跨租户改写账号（2026-11 修掉的一条提权路径） ----------
+  //
+  // 攻击方式：租户管理员（持 platform:billing:manage）在自己导出的备份里塞一条
+  // `{tenantId: 自己的租户, userId: <别人的 id>}` 的 membership，再把那个 user 整行覆盖
+  // （phone / passwordHash 一起改）—— 一条 JSON 完成跨租户账号接管。
+  // 修法是 memberUserIds 只信任「库里现有的本租户成员 + 库里不存在的新账号」，
+  // 并且 membership 不得引用平台级角色。这里把攻击原样打一遍，确认被挡。
+  {
+    const victimId = (await request<{ id: string }>(base, '/api/auth/me', authB)).body.id;
+    const adminRole = await prisma.role.findUnique({ where: { key: 'tenant_admin' }, select: { id: true } });
+    const forged = await request<{ failed: { table: string; reason: string }[] }>(base, '/api/admin/backup/restore', {
+      ...authA, method: 'POST',
+      body: JSON.stringify({
+        mode: 'merge',
+        confirmToken: 'RESTORE',
+        tables: {
+          membership: [{ id: randomUUID(), tenantId: tenantA, userId: victimId, roleId: adminRole?.id ?? null }],
+          user: [{
+            id: victimId, phone: '19900000001', displayName: '被接管', passwordHash: 'forged-not-a-hash',
+            tokenVersion: 0, avatarColor: '#000000', isServiceAccount: false,
+          }],
+        },
+      }),
+    });
+    check(
+      '备份里伪造的成员关系不能把别人的账号算进本租户',
+      Array.isArray(forged.body.failed) && forged.body.failed.some((f) => f.table === 'user' && /NOT_TENANT_MEMBER/.test(f.reason)),
+      JSON.stringify(forged.body.failed ?? []).slice(0, 160),
+    );
+    // membership 这一行本身也必须被拒：只拦 user 不够 ——
+    // 先把人拉进本租户、再恢复第二次，就绕过了 user 那道闸门。
+    check(
+      '伪造的成员关系本身也被拒（防止两步接管）',
+      Array.isArray(forged.body.failed) && forged.body.failed.some((f) => f.table === 'membership' && /MEMBERSHIP_USER_NOT_IN_TENANT/.test(f.reason)),
+      JSON.stringify(forged.body.failed ?? []).slice(0, 160),
+    );
+    const victim = await prisma.user.findUnique({ where: { id: victimId }, select: { phone: true } });
+    check('被攻击账号的手机号没有被改写', victim?.phone !== '19900000001', `实际 ${victim?.phone}`);
+
+    // 第二条通道：不改别人的账号，而是给自己发一个平台级角色。
+    // membership 的租户校验只看 tenantId，不拦 roleId —— 一行 JSON 就能把自己变成平台管理员。
+    const platformRole = await prisma.role.findFirst({ where: { scope: 'PLATFORM' }, select: { id: true } });
+    const selfId = (await request<{ id: string }>(base, '/api/auth/me', authA)).body.id;
+    const escalate = await request<{ failed: { table: string; reason: string }[] }>(base, '/api/admin/backup/restore', {
+      ...authA, method: 'POST',
+      body: JSON.stringify({
+        mode: 'merge',
+        confirmToken: 'RESTORE',
+        tables: { membership: [{ id: randomUUID(), tenantId: tenantA, userId: selfId, roleId: platformRole?.id }] },
+      }),
+    });
+    check(
+      '备份里的成员关系不能引用平台级角色（阻断自我提权）',
+      Array.isArray(escalate.body.failed) && escalate.body.failed.some((f) => f.table === 'membership' && /MEMBERSHIP_ROLE_ESCALATION/.test(f.reason)),
+      JSON.stringify(escalate.body.failed ?? []).slice(0, 160),
+    );
+  }
 
   // ---------- 备份留盘必须自动裁剪（防止只增不减撑爆磁盘） ----------
   // 背景：全库快照单份二十多 MB，0.1.63 之前只写不删，实测堆到 188 份 597MB，
@@ -2622,7 +2700,9 @@ async function main(): Promise<void> {
       { fixtureId: 'f1', keyframes: [{ t: 0, brightness: 10, colorTemp: 2700 }, { t: 4000, brightness: 90, colorTemp: 4000 }] },
     ],
   };
-  const videoAssetId = randomUUID();
+  // 用一个**真实存在且属于本租户**的资产 id：灯光场景现在会校验 sourceAssetId / videoAssetId
+  // 的归属（防止把别人的素材挂进自己的场景），随便造的 uuid 会被 404 挡下。
+  const videoAssetId = upAsset.id;
 
   const sceneCreate = await request<{ id: string; ratio: string; status: string }>(base, '/api/lighting', {
     ...authA,
@@ -2948,7 +3028,8 @@ async function main(): Promise<void> {
   // 入参校验：不合法的一律 400
   const canvasBadPrompt = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '短' }) });
   const canvasBadSize = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '合法长度的提示词', size: '800x600' }) });
-  const canvasBadQuality = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '合法长度的提示词', quality: 'ultra' }) });
+  // quality 档已从 schema 移除（它从来没被消费过，留着就是「看起来能调画质」的假参数）。
+  // 传了也只会被 zod 剥掉，所以这里不再断言「非法质量档被拒」——那条断言保护的是一个不存在的功能。
   const canvasBadParent = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '基于随机父轮发起', parentId: randomUUID() }) });
   const canvasCrossParent = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '基于别的对话线派生', parentId: canvasOtherTurn.body.turnId }) });
   const canvasBadRef = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '带参考图发起一轮', refAssetId: '00000000-0000-0000-0000-000000000000' }) });
@@ -2956,7 +3037,6 @@ async function main(): Promise<void> {
   const canvasBadParentFmt = await request(base, `/api/canvas/conversations/${convId}/turns`, { ...authA, method: 'POST', body: JSON.stringify({ prompt: '父轮 id 非法', parentId: 'not-a-uuid' }) });
   check('提示词短于 4 字被校验拒绝（400）', canvasBadPrompt.status === 400);
   check('非法画幅被校验拒绝（400）', canvasBadSize.status === 400);
-  check('非法质量档被校验拒绝（400）', canvasBadQuality.status === 400);
   check('parentId 不存在返回 400', canvasBadParent.status === 400);
   check('parentId 指向别的对话线返回 400', canvasCrossParent.status === 400);
   check('参考图资产不存在返回 400', canvasBadRef.status === 400);
@@ -2967,7 +3047,7 @@ async function main(): Promise<void> {
   const canvasTurn = await request<{ userTurnId: string; turnId: string; jobId: string }>(base, `/api/canvas/conversations/${convId}/turns`, {
     ...authA,
     method: 'POST',
-    body: JSON.stringify({ prompt: '现代简约风客厅效果图，暖色灯光', size: '1536x1024', background: 'white', quality: 'high' }),
+    body: JSON.stringify({ prompt: '现代简约风客厅效果图，暖色灯光', size: '1536x1024', background: 'white' }),
   });
   check('画布发起一轮 201 并返回 userTurnId/turnId/jobId', canvasTurn.status === 201 && Boolean(canvasTurn.body.userTurnId) && Boolean(canvasTurn.body.turnId) && Boolean(canvasTurn.body.jobId));
 
@@ -2987,7 +3067,14 @@ async function main(): Promise<void> {
   check('user 轮：parentId 为空 + kind=user + prompt 为用户原话', canvasUserTurn?.parentId === null && canvasUserTurn?.kind === 'user' && canvasUserTurn?.prompt === '现代简约风客厅效果图，暖色灯光');
   check('assistant 轮：parentId 指向 user 轮 + 初始 status=pending + variants 为空', canvasAsstTurn?.parentId === canvasTurn.body.userTurnId && canvasAsstTurn?.kind === 'assistant' && canvasAsstTurn?.status === 'pending' && canvasAsstTurn?.variants.length === 0);
   check('详情为每轮附带 children[]（assistant 轮作为 user 轮的子轮）', Array.isArray(canvasUserTurn?.children) && canvasUserTurn?.children.includes(canvasTurn.body.turnId) === true);
-  check('轮次按 createdAt 正序返回（user 在前 assistant 在后）', canvasDetail1.body.turns[0]?.id === canvasTurn.body.userTurnId && canvasDetail1.body.turns[1]?.id === canvasTurn.body.turnId);
+  // 用相对顺序而不是「必须是头两条」：后面还会往同一条对话线追加轮次，
+  // 固定下标会让这条断言在数据一多就误报，而它真正要守的是「user 恒在 assistant 之前」。
+  const turnIds = canvasDetail1.body.turns.map((t) => t.id);
+  check(
+    '轮次按 createdAt 正序返回（user 在前 assistant 在后）',
+    turnIds.indexOf(canvasTurn.body.userTurnId) >= 0
+      && turnIds.indexOf(canvasTurn.body.userTurnId) < turnIds.indexOf(canvasTurn.body.turnId),
+  );
 
   // 作业轮询：结构与状态枚举恒定合法（出图成败只影响 status 取值）
   const canvasJob0 = await request<CanvasJobRow>(base, `/api/canvas/jobs/${canvasTurn.body.jobId}`, authA);

@@ -415,12 +415,23 @@ export function LightingStudio(): ReactNode {
     setRendering(true);
     try {
       const id = await persist();
-      const r = await api<{ url: string }>('/api/media/videos', {
+      const r = await api<{ id: string; url: string }>('/api/media/videos', {
         method: 'POST',
         timeoutMs: VIDEO_TIMEOUT_MS,
-        body: JSON.stringify({ prompt: buildVideoPrompt(fixtures, timeline), firstFrameAssetId: assetId, durationSec }),
+        // 后端 duration 是枚举（只收 5 或 10），不是自由数值；时间轴上的 3~12 秒就近折算。
+        // 原来这里发的字段名是 durationSec，被 zod 直接剥掉 —— 用户选多长，出片都是默认 5 秒。
+        // ratio 同理：界面上的画幅选择此前从未提交过，9:16 出来还是 16:9。
+        body: JSON.stringify({
+          prompt: buildVideoPrompt(fixtures, timeline),
+          firstFrameAssetId: assetId,
+          duration: durationSec <= 5 ? 5 : 10,
+          ratio,
+        }),
       });
-      await api(`/api/lighting/${id}`, { method: 'PATCH', body: JSON.stringify({ videoAssetId: r.url, status: 'ready' }) });
+      // videoAssetId 要的是产物 id（uuid），不是可访问 URL。
+      // 传 r.url 会被 service 的 uuid 校验挡下：视频已经生成、额度已经扣了，
+      // 前端却弹「出片失败」，预览里也看不到片。
+      await api(`/api/lighting/${id}`, { method: 'PATCH', body: JSON.stringify({ videoAssetId: r.id, status: 'ready' }) });
       setVideoUrl(fileUrl(`${r.url}?t=${Date.now()}`));
       void loadScenes();
       message.success('灯光场景视频已生成并保存到「我的作品」');
@@ -441,6 +452,15 @@ export function LightingStudio(): ReactNode {
       setAssetId(s.sourceAssetId ?? '');
       setImgSrc(s.sourceAssetId ? fileUrl(`/api/media/assets/${s.sourceAssetId}/file`) : '');
       setFixtures(s.fixtures);
+      // 按灯具上的 circuit 字段重建回路清单。
+      // 回路清单此前只活在内存里：保存后重新打开，灯具的 circuit 字段还在，
+      // 界面上的「电气回路」却回到 0 条 —— 用户以为回路丢了，导出的回路清单也是空表。
+      const grouped = new Map<string, string[]>();
+      for (const f of s.fixtures) {
+        if (!f.circuit) continue;
+        grouped.set(f.circuit, [...(grouped.get(f.circuit) ?? []), f.id]);
+      }
+      setCircuits([...grouped.entries()].map(([cid, ids], i) => ({ id: cid, name: `回路 ${i + 1}`, fixtureIds: ids })));
       setTimelineSafe(s.timeline);
       setStep(s.fixtures.length > 0 ? 2 : 1);
       setHistoryOpen(false);
@@ -592,7 +612,9 @@ export function LightingStudio(): ReactNode {
                         // 回路编辑中：已选入当前回路的灯用青绿描边，与「当前选中」的紫色区分开
                         border: `2px solid ${picked ? ACCENT_TEAL : active ? token.colorPrimary : token.colorBorder}`,
                         boxShadow: picked ? '0 0 0 3px rgba(15,181,165,.25)' : active ? `0 0 0 3px ${token.colorPrimary}38` : 'none',
-                        pointerEvents: 'none',
+                        // 不能是 none：这个 div 挂着 onPointerDown（选中 / 拖拽 / 回路选灯都从它开始），
+                        // pointerEvents:none 会让事件全部穿透到画布，等于拖不动灯、也点不中灯。
+                        pointerEvents: 'auto',
                         cursor: 'move',
                       }}
                     />

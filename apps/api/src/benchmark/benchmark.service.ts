@@ -149,12 +149,22 @@ export class BenchmarkService {
 
     // 服务端统一算热度分，再按分数做每账号截断
     const now = new Date();
-    const scored = dto.items.map((item) => {
+    const allScored = dto.items.map((item) => {
       const account = accountMap.get(item.accountId)!;
       const publishedAt = parsePublishedAt(item.publishedAt);
       const hotScore = computeHotScore(item, publishedAt, now);
       return { item, account, publishedAt, hotScore };
     });
+
+    // 时间窗与最低热度：BENCHMARK_HOT_RULES 里声明了 windowDays / minHotScore，
+    // 之前只跟着采集契约下发、服务端从不执行 —— 采回来的陈年内容照样入库并参与排行。
+    // 发布时间缺失的条目保留：契约允许「拿不到就留空」，无从判断年龄就不该替它判老。
+    const windowStart = now.getTime() - BENCHMARK_HOT_RULES.windowDays * 86_400_000;
+    const scored = allScored.filter((s) => {
+      if (s.publishedAt && s.publishedAt.getTime() < windowStart) return false;
+      return s.hotScore >= BENCHMARK_HOT_RULES.minHotScore;
+    });
+    const skippedOutOfWindow = allScored.length - scored.length;
 
     const perAccount = new Map<string, typeof scored>();
     for (const s of scored) {
@@ -189,6 +199,8 @@ export class BenchmarkService {
         text: s.item.text,
         sourceUrl: s.item.sourceUrl,
         publishedAt: s.publishedAt,
+        // 契约里一直有 durationSec，之前表里没列、这里也没写，采回来就丢
+        durationSec: s.item.durationSec ?? null,
         stats: JSON.stringify(stats),
         hotScore: s.hotScore,
         topics: (s.item.topics ?? []).join(','),
@@ -215,6 +227,8 @@ export class BenchmarkService {
       updated,
       /** 超出每账号上限被截断的条数（不是错误，是采集端采多了） */
       skippedOverLimit,
+      /** 超出时间窗或低于最低热度被丢弃的条数（契约里写了这两条规则，服务端现在真的执行） */
+      skippedOutOfWindow,
       batchId,
     };
   }
@@ -244,7 +258,10 @@ export class BenchmarkService {
     if (sortBy === 'published') {
       return this.prisma.benchmarkContent.findMany({
         where,
-        orderBy: [{ publishedAt: 'desc' }, { collectedAt: 'desc' }],
+        // nulls: 'last' 不能省：PostgreSQL 的 DESC 默认 NULLS FIRST，
+        // 而契约要求「拿不到发布时间就留空」—— 不加这一条，未标日期的内容
+        // 会把「最新发布」榜单的头部全占满。
+        orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { collectedAt: 'desc' }],
         take,
       });
     }

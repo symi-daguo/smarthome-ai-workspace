@@ -12,6 +12,13 @@ export const createSceneSchema = z.object({
   // 只校验最外层是对象，内部结构由前端负责
   timeline: z.record(z.string(), z.json()),
   videoAssetId: z.string().uuid('出片资产 id 不合法').optional(),
+  /**
+   * 场景状态：出片成功后前端会置 ready。
+   *
+   * 之前 schema 里没有这个字段，前端传 `{status:'ready'}` 会被 zod 直接剥掉，
+   * 服务层也没有写入路径 —— 结果是「视频明明出好了，场景列表里永远显示草稿」。
+   */
+  status: z.enum(['draft', 'ready']).optional(),
 });
 
 export const updateSceneSchema = createSceneSchema.partial();

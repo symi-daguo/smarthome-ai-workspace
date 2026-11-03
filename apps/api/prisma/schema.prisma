@@ -941,6 +941,8 @@ model BenchmarkContent {
   sourceUrl   String   @default("")
   // 发布时间；采集端拿不到时留空
   publishedAt DateTime?
+  // 视频时长（秒）；采集端拿不到时留空。用于判断内容形态，不参与热度分
+  durationSec Int?
   // 互动数据 JSON：{"play":123,"like":45,"comment":6,"collect":2,"share":1}
   stats       String   @default("{}")
   // 服务端统一算出的热度分，保证入库排序口径一致（不依赖采集端各自实现）

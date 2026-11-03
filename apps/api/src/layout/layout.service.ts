@@ -162,7 +162,9 @@ export class LayoutService {
    * agent 批量处理产品：勾选的产品行（我的库 / 公共库均可）一次完成
    * ① LLM 补全缺失文案（品牌/型号/布置提示，仅我的库行写回）
    * ② 生图 provider 批量生成产品主图（产品图即点位图标），逐个扣生图额度
-   * 单个失败不阻塞其余；生图 key 未配置时诚实降级为仅文案。全程写审计留痕。
+   * 单个失败不阻塞其余；生图 key 未配置时诚实降级为仅文案。
+   * 审计由 AuditInterceptor 统一记录（POST 写操作，含请求体摘要与逐行状态码）；
+   * 这里不再单独留一个「写审计」的空函数 —— 那只会让读代码的人以为有更细的留痕。
    */
   async aiProcessProducts(tenantId: string, userId: string, ids: string[], clientRequestId?: string) {
     // 幂等：这一步会逐个调生图（每张都扣额度），用户重试不该把一整批图再生一遍。
@@ -246,19 +248,12 @@ export class LayoutService {
       }
     }
 
-    await this.auditProduct(tenantId, userId, `ids=${ids.length} copy=${copyOk} image=${imageOk} failed=${errors.length}`);
     const out = { total: rows.length, copyOk, imageOk, errors };
     // 结果摘要入幂等记录：批量结果含 errors 数组，原样存即可（不含产品实体，不大）
     await this.idem.complete(tenantId, clientRequestId, 'product-enrich', out);
     return out;
   }
 
-  private async auditProduct(tenantId: string, actorId: string, target: string): Promise<void> {
-    try {
-    } catch {
-      // 留痕失败不阻塞业务
-    }
-  }
 
   async create(tenantId: string, userId: string, dto: { title: string; mediaAssetId: string; points: unknown[] }) {
     const asset = await this.prisma.mediaAsset.findFirst({ where: { id: dto.mediaAssetId, tenantId } });

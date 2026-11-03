@@ -479,25 +479,34 @@ export class PlansService {
     id: string,
     dto: { floorplanAssetId: string; extraFloorplanAssetIds?: string[] | null; floorplanFloors?: string[] | null; layoutPoints?: unknown[] | null },
   ) {
-    await this.detail(tenantId, id);
+    const plan = await this.detail(tenantId, id);
+    // 额外户型图：调用方没给就**沿用方案上已有的**（点位板只改点位，不该顺手清掉别的楼层）；
+    // 给了才按新列表替换。主图被换掉时，原列表里等于新主图的那一项要去掉，避免重复。
+    const extraIds = (dto.extraFloorplanAssetIds === undefined || dto.extraFloorplanAssetIds === null
+      ? (plan.extraFloorplanAssetIds ?? [])
+      : [...new Set(dto.extraFloorplanAssetIds)]
+    ).filter((x) => x && x !== dto.floorplanAssetId);
     // 额外户型图逐个校验归属；混入他人租户的资源要在这里挡住，不能只看主图
-    const extraIds = [...new Set(dto.extraFloorplanAssetIds ?? [])].filter((x) => x && x !== dto.floorplanAssetId);
     await this.assertFloorplanAssets(tenantId, dto.floorplanAssetId, extraIds);
     // 点位里的产品 id 同样要校验归属（含公共库产品）
     await this.assertPointProductsOwned(tenantId, dto.layoutPoints);
-    // 楼层名与图片一一对应；缺失补空串，避免数组错位导致「二层」贴到「一层」的图上
+    // 楼层名与图片一一对应；调用方没给就沿用原楼层名，缺失补空串 ——
+    // 数组错位会让「二层」贴到「一层」的图上
     const total = 1 + extraIds.length;
     if (total > FLOORPLAN_MAX_FILES) {
       throw new BadRequestException(`户型图最多 ${FLOORPLAN_MAX_FILES} 张，多余的那几张没有加进来`);
     }
-    const floors = [...(dto.floorplanFloors ?? [])];
+    const sourceFloors = dto.floorplanFloors === undefined || dto.floorplanFloors === null
+      ? (plan.floorplanFloors ?? [])
+      : dto.floorplanFloors;
+    const floors = [...sourceFloors].slice(0, total);
     while (floors.length < total) floors.push('');
     return this.prisma.planProject.update({
       where: { id },
       data: {
         floorplanAssetId: dto.floorplanAssetId,
         extraFloorplanAssetIds: extraIds,
-        floorplanFloors: floors.slice(0, total),
+        floorplanFloors: floors,
         layoutPoints: (dto.layoutPoints ?? null) as never,
       },
     });

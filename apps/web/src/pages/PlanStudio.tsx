@@ -406,11 +406,23 @@ const [editing, setEditing] = useState<{
           const fresh = await api<PlanDetail>(`/api/plans/${planId}`);
           setPlan((prev) => {
             if (!prev) return prev;
-            // 点位数量或户型图没变就不动，避免无谓的重渲染
-            const samePoints = (prev.layoutPoints?.length ?? 0) === (fresh.layoutPoints?.length ?? 0);
-            const sameImage = (prev.floorplanAssetId ?? null) === (fresh.floorplanAssetId ?? null);
-            if (samePoints && sameImage) return prev;
-            return { ...prev, layoutPoints: fresh.layoutPoints, floorplanAssetId: fresh.floorplanAssetId };
+            // 用**内容签名**判变，不能只比点位条数：
+            // 在点位页只挪了坐标、或换了某台的型号，数量一点没变 —— 判定「没变」就不更新，
+            // 之后导出 PPT/PDF 拿到的还是旧点位。
+            const sig = (p: PlanDetail): string => JSON.stringify([
+              p.floorplanAssetId ?? null,
+              p.extraFloorplanAssetIds ?? [],
+              p.floorplanFloors ?? [],
+              p.layoutPoints ?? null,
+            ]);
+            if (sig(prev) === sig(fresh)) return prev;
+            return {
+              ...prev,
+              layoutPoints: fresh.layoutPoints,
+              floorplanAssetId: fresh.floorplanAssetId,
+              extraFloorplanAssetIds: fresh.extraFloorplanAssetIds,
+              floorplanFloors: fresh.floorplanFloors,
+            };
           });
         } catch {
           // 拉不到就保持现状，不打断正在做的事
@@ -1623,9 +1635,9 @@ const [editing, setEditing] = useState<{
             <Text style={{ fontSize: 13 }}>
               共 <Text strong>{view.pages.length}</Text> 页
               {materialMin > view.pages.length ? (
-                <Text type="warning">（素材下限 ${materialMin} 页，当前不足）</Text>
+                <Text type="warning">（素材下限 {materialMin} 页，当前不足）</Text>
               ) : (
-                <Text type="secondary">（素材下限 ${materialMin} 页，已达标）</Text>
+                <Text type="secondary">（素材下限 {materialMin} 页，已达标）</Text>
               )}
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -2155,9 +2167,11 @@ const [editing, setEditing] = useState<{
         )}
       </Modal>
 
-      {/* 方案全屏阅读器（演示模式）：逐页渲染复用 PlanSlide */}
-      {readerOpen && plan && plan.pages.length > 0 ? (
-        <PlanReader pages={plan.pages} slidePlan={slidePlan} t={t} onClose={() => setReaderOpen(false)} />
+      {/* 方案全屏阅读器（演示模式）：逐页渲染复用 PlanSlide。
+          必须用 view.pages（交付页，含户型页、点位清单续页、报价页）——
+          用 plan.pages 时演示会比导出的 PPT/PDF 少 2~3 页，客户看到的和拿到的不是同一份。 */}
+      {readerOpen && plan && view.pages.length > 0 ? (
+        <PlanReader pages={view.pages} slidePlan={slidePlan} t={t} onClose={() => setReaderOpen(false)} />
       ) : null}
 
       {/* 历史方案抽屉 */}

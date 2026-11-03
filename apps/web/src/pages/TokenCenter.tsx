@@ -140,6 +140,9 @@ export function TokenCenter(): ReactNode {
   const [storage, setStorage] = useState<StorageStat | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const isAdmin = user?.memberships.some((m) => m.permissions.includes('platform:billing:manage')) ?? false;
+  // 费率写入走 PATCH /api/tenants/current，后端要的是 tenant:member:manage。
+  // 这张卡原来对所有人渲染：销售/设计师点「保存费率」必得 403，还不知道为什么。
+  const canSetRate = user?.memberships.some((m) => m.permissions.includes('tenant:member:manage')) ?? false;
   /** 是不是租户/平台管理员（管理员账号本身要能改手机号，也才谈得上「换人管」） */
   const isTenantAdmin = user?.memberships.some((m) => m.roleKey === 'super_admin' || m.roleKey === 'tenant_admin') ?? false;
   /** 部署级品牌（含 desktop 标记）：桌面端才显示「桌面端设置」入口 */
@@ -194,15 +197,23 @@ export function TokenCenter(): ReactNode {
   }, [branding.desktop, isAdmin]);
 
   useEffect(() => {
-    Promise.all([
-      api<TokenBalance>('/api/tenants/current/tokens'),
-      api<LedgerEntry[]>('/api/tenants/current/tokens/ledger'),
-    ])
-      .then(([balanceResult, ledgerResult]) => {
-        setBalance(balanceResult);
-        setLedger(ledgerResult);
-      })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    // 余额与账本各自独立：两个端点都要 tenant:billing:view，
+    // 但用 Promise.all 时只要有一个失败（权限/网络），另一个成功的结果也被丢掉 ——
+    // 页面表现为额度「--」+ 账本空表，还只有一条黄条，看不出到底哪一半出了问题。
+    void (async () => {
+      let firstError: unknown = null;
+      try {
+        setBalance(await api<TokenBalance>('/api/tenants/current/tokens'));
+      } catch (err) {
+        firstError = firstError ?? err;
+      }
+      try {
+        setLedger(await api<LedgerEntry[]>('/api/tenants/current/tokens/ledger'));
+      } catch (err) {
+        firstError = firstError ?? err;
+      }
+      setError(firstError ? (firstError instanceof Error ? firstError.message : String(firstError)) : null);
+    })();
   }, []);
 
   const consumed = Math.abs(ledger.filter((e) => e.delta < 0).reduce((sum, e) => sum + e.delta, 0));
@@ -547,7 +558,8 @@ export function TokenCenter(): ReactNode {
           <Button
             type="primary"
             size="small"
-            disabled={installRate === null || savingRate}
+            disabled={!canSetRate || installRate === null || savingRate}
+            title={canSetRate ? undefined : '需要「成员管理」权限才能改费率'}
             onClick={() => void saveInstallRate()}
           >
             {savingRate ? '保存中…' : '保存费率'}
@@ -561,6 +573,9 @@ export function TokenCenter(): ReactNode {
               min={0}
               max={100}
               step={1}
+              // 后端是整数（z.int()）：允许 20.5 只会在保存时换来一句 zod 原文报错
+              precision={0}
+              disabled={!canSetRate}
               value={installRate ?? undefined}
               onChange={(v) => setInstallRate(typeof v === 'number' ? v : null)}
               addonAfter="%"

@@ -143,6 +143,8 @@ export function DeviceLayout(): ReactNode {
   const [selected, setSelected] = useState('');
   const [title, setTitle] = useState(planId ? '方案户型点位图' : '未命名点位图');
   const [uploading, setUploading] = useState(false);
+  // 本次会话已保存的图纸：同一张底图再保存时走 PATCH，避免每点一次就多一条重复记录
+  const layoutRef = useRef<{ id: string; assetId: string } | null>(null);
   const [beautifying, setBeautifying] = useState(false);
   const [saving, setSaving] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -710,7 +712,28 @@ export function DeviceLayout(): ReactNode {
           y: +y.toFixed(4),
         })),
       };
-      await api('/api/layouts', { method: 'POST', body: JSON.stringify(dto) });
+      // 同一张底图重复保存时更新同一条图纸。
+      // 原来这里永远 POST：点两次「保存图纸」就多一条重复记录，
+      // 之后既分不清哪条是最终版，也没法删干净。
+      // 会话内的 id 存在 ref 里；刷新过页面就先去列表里按底图找一遍 ——
+      // 否则「跨会话」仍会每次新建一条。
+      let reuse = layoutRef.current;
+      if (!reuse) {
+        try {
+          const list = await api<{ id: string; mediaAssetId: string }[]>('/api/layouts');
+          const hit = list.find((l) => l.mediaAssetId === assetId);
+          if (hit) reuse = { id: hit.id, assetId };
+        } catch {
+          // 列表拉不到就当没有，退化成新建（不能因为这一步失败挡住保存）
+        }
+      }
+      const saved = reuse && reuse.assetId === assetId
+        ? await api<{ id: string }>(`/api/layouts/${reuse.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ title: dto.title, points: dto.points }),
+          })
+        : await api<{ id: string }>('/api/layouts', { method: 'POST', body: JSON.stringify(dto) });
+      if (saved?.id) layoutRef.current = { id: saved.id, assetId };
       if (planId) {
         // 点位是会反复改的：保存后**留在点位板**继续改，而不是跳回方案页 ——
         // 跳回去就断了「改→存→再改」的循环。方案页随时能通过「返回方案」按钮回去。

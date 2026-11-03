@@ -15,7 +15,9 @@ import { fetchUpstream, UPSTREAM_TIMEOUT_MS } from '../common/upstream-timeout.j
  * 本地 Ollama / LM Studio / vLLM 等。
  * 模型名解析：显式配置模型时全局锁定；否则沿用调用方传入的 model。
  * RAG 联动：传入 rag 上下文时自动检索外部知识库（WeKnora/Obsidian）注入 system prompt，
- *   检索失败降级为无知识库模式不阻塞主链路，操作写入审计留痕。
+ *   检索失败降级为无知识库模式不阻塞主链路。检索留痕走**运行日志**（不是审计表）：
+ *   审计只记写操作，且由 AuditInterceptor 统一写、带 requestId；
+ *   service 层这里拿不到 HTTP 上下文，硬写一条反而是缺字段的半截记录。
  */
 export interface RagContext {
   tenantId: string;

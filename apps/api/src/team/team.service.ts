@@ -276,15 +276,13 @@ export class TeamService {
       if (already) throw new ConflictException('MEMBER_ALREADY_IN_TENANT');
     }
 
-    const passwordHash = await argon2.hash(dto.password);
-    const user = existing
-      ? existing
-      : await this.prisma.user.create({
-          data: { phone: dto.phone, passwordHash, displayName: dto.displayName },
-        });
-
-    // 已有全局账号但密码未知（可能是从别处注册的），这时才设置新密码；
-    // 否则会覆盖掉本人自己的密码
+    // 已有全局账号（可能是从别的租户注册来的）**不设**初始密码：
+    // 覆盖密码等于替对方改掉他自己正在用的登录凭据，而他并没有要求重置。
+    // 这种情况下线下告知的「初始密码」不生效，成员用原密码登录即可（要重置走个人中心）。
+    const user = existing ?? await this.prisma.user.create({
+      data: { phone: dto.phone, passwordHash: await argon2.hash(dto.password), displayName: dto.displayName },
+    });
+    // 已有账号只同步显示名（本租户看到的称呼），不动凭据
     if (existing) await this.prisma.user.update({ where: { id: existing.id }, data: { displayName: dto.displayName } });
 
     await this.prisma.membership.create({ data: { userId: user.id, tenantId, roleId: role.id } });

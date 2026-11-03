@@ -137,6 +137,15 @@ export class OrdersService {
     if (!allowed.includes(status)) {
       throw new BadRequestException({ code: 'ILLEGAL_TRANSITION', message: `不允许从「${STATUS_LABELS[order.status]}」直接到「${STATUS_LABELS[status] ?? status}」` });
     }
+    // planId 是客户端直接传的：不校验归属就能把**别的租户**的方案挂到自己的单子上，
+    // 之后方案详情/交付包按 planId 读取，要么拿到越权数据，要么直接空指针。
+    if (status === 'proposed' && opts.planId) {
+      const plan = await this.prisma.planProject.findFirst({
+        where: { id: opts.planId, tenantId },
+        select: { id: true },
+      });
+      if (!plan) throw new NotFoundException('PLAN_NOT_FOUND');
+    }
     return this.prisma.orderRequest.update({
       where: { id },
       data: {
@@ -252,10 +261,8 @@ need 取 yes/no/maybe，只列客户明确提到的系统 key（${SYSTEM_KEYS.jo
 
     // 与方案生成一致：解析成功才扣额（LLM 失败异常上抛，不白扣）
     await this.tokens.consume(tenantId, INTAKE_TOKENS, 'CONSUME', { kind: 'order-intake' }, userId);
-    const dedupeTail = clientRequestId ? await this.idem.complete(tenantId, clientRequestId, 'order-intake', {}) : undefined;
-    void dedupeTail;
 
-    return {
+    const result = {
       customer: text(parsed.customer, 64),
       phone: text(parsed.phone, 32),
       community: text(parsed.community, 64),
@@ -286,6 +293,11 @@ need 取 yes/no/maybe，只列客户明确提到的系统 key（${SYSTEM_KEYS.jo
       categories: cats,
       products: products.map((p) => ({ id: p.id, name: p.name, category: p.category, priceMin: p.priceMin, priceMax: p.priceMax, perRoom: p.perRoom })),
     };
+    // 幂等结果必须存**解析出来的那一份**。
+    // 原来这里存的是 {}：弱网重试命中重复时，intake 返回的是空对象 + deduped，
+    // 客户姓名、需求、场景全丢，销售只能重填一遍（而且那次重试已经扣过额度）。
+    await this.idem.complete(tenantId, clientRequestId, 'order-intake', result);
+    return result;
   }
 
   /** AI 跟进建议：基于当前状态 + 需求 + 最近跟进，给出下一步动作与话术要点 */

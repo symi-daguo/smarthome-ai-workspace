@@ -33,7 +33,6 @@ interface JobParams {
   size: string;
   fitVideo?: boolean;
   background?: 'auto' | 'transparent' | 'white';
-  quality?: 'standard' | 'high';
   refAssetId?: string | null;
   /** 局部重绘参数（成对存在） */
   imageAssetId?: string | null;
@@ -98,11 +97,28 @@ export class CanvasService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     const cutoff = new Date(Date.now() - 30 * 60_000);
     try {
-      const { count } = await this.prisma.generationJob.updateMany({
+      const stale = await this.prisma.generationJob.findMany({
         where: { status: { in: ['pending', 'running'] }, updatedAt: { lt: cutoff } },
+        // 只取 turnId 需要的那一列，不把整个 params 拉进内存
+        select: { id: true, params: true },
+      });
+      if (stale.length === 0) return;
+      const { count } = await this.prisma.generationJob.updateMany({
+        where: { id: { in: stale.map((s) => s.id) } },
         data: { status: 'interrupted', error: '服务重启导致任务中断，可重新提交' },
       });
-      if (count > 0) this.logger.warn(`启动清理：${count} 条中断的生成作业已标记为 interrupted`);
+      // 轮次状态必须一起收尾：只改作业不改轮次，那一轮永远是 pending，
+      // 任务球一直转、既不能补跑（可补跑状态不含 interrupted）也不能清空。
+      const turnIds = stale
+        .map((s) => (s.params as { turnId?: string } | null)?.turnId)
+        .filter((v): v is string => Boolean(v));
+      if (turnIds.length > 0) {
+        await this.prisma.imageTurn.updateMany({
+          where: { id: { in: turnIds }, status: 'pending' },
+          data: { status: 'failed', error: '服务重启导致任务中断，可重新提交' },
+        });
+      }
+      this.logger.warn(`启动清理：${count} 条中断的生成作业与 ${turnIds.length} 个轮次已收尾`);
     } catch (error) {
       // 清理失败不能挡住启动：这些作业最坏是任务球一直转圈，不影响其他功能
       this.logger.warn(`启动清理中断作业失败：${error instanceof Error ? error.message : String(error)}`);
@@ -219,9 +235,29 @@ export class CanvasService implements OnModuleInit {
       if (!refAsset) throw new BadRequestException('REF_ASSET_INVALID');
     }
 
-    const fullPrompt = refAsset
-      ? `${dto.prompt}（已附参考图，请保持同一风格、主体与构图语言）`
-      : dto.prompt;
+    /**
+     * 参考图：交给视觉模型反推成画面描述，再拼进提示词。
+     *
+     * 为什么不是把图直接传给生图接口：`generateImage` 没有跨 provider 的参考图通道
+     * （minimax 只有文本 + 主体一致性参数，openai 的 edits 需要遮罩），
+     * 而「先反推描述、再文生图」是这类 provider 的通用做法 ——
+     * media.service.reverseImagePrompt 里已按这个理由实现过一遍。
+     *
+     * 原来这里只拼了一句「（已附参考图，请保持同一风格…）」，但图根本没传过去：
+     * 模型按「有图」的假设写，用户拿到的图与参考图毫无关系，还以为是模型不听话。
+     * 反推失败不阻断生成：降级成纯文字，并在提示词里如实写明这次没用上参考图。
+     */
+    let refHint = '';
+    if (refAsset) {
+      try {
+        const { prompt: described } = await this.media.reverseImagePrompt(tenantId, userId, refAsset.id);
+        refHint = `\n\n参考图画面描述（严格保持该风格、构图与色调）：${described}`;
+      } catch {
+        refHint = '\n\n（门店上传了参考图，但当前对话模型无法读图，本次按文字描述生成）';
+      }
+    }
+
+    const fullPrompt = `${dto.prompt}${refHint}`;
 
     const created = await this.prisma.$transaction(async (tx) => {
       const userTurn = await tx.imageTurn.create({
@@ -253,7 +289,6 @@ export class CanvasService implements OnModuleInit {
             size: dto.size,
             fitVideo: dto.fitVideo ?? false,
             background: dto.background ?? 'auto',
-            quality: dto.quality ?? 'standard',
             refAssetId: refAsset?.id ?? null,
             // 局部重绘：原图 + 遮罩必须成对，半对会在出图阶段报错而不是静默整张重画
             imageAssetId: dto.imageAssetId ?? null,

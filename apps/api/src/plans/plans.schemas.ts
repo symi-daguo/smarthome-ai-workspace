@@ -71,6 +71,11 @@ export const createPlanSchema = z.object({
         productId: z.string().uuid(),
         name: z.string().max(60),
         category: z.string().max(30),
+        // 点位图标：产品主图优先，没有就用产品级图标 key（两者都缺时回退品类图标）。
+        // 这两个字段此前只在点位板的请求体里，schema 没声明 → zod 直接剥掉 →
+        // 重新打开点位图时图标全部退回品类图标，用户改的图标白改。
+        iconUrl: z.string().max(200).optional(),
+        iconKey: z.string().max(40).optional(),
         // 所属房间名：点位清单与交付页按它与图上的编号对应
         room: z.string().max(20).optional(),
         x: z.number().min(0).max(1),
@@ -84,14 +89,26 @@ export const createPlanSchema = z.object({
 /** 挂接户型图：主图 + 额外图（≤3 张）+ 每张的楼层名 */
 export const attachFloorplanSchema = z.object({
   floorplanAssetId: z.string().uuid(),
-  extraFloorplanAssetIds: z.array(z.string().uuid()).max(8).optional().default([]),
-  floorplanFloors: z.array(z.string().max(20)).max(8).optional().default([]),
+  /**
+   * 不传 = **保留方案上已有的额外户型图**。
+   *
+   * 原来给了 `.default([])`：点位板保存时只提交主图与点位，这两个字段被填成空数组，
+   * 服务层照单全收 —— 挂过的二层/三层图与楼层名被静默清空，界面上看不出来，
+   * 导出交付件才发现少了楼层。
+   */
+  extraFloorplanAssetIds: z.array(z.string().uuid()).max(8).optional(),
+  floorplanFloors: z.array(z.string().max(20)).max(8).optional(),
   layoutPoints: z
     .array(
       z.object({
         productId: z.string().uuid(),
         name: z.string().max(60),
         category: z.string().max(30),
+        // 点位图标：产品主图优先，没有就用产品级图标 key（两者都缺时回退品类图标）。
+        // 这两个字段此前只在点位板的请求体里，schema 没声明 → zod 直接剥掉 →
+        // 重新打开点位图时图标全部退回品类图标，用户改的图标白改。
+        iconUrl: z.string().max(200).optional(),
+        iconKey: z.string().max(40).optional(),
         // 所属房间名：点位清单与交付页按它与图上的编号对应
         room: z.string().max(20).optional(),
         x: z.number().min(0).max(1),

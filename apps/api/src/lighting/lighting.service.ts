@@ -3,6 +3,7 @@ import { IdempotencyService } from '../common/idempotency.service.js';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { LlmService } from '../llm/llm.service.js';
 import { TokenService } from '../billing/token.service.js';
+import { MediaService } from '../media/media.service.js';
 import type { CreateSceneDto, UpdateSceneDto } from './lighting.schemas.js';
 
 /**
@@ -20,6 +21,23 @@ export class LightingService {
     return scene;
   }
 
+  /**
+   * 参考资料归属校验。
+   *
+   * sourceAssetId / videoAssetId 都是客户端直传的 id，不校验就等于允许把
+   * 别的租户的素材挂进自己的场景：本租户能看到那张图（文件流按 id 直出），
+   * 而对方一删素材，这边场景与出片全线 404。
+   */
+  private async assertAssetsOwned(tenantId: string, dto: { sourceAssetId?: string; videoAssetId?: string }): Promise<void> {
+    const ids = [dto.sourceAssetId, dto.videoAssetId].filter((v): v is string => Boolean(v));
+    if (ids.length === 0) return;
+    const found = await this.prisma.mediaAsset.findMany({
+      where: { id: { in: [...new Set(ids)] }, tenantId },
+      select: { id: true },
+    });
+    if (found.length !== new Set(ids).size) throw new NotFoundException('ASSET_NOT_FOUND');
+  }
+
   list(tenantId: string) {
     return this.prisma.lightingScene.findMany({
       where: { tenantId },
@@ -33,7 +51,8 @@ export class LightingService {
     return this.mustGet(tenantId, id);
   }
 
-  create(tenantId: string, userId: string, dto: CreateSceneDto) {
+  async create(tenantId: string, userId: string, dto: CreateSceneDto) {
+    await this.assertAssetsOwned(tenantId, dto);
     return this.prisma.lightingScene.create({
       data: {
         tenantId,
@@ -44,12 +63,14 @@ export class LightingService {
         fixtures: dto.fixtures,
         timeline: dto.timeline,
         ...(dto.videoAssetId !== undefined ? { videoAssetId: dto.videoAssetId } : {}),
+        ...(dto.status !== undefined ? { status: dto.status } : {}),
       },
     });
   }
 
   async update(tenantId: string, id: string, dto: UpdateSceneDto) {
     const owned = await this.mustGet(tenantId, id);
+    await this.assertAssetsOwned(tenantId, dto);
     return this.prisma.lightingScene.update({
       where: { id: owned.id },
       data: {
@@ -59,6 +80,7 @@ export class LightingService {
         ...(dto.fixtures !== undefined ? { fixtures: dto.fixtures } : {}),
         ...(dto.timeline !== undefined ? { timeline: dto.timeline } : {}),
         ...(dto.videoAssetId !== undefined ? { videoAssetId: dto.videoAssetId } : {}),
+        ...(dto.status !== undefined ? { status: dto.status } : {}),
       },
     });
   }
@@ -148,6 +170,7 @@ export class LightingDiagnosisService {
     private readonly llm: LlmService,
     private readonly tokens: TokenService,
     private readonly idem: IdempotencyService,
+    private readonly media: MediaService,
   ) {}
 
   private buildPrompt(modeId: string, answers: Record<string, string>): string {
@@ -189,7 +212,7 @@ export class LightingDiagnosisService {
   async run(
     tenantId: string,
     userId: string,
-    dto: { modeId: string; answers: Record<string, string>; clientRequestId?: string },
+    dto: { modeId: string; answers: Record<string, string>; clientRequestId?: string; floorplanAssetId?: string },
   ): Promise<DiagnosisResult> {
     // 幂等：弱网重试不该让用户为同一次问诊付两次钱
     const claim = await this.idem.claim(tenantId, dto.clientRequestId, 'lighting-diagnose');
@@ -202,7 +225,24 @@ export class LightingDiagnosisService {
     }
     try {
       await this.tokens.consume(tenantId, DIAGNOSE_TOKENS, 'CONSUME', { kind: 'lighting-diagnose', title: dto.modeId }, userId);
-      const prompt = this.buildPrompt(dto.modeId, dto.answers);
+      /**
+       * 现场图纸：先用视觉模型反推成文字描述，再拼进提示词。
+       *
+       * schema 里一直有这个字段（「上传图纸找问题」模式），但 run() 的入参类型里没有它、
+       * buildPrompt 也只用问答 —— 用户上传了户型图，诊断结果与图毫无关系，且没有任何提示。
+       * 生图通道没有跨 provider 的图像输入，所以走「反推描述」这条路（与画布参考图同一做法）。
+       * 反推要额外扣一次视觉调用额度；失败不阻断问诊，如实写明这次没用上图。
+       */
+      let siteHint = '';
+      if (dto.floorplanAssetId) {
+        try {
+          const { prompt: described } = await this.media.reverseImagePrompt(tenantId, userId, dto.floorplanAssetId);
+          siteHint = `\n\n【现场图纸/照片描述】${described}\n请结合这个空间形态与已有灯位给出建议。`;
+        } catch {
+          siteHint = '\n\n（客户上传了现场图纸，但当前对话模型无法读图，本次按问答内容作答）';
+        }
+      }
+      const prompt = this.buildPrompt(dto.modeId, dto.answers) + siteHint;
       // 预算 6000 是实测值，不是拍脑袋：这份提示词要 3-6 条问题分级 + 3-6 条灯组
       // + 3-6 条场景 + 3-6 条灯位，全中文结构化输出。
       // 原先给 1200，M3.1-Flash 的**思考 token 也占 max_tokens 预算**，

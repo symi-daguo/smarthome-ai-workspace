@@ -654,12 +654,25 @@ export function manifestRouteKeys(): Set<string> {
  * 为什么要「识别」而不是给每个端点加守卫：逐个端点加标记，加漏一个就等于没防护，
  * 而漏的那个恰好是最容易被误调的那个。清单是单一事实来源，转成运行时模式只有一个地方要对。
  */
+/**
+ * 把清单里的路径模板（`/api/products/{id}`）转成匹配真实路径的正则。
+ *
+ * **顺序不能反**：必须先转义字面量，再把占位符换成 `[^/]+`。
+ * 反过来写（先替换再转义）会把 `[^/]+` 里的 `[`、`^`、`]`、`+` 一起转义成字面量，
+ * 正则退化成「匹配字符串 `[^/]+` 本身」—— 所有带路径参数的操作永远匹配不上，
+ * 而且不报错、没有测试会红：自动快照静默失效，直到真出事那天才发现没底。
+ */
+export function manifestPathToRegExp(path: string): RegExp {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped.replace(/\\\{[^}]+\\\}/g, '[^/]+')}$`);
+}
+
 export function destructivePatterns(): { method: string; pattern: RegExp }[] {
   return MANIFEST.flatMap((g) =>
     g.ops.filter((o) => o.risk === 'destructive').map((o) => ({
       method: o.m,
       // {id} → :id，再转成能匹配任意一段路径的捕获组
-      pattern: new RegExp(`^${o.p.replace(/\{[^}]+\}/g, '[^/]+').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+      pattern: manifestPathToRegExp(o.p),
     })),
   );
 }

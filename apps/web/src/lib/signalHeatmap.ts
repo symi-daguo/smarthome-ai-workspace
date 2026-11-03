@@ -799,6 +799,11 @@ export function computeSignalField(o: FieldOpts): Float32Array {
   const n = cols * rows;
   const field = new Float32Array(n);
   if (!sources.length) return field;
+  // 扩散下限不能等于 threshold：低于阈值但仍有信号的格会被直接丢弃，
+  // 而 measureCoverageStats 按 0.35×threshold 划出「信号一般」档 ——
+  // 结果就是「一般」恒为 0%，只剩好/弱两档，三档统计名存实亡。
+  // 播种仍用 threshold（只有达标的点才起播），扩散的下限单独放到分档线。
+  const spreadFloor = threshold * 0.35;
 
   const planWidthM = o.planWidthM && o.planWidthM > 0 ? o.planWidthM : 1;
   // 墙厚（米）→ 栅格格数：归一化宽度 1/planWidthM 米对应 cols-1 格
@@ -822,7 +827,7 @@ export function computeSignalField(o: FieldOpts): Float32Array {
       const i = queue[head];
       head += 1;
       const cur = strength[i];
-      if (cur < threshold) continue;
+      if (cur < spreadFloor) continue;
       const x = i % cols;
       const y = (i / cols) | 0;
       // 四向扩散：穿墙只扣一次衰减系数（墙格最后统一归零），不阻断整体传播。
@@ -836,7 +841,7 @@ export function computeSignalField(o: FieldOpts): Float32Array {
         let next = cur * freeAtten;
         if (crossed) next *= wallAtten;
         // 只有严格更强才入队，兼作「已访问」判据
-        if (next < threshold || next <= strength[ni]) continue;
+        if (next < spreadFloor || next <= strength[ni]) continue;
         strength[ni] = next;
         queue.push(ni);
       }

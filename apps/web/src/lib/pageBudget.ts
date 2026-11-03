@@ -26,8 +26,14 @@ export interface MaterialCounts {
 /** 单页出图成本（元），由部署者按画质调整 */
 const PRICE_PER_PAGE: Record<string, number> = { low: 0.6, medium: 1, high: 1.6 };
 
-/** 自定义页数上限 */
-export const PAGE_COUNT_MAX = 20;
+/**
+ * 自定义页数上限 —— 必须与后端 `createPlanSchema.pageCount.max()` 一致。
+ *
+ * 这里曾经写 20，后端是 16：界面允许选到 20 页、还显示「上限 20 页」，
+ * 提交时被 zod 直接 400，用户只看到一句「参数不合法」。
+ * 两边数字是同一个约束的两处表达，改一处就要改另一处。
+ */
+export const PAGE_COUNT_MAX = 16;
 
 /**
  * 素材带来的页数下限：`沟通模块 + 额外户型图 + 素材页`。

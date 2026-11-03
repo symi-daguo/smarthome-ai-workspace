@@ -556,16 +556,20 @@ export class MediaService {
         baseUrl: cfg.baseUrl,
         apiKey,
         model: cfg.model,
-        prompt: opts.prompt,
-        size: opts.size,
+        // 用**加工后**的 prompt/size：background（透明/纯白）与 fitVideo（强制 16:9）
+        // 是拼进 prompt 与 size 里的。原来这里传的是 opts.prompt / opts.size，
+        // 于是这两个选项对 openai / minimax 两条最常用的通道完全无效 ——
+        // 界面上的开关点了没反应，只有 comfyui 那条路是对的。
+        prompt,
+        size,
       });
     } else {
       img = await generateViaMinimax({
         baseUrl: cfg.baseUrl,
         apiKey,
         model: cfg.model,
-        prompt: opts.prompt,
-        aspect: IMAGE_ASPECT[opts.size] ?? '16:9',
+        prompt,
+        aspect: IMAGE_ASPECT[size] ?? '16:9',
       });
     }
 

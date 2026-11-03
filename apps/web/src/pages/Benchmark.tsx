@@ -28,6 +28,7 @@ import {
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
+import { downloadBlob } from '../lib/download';
 import { PageHeader } from '../components/PageHeader';
 import { useAuth } from '../store/AuthContext';
 import { pageContainerStyle } from '../theme/tokens';
@@ -151,13 +152,9 @@ function statOf(raw: string): { play: number; like: number; comment: number; col
 }
 
 function downloadText(filename: string, text: string, mime = 'application/json;charset=utf-8'): void {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  // 与其它页面统一走 lib/download：先挂 DOM 再点、延后释放 objectURL。
+  // 原来的「createElement + 立即 revoke」在 Firefox/Safari 上会下载失败或落 0 字节。
+  downloadBlob(new Blob([text], { type: mime }), filename);
 }
 
 export function Benchmark(): ReactNode {
@@ -802,7 +799,10 @@ export function Benchmark(): ReactNode {
           <Form.Item name="note" label="备注" extra="记一下这个账号为什么值得对标">
             <Input.TextArea rows={3} maxLength={500} showCount />
           </Form.Item>
-          <Form.Item name="enabled" label="启用" valuePropName="checked">
+          {/* Select 用 value，不是 checked：valuePropName="checked" 是给 Checkbox/Switch 的，
+              套在 Select 上会让表单既注不进当前值、也读不到新值 ——
+              下拉永远空白，看不出这个账号是启用还是停用。 */}
+          <Form.Item name="enabled" label="启用">
             <Select
               options={[
                 { value: true, label: '启用（参与采集与分析）' },
