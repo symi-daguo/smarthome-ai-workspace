@@ -143,6 +143,9 @@ export function DeviceLayout(): ReactNode {
   const [selected, setSelected] = useState('');
   const [title, setTitle] = useState(planId ? '方案户型点位图' : '未命名点位图');
   const [uploading, setUploading] = useState(false);
+  // 等轴测预览：只读的演示视角。编辑态永远是平面视角 ——
+  // 倾斜/透视之后屏幕坐标与图坐标不再线性对应，在那种视角下拖点位必然错位。
+  const [isoView, setIsoView] = useState(false);
   // 本次会话已保存的图纸：同一张底图再保存时走 PATCH，避免每点一次就多一条重复记录
   const layoutRef = useRef<{ id: string; assetId: string } | null>(null);
   const [beautifying, setBeautifying] = useState(false);
@@ -803,6 +806,7 @@ export function DeviceLayout(): ReactNode {
                     <Button size="small" onClick={() => void exportAnnotatedPng(imgSrc, points, title, mode)}>导出标注图纸 PNG</Button>
                   )}
                   {mode === 'device' && <Button size="small" onClick={() => exportBomCsv(points, products, title)}>导出设备清单 CSV</Button>}
+                  {mode === 'device' && <Button size="small" onClick={() => setIsoView(true)}>等轴测预览</Button>}
                   {mode === 'device' && <Button size="small" type="primary" loading={saving} onClick={() => void saveAndAttach()}>{planId ? '保存并挂接方案' : '保存图纸'}</Button>}
                 </>
               )}
@@ -877,6 +881,75 @@ export function DeviceLayout(): ReactNode {
                   </div>
                 );
               })}
+              {/* 等轴测预览层：只读覆盖在舞台之上，编辑逻辑一行都不动。
+                  CSS 3D 而不是引入 three.js —— 这里要的是「斜视 + 地板有厚度」的观感，
+                  同一个 DOM 改一个 transform 就够；three.js 的增量是自由转视角与真实光影，
+                  代价是 600KB 包体 + 另起一套场景，等真有客户要「转圈看」再上。 */}
+              {isoView && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    zIndex: 20,
+                    background: 'radial-gradient(ellipse at 50% 28%, #262a33 0%, #14161a 72%)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', perspective: '2400px' }}>
+                    <div
+                      style={{
+                        position: 'relative',
+                        width: '78%',
+                        transform: 'rotateX(52deg) rotateZ(-38deg)',
+                        transformStyle: 'preserve-3d',
+                        transition: 'transform .5s cubic-bezier(.22,.61,.36,1)',
+                      }}
+                    >
+                      <img
+                        src={imgSrc}
+                        alt="户型等轴测预览"
+                        draggable={false}
+                        style={{ display: 'block', width: '100%', borderRadius: 4, boxShadow: '0 40px 80px rgba(0,0,0,.55)', filter: 'saturate(1.06) brightness(1.03)' }}
+                      />
+                      {points.map((p) => {
+                        const m = catMeta(p.category);
+                        return (
+                          <div
+                            key={p.id}
+                            style={{
+                              position: 'absolute',
+                              left: `${p.x * 100}%`,
+                              top: `${p.y * 100}%`,
+                              // 反向变换抵消父级的倾斜：顺序相反、角度取负，标记才不会被压成椭圆
+                              transform: 'translate(-50%,-50%) rotateZ(38deg) rotateX(-52deg)',
+                              transformStyle: 'preserve-3d',
+                            }}
+                          >
+                            {p.iconUrl ? (
+                              <img
+                                src={fileUrl(p.iconUrl)}
+                                alt={p.name}
+                                draggable={false}
+                                style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', background: '#fff', border: `2px solid ${m.color}`, boxShadow: '0 4px 12px rgba(0,0,0,.5)', display: 'block' }}
+                              />
+                            ) : (
+                              <div style={{ width: 30, height: 30, borderRadius: '50%', background: m.color, border: '2px solid #fff', boxShadow: '0 4px 12px rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ display: 'inline-flex', color: '#fff', lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: productIconSvg(p.category, p.iconKey, ICON_SIZE.marker, '#ffffff') }} />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.16)', color: 'rgba(255,255,255,.72)', fontSize: 12 }}>
+                    等轴测预览 · 仅用于演示，编辑请切回平面
+                  </div>
+                  <Button size="small" style={{ position: 'absolute', right: 12, top: 12 }} onClick={() => setIsoView(false)}>退出预览</Button>
+                </div>
+              )}
             </div>
           )}
         </Card>

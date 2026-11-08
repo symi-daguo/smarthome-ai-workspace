@@ -10,8 +10,9 @@ import {
 import { randomUUID } from 'node:crypto';
 import { withRetry } from '../common/retry.js';
 import { isUniqueViolation } from '../common/prisma-error.js';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, open, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { probeImageSize, type ImageSize } from '../common/image-size.js';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.module.js';
 import { TokenService } from '../billing/token.service.js';
@@ -141,6 +142,43 @@ function assertRenderAssetsReady(
 const FLOORPLAN_MAX_FILES = 3;
 /** 单文件与总体积上限：户型图不压缩，超限直接拒而不是偷偷降质 */
 const FLOORPLAN_FILE_MAX = 20 * 1024 * 1024;
+
+/**
+ * 按原图宽高比挑最接近的出图档位。
+ *
+ * provider 只有 16:9 / 1:1 / 9:16 三档，做不到逐像素一致；但竖版户型出成横版时，
+ * 交付册里「原图 vs 效果图」并排会明显不像同一套房。
+ *
+ * 用**对数比例**比较而不是差值：1:2 到 1:1、1:1 到 2:1 在对数尺度上对称，
+ * 用差值比较会系统性偏向横版（1.5 的绝对差最大），竖版户型永远选不到 9:16。
+ * 读不到尺寸时维持原来的 16:9，不猜。
+ */
+export function pickImageSize(source: ImageSize | null): {
+  size: '1536x1024' | '1024x1024' | '1024x1536';
+  aspect: '16:9' | '1:1' | '9:16';
+  width: number;
+  height: number;
+} {
+  const candidates = [
+    { size: '1536x1024', aspect: '16:9', width: 1536, height: 1024 },
+    { size: '1024x1024', aspect: '1:1', width: 1024, height: 1024 },
+    { size: '1024x1536', aspect: '9:16', width: 1024, height: 1536 },
+  ] as const;
+  if (!source || source.width <= 0 || source.height <= 0) {
+    return { ...candidates[0] };
+  }
+  const ratio = source.width / source.height;
+  let best: (typeof candidates)[number] = candidates[0];
+  let bestCost = Math.abs(Math.log(ratio / (best.width / best.height)));
+  for (const c of candidates.slice(1)) {
+    const cost = Math.abs(Math.log(ratio / (c.width / c.height)));
+    if (cost < bestCost) {
+      best = c;
+      bestCost = cost;
+    }
+  }
+  return { ...best };
+}
 /**
  * 按目标页数拼出页序骨架。
  *
@@ -235,8 +273,29 @@ export class PlansService {
     return this.config.get<string>('UPLOAD_DIR', 'uploads');
   }
 
-  private dayDir(): string {
-    const d = new Date();
+  /**
+   * 只读文件头拿宽高。
+   *
+   * 读 64KB 就够三种格式的头部（JPEG 的 SOF 段在最前面几 KB 内）；
+   * 整文件读进来会把一张 10MB 户型图白占一遍内存 —— 这个接口每次渲染都要走一遍。
+   * 任何异常都当「不知道尺寸」返回 null，绝不因为读不到就拒绝渲染。
+   */
+  private async readImageHead(absPath: string): Promise<ImageSize | null> {
+    try {
+      const fh = await open(absPath, 'r');
+      try {
+        const buf = Buffer.alloc(65536);
+        const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+        return probeImageSize(buf.subarray(0, bytesRead));
+      } finally {
+        await fh.close();
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  private dayDir(): string {    const d = new Date();
     const p = (n: number): string => String(n).padStart(2, '0');
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
   }
@@ -519,7 +578,18 @@ export class PlansService {
    * 不另开新轮子（避免重复维护 provider 适配）。代价：因服务依赖单向注入限制，
    * 这里直接拉取 cfg 与落盘 helper；如未来 MediaService 拆为更细粒度模块可接入。
    */
-  async renderFloorplan(tenantId: string, userId: string, id: string): Promise<{ assetId: string; floorplanAssetId: string | null }> {
+  async renderFloorplan(
+    tenantId: string,
+    userId: string,
+    id: string,
+  ): Promise<{
+    assetId: string;
+    floorplanAssetId: string | null;
+    /** 实际使用的出图档位（排查「为什么这次是竖版」时不用翻日志） */
+    renderSize: string;
+    /** 原图宽高比；读不到尺寸时为 null（说明走了默认档） */
+    sourceRatio: number | null;
+  }> {
     const plan = await this.detail(tenantId, id);
     if (!plan.floorplanAssetId) throw new BadRequestException('PLAN_FLOORPLAN_REQUIRED');
     const original = await this.prisma.mediaAsset.findFirst({ where: { id: plan.floorplanAssetId, tenantId } });
@@ -545,9 +615,21 @@ export class PlansService {
 
     const styleName = STYLE_NAMES[plan.style] ?? plan.style;
     const ecosystem = plan.ecosystem || '主流智能家居';
+    /**
+     * 出图档位按**原图宽高比**选，不再一律 16:9。
+     *
+     * 生图 provider 只有 16:9 / 1:1 / 9:16 三档，做不到逐像素一致；但竖版户型
+     * 出成横版时，交付册里「原图 vs 效果图」并排会明显不像同一套房。
+     * 读不到尺寸（格式不认识）就维持原来的 16:9，不猜。
+     */
+    const sourceSize = await this.readImageHead(join(this.uploadDir(), original.filePath));
+    const target = pickImageSize(sourceSize);
     const prompt = [
       `${styleName}风格的高端精装修顶视平面图（top-down floorplan render）`,
-      `融合${ecosystem}智能家居生态，户型参考原图的空间布局（房间分隔/门窗位置必须保持一致），`,
+      // 措辞如实：文生图 provider 没有结构控制能力，写「必须保持一致」只会拿到一张
+      // 和无条件约束差不多的图，却让人误以为结构被锁住了。
+      `空间布局与朝向参考原图（房间分隔、门窗位置尽量贴近，作为风格示意而非结构还原），`,
+      `融合${ecosystem}智能家居生态，`,
       `所有窗户加智能窗帘、卧室床头加床头灯与起夜灯带、客厅加灯带与天花筒灯、玄关加感应灯、`,
       `标注主要智能设备图标（网关/音箱/摄像头/传感器/智能开关），`,
       `4K 渲染、暖色灯光氛围、写实质感、真实样板房摄影视角。`,
@@ -565,8 +647,8 @@ export class PlansService {
           apiKey: cfg.comfyApiKey,
           workflow: await this.loadComfyWorkflow(cfg.workflowPath),
           prompt,
-          width: 1536,
-          height: 1024,
+          width: target.width,
+          height: target.height,
           promptNode: cfg.promptNode,
           negativeNode: cfg.negativeNode,
           latentNode: cfg.latentNode,
@@ -578,7 +660,7 @@ export class PlansService {
           apiKey,
           model: cfg.model || 'gpt-image-1',
           prompt,
-          size: '1536x1024',
+          size: target.size,
         });
       } else {
         return generateViaMinimax({
@@ -586,7 +668,7 @@ export class PlansService {
           apiKey,
           model: cfg.model || 'image-01',
           prompt,
-          aspect: '16:9',
+          aspect: target.aspect,
         });
       }
     }, { attempts: 3, baseDelayMs: 1500, timeoutMs: 180_000 });
@@ -622,7 +704,12 @@ export class PlansService {
       where: { id },
       data: { renderedFloorplanAssetId: asset.id },
     });
-    return { assetId: asset.id, floorplanAssetId: plan.floorplanAssetId };
+    return {
+      assetId: asset.id,
+      floorplanAssetId: plan.floorplanAssetId,
+      renderSize: target.size,
+      sourceRatio: sourceSize ? Math.round((sourceSize.width / sourceSize.height) * 1000) / 1000 : null,
+    };
   }
 
   /** 与 MediaService 同样读取 comfyui 工作流：失败抛 COMFYUI_WORKFLOW_MISSING */

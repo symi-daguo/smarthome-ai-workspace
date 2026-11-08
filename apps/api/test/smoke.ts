@@ -17,6 +17,8 @@ import { DEFAULT_CHAT_MODEL } from '../src/llm/llm.constants.js';
 import { markCharged, isChargedError } from '../src/media/media.service.js';
 import { ModelConfigService } from '../src/llm/model-config.service.js';
 import { manifestRouteKeys, destructiveOps, MANIFEST, OP_PERMISSIONS } from '../src/agent/manifest.js';
+import { pickImageSize } from '../src/plans/plans.service.js';
+import { probeImageSize } from '../src/common/image-size.js';
 import { buildSkeleton } from '../src/plans/plans.service.js';
 import { PERMISSIONS, WRITE_IMPLIES_READ } from '../src/rbac/permissions.js';
 import { rankLocalChunks } from '../src/knowledge/knowledge-doc.service.js';
@@ -5373,6 +5375,33 @@ async function main(): Promise<void> {
     await request(base, `/api/team/members/${
       (await request<{ id: string; phone: string }[]>(base, '/api/team/members', authA)).body.find((x) => x.phone === phoneM2)?.id ?? 'x'
     }`, { method: 'DELETE', ...authA });
+  }
+
+  // ---------- 纯逻辑：出图档位与图片头解析（不依赖服务，纯函数） ----------
+  {
+    // 竖版必须选到 9:16 —— 用差值比较会永远选横版，这条断言就是防它退回去
+    check('竖版户型（3:4）选出竖版档', pickImageSize({ width: 900, height: 1200 }).size === '1024x1536');
+    check('横版户型（16:9）选出横版档', pickImageSize({ width: 1600, height: 900 }).size === '1536x1024');
+    check('方形户型选出方档', pickImageSize({ width: 1000, height: 1000 }).size === '1024x1024');
+    check('读不到尺寸时维持 16:9（不猜）', pickImageSize(null).size === '1536x1024');
+    check('极窄长图仍归竖版档', pickImageSize({ width: 400, height: 1600 }).size === '1024x1536');
+
+    const png = Buffer.alloc(32);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+    png.writeUInt32BE(1234, 16);
+    png.writeUInt32BE(567, 20);
+    const pngSize = probeImageSize(png);
+    check('PNG 头解析出宽高', pngSize?.width === 1234 && pngSize?.height === 567);
+
+    const jpeg = Buffer.from([
+      0xff, 0xd8,
+      0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x58, 0x03, 0x20,
+      0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    ]);
+    const jpegSize = probeImageSize(jpeg);
+    check('JPEG 头解析出宽高', jpegSize?.width === 800 && jpegSize?.height === 600);
+
+    check('不认识的格式返回 null（不瞎猜）', probeImageSize(Buffer.from('GIF89a______________')) === null);
   }
 
   await app.close();
